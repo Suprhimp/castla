@@ -37,13 +37,9 @@ class VideoStreamSocket(
         server.unregisterVideoSocket(this)
     }
 
-    fun send(data: ByteArray) {
+    fun sendBinary(data: ByteArray) {
         try {
-            send(NanoWSD.WebSocketFrame(
-                NanoWSD.WebSocketFrame.OpCode.Binary,
-                true,
-                data
-            ))
+            send(data)
         } catch (e: IOException) {
             Log.w(TAG, "Send failed", e)
             throw e

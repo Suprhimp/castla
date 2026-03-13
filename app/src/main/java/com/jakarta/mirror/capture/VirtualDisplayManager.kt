@@ -1,12 +1,19 @@
 package com.jakarta.mirror.capture
 
+import android.content.ComponentName
+import android.content.ServiceConnection
 import android.hardware.display.VirtualDisplay
+import android.os.IBinder
 import android.util.Log
 import android.view.Surface
+import com.jakarta.mirror.shizuku.IPrivilegedService
+import com.jakarta.mirror.shizuku.PrivilegedService
+import rikka.shizuku.Shizuku
 
 /**
  * Creates a virtual display using Shizuku for independent phone + Tesla operation.
- * Falls back to MediaProjection's built-in VirtualDisplay when Shizuku is unavailable.
+ * When a virtual display is active, the phone screen operates independently while
+ * Tesla shows content on the virtual display.
  */
 class VirtualDisplayManager {
 
@@ -15,13 +22,66 @@ class VirtualDisplayManager {
     }
 
     private var virtualDisplay: VirtualDisplay? = null
+    private var privilegedService: IPrivilegedService? = null
+    private var displayId: Int = -1
+    private var isBound = false
+    private var serviceConnection: ServiceConnection? = null
+    private var userServiceArgs: Shizuku.UserServiceArgs? = null
+
+    /**
+     * Bind to the Shizuku privileged service.
+     * Must be called before createVirtualDisplay when using Shizuku mode.
+     * Returns true if binding was initiated.
+     */
+    fun bindShizukuService(callback: (Boolean) -> Unit): Boolean {
+        if (isBound && privilegedService != null) {
+            callback(true)
+            return true
+        }
+
+        return try {
+            val args = Shizuku.UserServiceArgs(
+                ComponentName(
+                    "com.jakarta.mirror",
+                    PrivilegedService::class.java.name
+                )
+            )
+                .daemon(false)
+                .processNameSuffix("privileged")
+                .debuggable(true)
+                .version(1)
+            userServiceArgs = args
+
+            val connection = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                    privilegedService = IPrivilegedService.Stub.asInterface(binder)
+                    isBound = true
+                    Log.i(TAG, "Shizuku privileged service connected")
+                    callback(true)
+                }
+
+                override fun onServiceDisconnected(name: ComponentName?) {
+                    privilegedService = null
+                    isBound = false
+                    displayId = -1
+                    Log.i(TAG, "Shizuku privileged service disconnected")
+                }
+            }
+            serviceConnection = connection
+
+            Shizuku.bindUserService(args, connection)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to bind Shizuku service", e)
+            callback(false)
+            false
+        }
+    }
 
     /**
      * Create a virtual display via Shizuku's elevated privileges.
-     * This allows the phone to operate independently while Tesla shows a separate display.
-     *
-     * TODO: Implement via Shizuku UserService in Phase 5
-     * Will use DisplayManager.createVirtualDisplay() with VIRTUAL_DISPLAY_FLAG_PUBLIC
+     * If Shizuku is not available, returns null — caller should fall back
+     * to MediaProjection's built-in VirtualDisplay.
      */
     fun createVirtualDisplay(
         width: Int,
@@ -29,13 +89,75 @@ class VirtualDisplayManager {
         dpi: Int,
         surface: Surface
     ): VirtualDisplay? {
-        Log.i(TAG, "Virtual display creation via Shizuku not yet implemented")
-        // Phase 5: Shizuku integration
-        return null
+        if (width <= 0 || height <= 0) {
+            Log.w(TAG, "Invalid dimensions: ${width}x${height}")
+            return null
+        }
+
+        val service = privilegedService
+        if (service == null) {
+            Log.i(TAG, "Shizuku service not bound, cannot create virtual display")
+            return null
+        }
+
+        return try {
+            val id = service.createVirtualDisplay(width, height, dpi, "JakartaMirror")
+            if (id >= 0) {
+                displayId = id
+                Log.i(TAG, "Virtual display created via Shizuku: id=$id, ${width}x${height}")
+                // The actual VirtualDisplay object lives in the privileged process.
+                // We track displayId for input injection and release.
+                null
+            } else {
+                Log.e(TAG, "Shizuku returned invalid display ID")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create virtual display via Shizuku", e)
+            null
+        }
+    }
+
+    /** Display ID of the Shizuku-created virtual display, or -1. */
+    fun getDisplayId(): Int = displayId
+
+    /** Returns true if a Shizuku virtual display is active. */
+    fun hasVirtualDisplay(): Boolean = displayId >= 0 && privilegedService != null
+
+    /** Inject a touch event on the virtual display. */
+    fun injectInput(action: Int, x: Float, y: Float, pointerId: Int) {
+        if (displayId < 0) return
+        try {
+            privilegedService?.injectInput(displayId, action, x, y, pointerId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to inject input on virtual display", e)
+        }
     }
 
     fun release() {
+        if (displayId >= 0) {
+            try {
+                privilegedService?.releaseVirtualDisplay(displayId)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to release virtual display", e)
+            }
+        }
+        try {
+            privilegedService?.destroy()
+        } catch (_: Exception) {}
+
+        val args = userServiceArgs
+        val conn = serviceConnection
+        if (args != null && conn != null) {
+            try { Shizuku.unbindUserService(args, conn, true) } catch (_: Exception) {}
+        }
+
+        privilegedService = null
         virtualDisplay?.release()
         virtualDisplay = null
+        displayId = -1
+        isBound = false
+        serviceConnection = null
+        userServiceArgs = null
     }
 }

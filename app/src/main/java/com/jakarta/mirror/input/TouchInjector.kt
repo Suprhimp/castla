@@ -27,6 +27,9 @@ class TouchInjector(
     private var injectMethod: Method? = null
     private var useShizuku = false
 
+    // Virtual display routing (Phase 5)
+    private var virtualDisplayInjector: ((Int, Float, Float, Int) -> Unit)? = null
+
     // Track gesture state for Accessibility fallback
     private var lastDownX = 0f
     private var lastDownY = 0f
@@ -34,6 +37,14 @@ class TouchInjector(
 
     init {
         tryInitShizukuInputManager()
+    }
+
+    /**
+     * Set a virtual display input injector.
+     * When set, touch events are routed to the virtual display instead of the main screen.
+     */
+    fun setVirtualDisplayInjector(injector: ((Int, Float, Float, Int) -> Unit)?) {
+        virtualDisplayInjector = injector
     }
 
     private fun tryInitShizukuInputManager() {
@@ -68,7 +79,11 @@ class TouchInjector(
             activePointers.remove(event.pointerId)
         }
 
-        if (useShizuku) {
+        // Route to virtual display if active, otherwise use main screen injection
+        val vdInjector = virtualDisplayInjector
+        if (vdInjector != null) {
+            vdInjector(action, absX, absY, event.pointerId)
+        } else if (useShizuku) {
             injectViaInputManager(action, absX, absY, event.pointerId)
         } else {
             injectViaAccessibility(action, absX, absY)
