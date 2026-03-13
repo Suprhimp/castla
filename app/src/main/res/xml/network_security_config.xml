@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Cleartext (HTTP) is required because the mirroring server runs locally on the phone
+        and the Tesla browser connects to it over the LAN. TLS is not practical for a local
+        ephemeral server. Access control is enforced via per-session random token instead.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

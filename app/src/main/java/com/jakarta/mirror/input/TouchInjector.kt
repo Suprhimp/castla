@@ -2,9 +2,10 @@ package com.jakarta.mirror.input
 
 import android.os.SystemClock
 import android.util.Log
-import android.view.InputEvent
+import android.view.InputDevice
 import android.view.MotionEvent
 import com.jakarta.mirror.server.MirrorServer
+import java.lang.reflect.Method
 
 /**
  * Injects touch events into the Android input system.
@@ -16,11 +17,39 @@ class TouchInjector(
 ) {
     companion object {
         private const val TAG = "TouchInjector"
+        private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
     }
 
-    // Track active pointers for multi-touch
     private val activePointers = mutableMapOf<Int, Pair<Float, Float>>()
-    private var inputManager: Any? = null // IInputManager via Shizuku, set later
+
+    // Shizuku-based IInputManager
+    private var inputManagerInstance: Any? = null
+    private var injectMethod: Method? = null
+    private var useShizuku = false
+
+    // Track gesture state for Accessibility fallback
+    private var lastDownX = 0f
+    private var lastDownY = 0f
+    private var downTime = 0L
+
+    init {
+        tryInitShizukuInputManager()
+    }
+
+    private fun tryInitShizukuInputManager() {
+        try {
+            // Get InputManager via hidden API (requires Shizuku elevated privileges)
+            val imClass = Class.forName("android.hardware.input.InputManager")
+            val getInstance = imClass.getMethod("getInstance")
+            inputManagerInstance = getInstance.invoke(null)
+            injectMethod = imClass.getMethod("injectInputEvent", android.view.InputEvent::class.java, Int::class.javaPrimitiveType)
+            useShizuku = true
+            Log.i(TAG, "Shizuku InputManager initialized")
+        } catch (e: Exception) {
+            Log.w(TAG, "Shizuku InputManager unavailable, using Accessibility fallback", e)
+            useShizuku = false
+        }
+    }
 
     fun onTouchEvent(event: MirrorServer.TouchEvent) {
         val absX = event.x * displayWidth
@@ -39,9 +68,55 @@ class TouchInjector(
             activePointers.remove(event.pointerId)
         }
 
-        val motionEvent = createMotionEvent(action, absX, absY, event.pointerId)
-        injectEvent(motionEvent)
-        motionEvent.recycle()
+        if (useShizuku) {
+            injectViaInputManager(action, absX, absY, event.pointerId)
+        } else {
+            injectViaAccessibility(action, absX, absY)
+        }
+    }
+
+    private fun injectViaInputManager(action: Int, x: Float, y: Float, pointerId: Int) {
+        val motionEvent = createMotionEvent(action, x, y, pointerId)
+        try {
+            injectMethod?.invoke(inputManagerInstance, motionEvent, INJECT_INPUT_EVENT_MODE_ASYNC)
+        } catch (e: Exception) {
+            Log.e(TAG, "InputManager inject failed", e)
+            // Fall back to accessibility on failure
+            useShizuku = false
+            injectViaAccessibility(action, x, y)
+        } finally {
+            motionEvent.recycle()
+        }
+    }
+
+    private fun injectViaAccessibility(action: Int, x: Float, y: Float) {
+        val service = InputService.instance
+        if (service == null) {
+            Log.w(TAG, "Accessibility service not connected, touch dropped")
+            return
+        }
+
+        when (action) {
+            MotionEvent.ACTION_DOWN -> {
+                lastDownX = x
+                lastDownY = y
+                downTime = SystemClock.uptimeMillis()
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = Math.abs(x - lastDownX)
+                val dy = Math.abs(y - lastDownY)
+                val duration = SystemClock.uptimeMillis() - downTime
+
+                if (dx < 20f && dy < 20f && duration < 300) {
+                    // Short, stationary — tap
+                    service.tap(x, y)
+                } else {
+                    // Movement — swipe
+                    service.swipe(lastDownX, lastDownY, x, y, duration.coerceAtLeast(100))
+                }
+            }
+            // ACTION_MOVE: accumulated for swipe end detection, no immediate dispatch needed
+        }
     }
 
     private fun createMotionEvent(action: Int, x: Float, y: Float, pointerId: Int): MotionEvent {
@@ -84,18 +159,14 @@ class TouchInjector(
             1.0f,      // yPrecision
             0,         // deviceId
             0,         // edgeFlags
-            0,         // source (touchscreen)
+            InputDevice.SOURCE_TOUCHSCREEN,
             0          // flags
         )
     }
 
-    private fun injectEvent(event: MotionEvent) {
-        // TODO: Use Shizuku InputManager for injection
-        // For now, log the event (Phase 5 will add Shizuku integration)
-        Log.d(TAG, "Inject: action=${event.action} x=${event.x} y=${event.y}")
-    }
-
     fun release() {
         activePointers.clear()
+        inputManagerInstance = null
+        injectMethod = null
     }
 }

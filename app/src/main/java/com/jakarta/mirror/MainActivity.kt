@@ -1,11 +1,13 @@
 package com.jakarta.mirror
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.media.projection.MediaProjectionManager
-import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,17 +16,45 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.jakarta.mirror.network.NetworkMonitor
+import com.jakarta.mirror.network.NetworkState
 import com.jakarta.mirror.service.MirrorForegroundService
-import java.net.Inet4Address
-import java.net.NetworkInterface
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private var isStreaming by mutableStateOf(false)
     private var serverUrl by mutableStateOf("")
+    private var currentIp by mutableStateOf("0.0.0.0")
+    private var sessionToken by mutableStateOf("")
+
+    private lateinit var networkMonitor: NetworkMonitor
+    private var mirrorService: MirrorForegroundService? = null
+    private var serviceBound = false
+    private var bindRequested = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val localBinder = binder as MirrorForegroundService.LocalBinder
+            mirrorService = localBinder.service
+            // Read token directly from the bound service — no timing dependency
+            sessionToken = localBinder.service.sessionToken ?: ""
+            isStreaming = localBinder.service.isRunning
+            updateServerUrl()
+            serviceBound = true
+            bindRequested = false
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            mirrorService = null
+            serviceBound = false
+        }
+    }
 
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -36,7 +66,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        serverUrl = "http://${getDeviceIp()}:8080"
+
+        networkMonitor = NetworkMonitor(this)
+        networkMonitor.startMonitoring()
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                networkMonitor.state.collect { state ->
+                    when (state) {
+                        is NetworkState.Connected -> {
+                            currentIp = state.ip
+                            updateServerUrl()
+                        }
+                        is NetworkState.Disconnected -> {
+                            currentIp = "0.0.0.0"
+                            updateServerUrl()
+                        }
+                    }
+                }
+            }
+        }
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -50,6 +99,37 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Rebind to an already-running service (e.g. after activity recreation)
+        if (!serviceBound && !bindRequested) {
+            val intent = Intent(this, MirrorForegroundService::class.java)
+            bindRequested = bindService(intent, serviceConnection, 0)
+        }
+    }
+
+    override fun onStop() {
+        if (serviceBound || bindRequested) {
+            try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
+            serviceBound = false
+            bindRequested = false
+        }
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        networkMonitor.stopMonitoring()
+        super.onDestroy()
+    }
+
+    private fun updateServerUrl() {
+        serverUrl = if (sessionToken.isNotEmpty()) {
+            "http://${currentIp}:8080/?token=${sessionToken}"
+        } else {
+            "http://${currentIp}:8080"
+        }
+    }
+
     private fun requestScreenCapture() {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
@@ -60,31 +140,28 @@ class MainActivity : ComponentActivity() {
             putExtra(MirrorForegroundService.EXTRA_RESULT_CODE, resultCode)
             putExtra(MirrorForegroundService.EXTRA_DATA, data)
         }
+        // Start as foreground service, then bind to read token
         startForegroundService(intent)
+        if (serviceBound || bindRequested) {
+            try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
+            serviceBound = false
+            bindRequested = false
+        }
+        bindRequested = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         isStreaming = true
     }
 
     private fun stopMirrorService() {
+        if (serviceBound || bindRequested) {
+            try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
+            serviceBound = false
+            bindRequested = false
+        }
         stopService(Intent(this, MirrorForegroundService::class.java))
+        mirrorService = null
         isStreaming = false
-    }
-
-    private fun getDeviceIp(): String {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val networkInterface = interfaces.nextElement()
-                if (networkInterface.isLoopback || !networkInterface.isUp) continue
-                val addresses = networkInterface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val address = addresses.nextElement()
-                    if (address is Inet4Address && !address.isLoopbackAddress) {
-                        return address.hostAddress ?: "0.0.0.0"
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return "0.0.0.0"
+        sessionToken = ""
+        updateServerUrl()
     }
 }
 
@@ -144,7 +221,7 @@ fun MainScreen(
                         Text(
                             text = serverUrl,
                             style = MaterialTheme.typography.titleLarge,
-                            fontSize = 20.sp
+                            fontSize = 14.sp
                         )
                     }
                 }

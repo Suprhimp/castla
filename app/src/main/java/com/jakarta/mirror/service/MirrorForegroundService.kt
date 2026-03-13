@@ -6,7 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
+import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -26,12 +26,26 @@ class MirrorForegroundService : Service() {
         const val EXTRA_DATA = "data"
     }
 
+    /** Binder for local (same-process) binding */
+    inner class LocalBinder : Binder() {
+        val service: MirrorForegroundService get() = this@MirrorForegroundService
+    }
+
+    private val binder = LocalBinder()
+
     private var mirrorServer: MirrorServer? = null
     private var screenCapture: ScreenCaptureManager? = null
     private var videoEncoder: VideoEncoder? = null
     private var touchInjector: TouchInjector? = null
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    /** Session token — available immediately after pipeline starts */
+    val sessionToken: String?
+        get() = mirrorServer?.sessionToken
+
+    val isRunning: Boolean
+        get() = mirrorServer != null
+
+    override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onCreate() {
         super.onCreate()

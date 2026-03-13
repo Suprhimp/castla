@@ -20,6 +20,7 @@
     let overlayTimer = null;
 
     const host = window.location.host;
+    const token = new URLSearchParams(window.location.search).get('token') || '';
 
     function setStatus(text, className) {
         statusEl.textContent = text;
@@ -47,17 +48,18 @@
                 }
             );
             await decoder.init();
-        } else if (FallbackDecoder.isSupported()) {
-            console.log('[Main] WebCodecs unavailable, using MSE fallback');
-            decoder = new FallbackDecoder(() => {}, console.error);
-            await decoder.init(canvas);
         } else {
-            throw new Error('No supported video decoder found');
+            // WebCodecs not available — show unsupported message
+            // Tesla browser (Chromium 109) supports WebCodecs, so this should rarely trigger
+            throw new Error(
+                'WebCodecs API not available. ' +
+                'This browser requires Chromium 94+ (Tesla browser is supported).'
+            );
         }
     }
 
     function connectVideo() {
-        const wsUrl = `ws://${host}/ws/video`;
+        const wsUrl = `ws://${host}/ws/video?token=${encodeURIComponent(token)}`;
         console.log('[Main] Connecting video:', wsUrl);
         setStatus('Connecting...', '');
 
@@ -90,7 +92,7 @@
     }
 
     function connectControl() {
-        const wsUrl = `ws://${host}/ws/control`;
+        const wsUrl = `ws://${host}/ws/control?token=${encodeURIComponent(token)}`;
         controlSocket = new WebSocket(wsUrl);
 
         controlSocket.onopen = () => {
