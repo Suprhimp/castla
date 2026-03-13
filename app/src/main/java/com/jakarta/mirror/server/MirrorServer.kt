@@ -59,7 +59,7 @@ class MirrorServer(
         val deadSockets = mutableListOf<VideoStreamSocket>()
         for (socket in videoSockets) {
             try {
-                socket.send(frame)
+                socket.sendBinary(frame)
             } catch (e: IOException) {
                 Log.w(TAG, "Failed to send frame to client", e)
                 deadSockets.add(socket)
