@@ -1,5 +1,5 @@
 /**
- * Jakarta Mirror - Main Client
+ * Castla - Main Client
  * Connects to the Android phone's WebSocket server and displays the mirrored screen
  */
 (function() {
@@ -159,7 +159,7 @@
             await initDecoder();
             connect();
             startStats();
-            console.log('[Main] Jakarta Mirror client started');
+            console.log('[Main] Castla client started');
         } catch (e) {
             console.error('[Main] Init failed:', e);
             setStatus('Init Failed: ' + e.message, 'error');

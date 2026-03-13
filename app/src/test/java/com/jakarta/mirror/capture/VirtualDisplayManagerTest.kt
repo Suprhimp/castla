@@ -59,4 +59,19 @@ class VirtualDisplayManagerTest {
         val display = manager.createVirtualDisplay(0, 0, 0, surface)
         assertNull(display)
     }
+
+    @Test
+    fun `hasVirtualDisplay returns false initially`() {
+        assertFalse(manager.hasVirtualDisplay())
+    }
+
+    @Test
+    fun `getDisplayId returns -1 initially`() {
+        assertEquals(-1, manager.getDisplayId())
+    }
+
+    @Test
+    fun `injectInput does not crash when no display active`() {
+        manager.injectInput(0, 0f, 0f, 0) // should not throw
+    }
 }

@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.InputEvent
 import android.view.MotionEvent
+import android.view.Surface
 import java.lang.reflect.Method
 
 /**
@@ -17,8 +18,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     companion object {
         private const val TAG = "PrivilegedService"
-        private const val DISPLAY_FLAG_PUBLIC = 1 shl 0  // VIRTUAL_DISPLAY_FLAG_PUBLIC
-        private const val DISPLAY_FLAG_OWN_CONTENT_ONLY = 1 shl 3
+        // VIRTUAL_DISPLAY_FLAG_PUBLIC: system renders home/launcher on this display
+        private const val DISPLAY_FLAG_PUBLIC = 1 shl 0
     }
 
     private val virtualDisplays = mutableMapOf<Int, VirtualDisplay>()
@@ -76,7 +77,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
                 height,
                 dpi,
                 null,    // surface (set later)
-                DISPLAY_FLAG_PUBLIC or DISPLAY_FLAG_OWN_CONTENT_ONLY,
+                DISPLAY_FLAG_PUBLIC,
                 null,    // callback
                 null,    // handler
                 null     // uniqueId
@@ -95,6 +96,16 @@ class PrivilegedService : IPrivilegedService.Stub() {
             Log.e(TAG, "Failed to create virtual display", e)
             -1
         }
+    }
+
+    override fun setSurface(displayId: Int, surface: Surface?) {
+        val display = virtualDisplays[displayId]
+        if (display == null) {
+            Log.w(TAG, "setSurface: no display with id=$displayId")
+            return
+        }
+        display.surface = surface
+        Log.i(TAG, "Surface attached to virtual display $displayId")
     }
 
     override fun releaseVirtualDisplay(displayId: Int) {
