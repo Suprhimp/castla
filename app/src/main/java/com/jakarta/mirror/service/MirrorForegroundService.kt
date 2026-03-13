@@ -22,7 +22,7 @@ class MirrorForegroundService : Service() {
 
     companion object {
         private const val TAG = "MirrorService"
-        private const val CHANNEL_ID = "jakarta_mirror"
+        private const val CHANNEL_ID = "castla_mirror"
         private const val NOTIFICATION_ID = 1
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
@@ -82,7 +82,7 @@ class MirrorForegroundService : Service() {
 
     private fun startPipeline(resultCode: Int, data: Intent) {
         try {
-            // 1. Initialize screen capture
+            // 1. Initialize screen capture (always needed — provides resolution + fallback)
             screenCapture = ScreenCaptureManager(this).also {
                 it.initProjection(resultCode, data)
             }
@@ -97,10 +97,7 @@ class MirrorForegroundService : Service() {
                 // 3. Initialize touch injector
                 touchInjector = TouchInjector(width, height)
 
-                // 4. Try Shizuku virtual display for independent phone operation
-                trySetupVirtualDisplay(width, height, surface)
-
-                // 5. Start the web server
+                // 4. Start the web server
                 mirrorServer = MirrorServer(this).also { server ->
                     server.setKeyframeRequester { encoder.requestKeyFrame() }
                     server.setTouchListener { event -> touchInjector?.onTouchEvent(event) }
@@ -108,14 +105,21 @@ class MirrorForegroundService : Service() {
                     Log.i(TAG, "Server started on port 8080")
                 }
 
-                // 6. Start encoding — frames go to server
+                // 5. Start encoding — frames go to server
                 encoder.start { frameData, isKeyFrame ->
                     mirrorServer?.broadcastFrame(frameData, isKeyFrame)
                 }
 
-                // 7. Start screen capture into encoder's surface
-                // Uses MediaProjection mirror if Shizuku virtual display not available
-                screenCapture!!.startCapture(surface)
+                // 6. Try Shizuku virtual display for independent phone operation
+                // If Shizuku succeeds: VD renders onto encoder surface, touch goes to VD
+                // If Shizuku fails: fall back to MediaProjection screen mirror
+                trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
+                    if (!shizukuActive) {
+                        // Shizuku unavailable — capture main screen via MediaProjection
+                        screenCapture?.startCapture(surface)
+                        Log.i(TAG, "Using MediaProjection screen mirror")
+                    }
+                }
             }
 
             Log.i(TAG, "Pipeline started: ${width}x${height}")
@@ -127,18 +131,28 @@ class MirrorForegroundService : Service() {
 
     /**
      * Attempt to set up a Shizuku-powered virtual display.
-     * If Shizuku is available and permitted, creates a virtual display so the phone
-     * can operate independently while Tesla shows the mirrored content.
-     * Falls back silently to MediaProjection mirror if Shizuku is unavailable.
+     *
+     * If Shizuku is available: creates a virtual display with the encoder's surface,
+     * so VD content renders directly into the encoder. Touch events are routed to the VD.
+     * The phone screen operates independently.
+     *
+     * If Shizuku is unavailable: calls onResult(false) so the caller can fall back
+     * to MediaProjection screen mirroring.
      */
-    private fun trySetupVirtualDisplay(width: Int, height: Int, surface: android.view.Surface) {
+    private fun trySetupVirtualDisplay(
+        width: Int,
+        height: Int,
+        surface: android.view.Surface,
+        onResult: (Boolean) -> Unit
+    ) {
         try {
             val setup = ShizukuSetup()
             setup.init()
 
             if (!setup.isAvailable() || !setup.hasPermission()) {
-                Log.i(TAG, "Shizuku not available/permitted, using MediaProjection mirror")
+                Log.i(TAG, "Shizuku not available/permitted")
                 setup.release()
+                onResult(false)
                 return
             }
 
@@ -148,20 +162,27 @@ class MirrorForegroundService : Service() {
 
             vdm.bindShizukuService { bound ->
                 if (bound) {
+                    // Create VD with encoder surface attached — content renders into encoder
                     vdm.createVirtualDisplay(width, height, 160, surface)
                     if (vdm.hasVirtualDisplay()) {
                         Log.i(TAG, "Virtual display active — phone operates independently")
-                        // Route touch events to virtual display
+                        // Route touch events to virtual display (not main screen)
                         touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                             vdm.injectInput(action, x, y, pointerId)
                         }
+                        onResult(true)
+                    } else {
+                        Log.w(TAG, "VD creation failed, falling back")
+                        onResult(false)
                     }
                 } else {
-                    Log.w(TAG, "Shizuku service bind failed, using MediaProjection mirror")
+                    Log.w(TAG, "Shizuku service bind failed")
+                    onResult(false)
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Shizuku setup failed, using MediaProjection mirror", e)
+            Log.w(TAG, "Shizuku setup failed", e)
+            onResult(false)
         }
     }
 
@@ -196,7 +217,7 @@ class MirrorForegroundService : Service() {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Jakarta Mirror")
+            .setContentTitle("Castla")
             .setContentText("Streaming to Tesla")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)

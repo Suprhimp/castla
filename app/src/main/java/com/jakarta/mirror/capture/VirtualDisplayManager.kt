@@ -101,12 +101,19 @@ class VirtualDisplayManager {
         }
 
         return try {
-            val id = service.createVirtualDisplay(width, height, dpi, "JakartaMirror")
+            val id = service.createVirtualDisplay(width, height, dpi, "Castla")
             if (id >= 0) {
+                // Attach the encoder's Surface so VD content renders into the encoder
+                try {
+                    service.setSurface(id, surface)
+                } catch (e: Exception) {
+                    Log.e(TAG, "setSurface failed, releasing VD", e)
+                    service.releaseVirtualDisplay(id)
+                    displayId = -1
+                    return null
+                }
                 displayId = id
-                Log.i(TAG, "Virtual display created via Shizuku: id=$id, ${width}x${height}")
-                // The actual VirtualDisplay object lives in the privileged process.
-                // We track displayId for input injection and release.
+                Log.i(TAG, "Virtual display created via Shizuku: id=$id, ${width}x${height}, surface attached")
                 null
             } else {
                 Log.e(TAG, "Shizuku returned invalid display ID")
@@ -114,6 +121,7 @@ class VirtualDisplayManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create virtual display via Shizuku", e)
+            displayId = -1
             null
         }
     }

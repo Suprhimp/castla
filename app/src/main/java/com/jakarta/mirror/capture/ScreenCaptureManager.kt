@@ -15,7 +15,7 @@ class ScreenCaptureManager(private val context: Context) {
 
     companion object {
         private const val TAG = "ScreenCaptureManager"
-        private const val VIRTUAL_DISPLAY_NAME = "JakartaMirror"
+        private const val VIRTUAL_DISPLAY_NAME = "Castla"
     }
 
     private var mediaProjection: MediaProjection? = null
