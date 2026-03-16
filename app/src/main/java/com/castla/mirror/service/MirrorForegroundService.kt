@@ -344,25 +344,30 @@ class MirrorForegroundService : Service() {
     private fun injectText(text: String) {
         serviceScope.launch(Dispatchers.IO) {
             try {
-                // Escape special shell characters
-                val escaped = text.replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("'", "\\'")
-                    .replace(" ", "%s") // `input text` uses %s for space
-                    .replace("&", "\\&")
-                    .replace("|", "\\|")
-                    .replace(";", "\\;")
-                    .replace("(", "\\(")
-                    .replace(")", "\\)")
                 val displayId = virtualDisplayManager?.getDisplayId() ?: -1
-                val cmd = if (displayId > 0) {
-                    "input -d $displayId text \"$escaped\""
+                // Must run via Shizuku (uid 2000) — app uid can't use `input` command
+                val service = shizukuSetup?.privilegedService
+                if (service != null) {
+                    // Escape special shell characters
+                    val escaped = text.replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("'", "\\'")
+                        .replace(" ", "%s") // `input text` uses %s for space
+                        .replace("&", "\\&")
+                        .replace("|", "\\|")
+                        .replace(";", "\\;")
+                        .replace("(", "\\(")
+                        .replace(")", "\\)")
+                    val cmd = if (displayId > 0) {
+                        "input -d $displayId text \"$escaped\""
+                    } else {
+                        "input text \"$escaped\""
+                    }
+                    service.execCommand(cmd)
+                    Log.i(TAG, "Text injected via Shizuku: ${text.length} chars")
                 } else {
-                    "input text \"$escaped\""
+                    Log.w(TAG, "Text injection failed: Shizuku not available")
                 }
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                process.waitFor()
-                Log.i(TAG, "Text injected: ${text.length} chars")
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
             }

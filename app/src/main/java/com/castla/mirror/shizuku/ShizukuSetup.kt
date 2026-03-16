@@ -28,7 +28,8 @@ class ShizukuSetup {
     private val _serviceConnected = MutableStateFlow(false)
     val serviceConnected: StateFlow<Boolean> = _serviceConnected
 
-    private var privilegedService: IPrivilegedService? = null
+    var privilegedService: IPrivilegedService? = null
+        private set
 
     private val serviceArgs = Shizuku.UserServiceArgs(
         ComponentName(

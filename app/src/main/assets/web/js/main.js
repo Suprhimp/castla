@@ -12,7 +12,6 @@
 
     let videoSocket = null;
     let controlSocket = null;
-    let audioSocket = null;
     let decoder = null;
     let renderer = null;
     let touchHandler = null;
@@ -196,40 +195,29 @@
         };
     }
 
-    function connectAudio() {
-        if (!AudioPlayer.isSupported()) {
-            console.log('[Main] Web Audio not supported, skipping audio');
+    /**
+     * Set up the unmute overlay — audio starts only after user tap (autoplay policy).
+     * WebSocket connection + AudioDecoder are created inside the gesture handler.
+     */
+    function setupUnmuteOverlay() {
+        const unmuteOverlay = document.getElementById('unmute-overlay');
+        if (!unmuteOverlay || !AudioPlayer.isSupported()) {
+            if (unmuteOverlay) unmuteOverlay.classList.add('hidden');
             return;
         }
 
-        audioPlayer = new AudioPlayer();
-        if (!audioPlayer.init()) return;
-
-        const wsUrl = `ws://${host}/ws/audio`;
-        audioSocket = new WebSocket(wsUrl);
-        audioSocket.binaryType = 'arraybuffer';
-
-        audioSocket.onopen = () => {
-            console.log('[Main] Audio connected');
-            // Resume AudioContext on first user interaction (browser autoplay policy)
-            const resumeAudio = () => {
-                audioPlayer.resume();
-                document.removeEventListener('touchstart', resumeAudio);
-                document.removeEventListener('click', resumeAudio);
-            };
-            document.addEventListener('touchstart', resumeAudio, { once: true });
-            document.addEventListener('click', resumeAudio, { once: true });
-        };
-
-        audioSocket.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer && audioPlayer) {
-                audioPlayer.feed(new Uint8Array(event.data));
+        unmuteOverlay.addEventListener('click', async () => {
+            audioPlayer = new AudioPlayer();
+            const wsUrl = `ws://${host}/ws/audio`;
+            const ok = await audioPlayer.startFromUserGesture(wsUrl);
+            if (ok) {
+                unmuteOverlay.classList.add('hidden');
+                console.log('[Main] Audio started via user gesture');
+            } else {
+                console.warn('[Main] Audio init failed');
+                audioPlayer = null;
             }
-        };
-
-        audioSocket.onclose = () => {
-            console.log('[Main] Audio disconnected');
-        };
+        }, { once: true });
     }
 
     function scheduleReconnect() {
@@ -244,7 +232,7 @@
         cleanup();
         connectVideo();
         connectControl();
-        connectAudio();
+        setupUnmuteOverlay();
     }
 
     function cleanup() {
@@ -260,9 +248,6 @@
         }
         if (controlSocket) {
             controlSocket.close();
-        }
-        if (audioSocket) {
-            audioSocket.close();
         }
         if (audioPlayer) {
             audioPlayer.stop();
