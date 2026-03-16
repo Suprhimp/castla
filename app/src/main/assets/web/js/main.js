@@ -317,12 +317,23 @@
     const kbInput = document.getElementById('keyboard-input');
     const kbBtn = document.getElementById('keyboard-btn');
 
+    let kbOpen = false;
     if (kbBtn && kbInput) {
         kbBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            kbInput.style.pointerEvents = 'auto';
-            kbInput.focus();
-            // Tesla browser should pop up its native keyboard
+            if (kbOpen) {
+                // Close keyboard
+                kbInput.blur();
+                kbInput.style.pointerEvents = 'none';
+                kbOpen = false;
+                kbBtn.textContent = '⌨';
+            } else {
+                // Open keyboard
+                kbInput.style.pointerEvents = 'auto';
+                kbInput.focus();
+                kbOpen = true;
+                kbBtn.textContent = '✕';
+            }
         });
 
         // Capture input and send to server
@@ -342,9 +353,11 @@
             }
         });
 
-        // Hide keyboard input pointer events when blurred
+        // Sync state when keyboard dismissed externally
         kbInput.addEventListener('blur', () => {
             kbInput.style.pointerEvents = 'none';
+            kbOpen = false;
+            kbBtn.textContent = '⌨';
         });
     }
 
