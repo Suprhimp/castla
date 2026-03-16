@@ -42,6 +42,8 @@ class MirrorForegroundService : Service() {
         const val EXTRA_BITRATE = "bitrate"
         const val EXTRA_FPS = "fps"
         const val EXTRA_AUDIO = "audio_enabled"
+        const val EXTRA_MIRRORING_MODE = "mirroring_mode"
+        const val EXTRA_TARGET_PACKAGE = "target_package"
     }
 
     /** Binder for local (same-process) binding */
@@ -63,8 +65,13 @@ class MirrorForegroundService : Service() {
     private var currentHeight: Int = 0
     private var currentBitrate: Int = 2_000_000
     private var currentFps: Int = 30
+    private var mirroringMode: String = "FULL_SCREEN"
+    private var targetPackage: String = ""
+    private var browserConnectionListener: ((Boolean) -> Unit)? = null
     private var serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var resizeJob: Job? = null
+    private var browserConnected = false
+    private var currentVdApp: String = "com.android.settings" // what's running on VD
 
     /** Session PIN — available immediately after pipeline starts */
     val sessionPin: String?
@@ -72,6 +79,11 @@ class MirrorForegroundService : Service() {
 
     val isRunning: Boolean
         get() = mirrorServer != null
+
+    fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
+        browserConnectionListener = listener
+        mirrorServer?.setBrowserConnectionListener(listener)
+    }
 
     override fun onBind(intent: Intent?): IBinder = binder
 
@@ -114,6 +126,8 @@ class MirrorForegroundService : Service() {
         val settingsBitrate = intent.getIntExtra(EXTRA_BITRATE, 2_000_000)
         val settingsFps = intent.getIntExtra(EXTRA_FPS, 30)
         val audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, false)
+        mirroringMode = intent.getStringExtra(EXTRA_MIRRORING_MODE) ?: "FULL_SCREEN"
+        targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
 
         startPipeline(resultCode, data, settingsWidth, settingsHeight, settingsBitrate, settingsFps, audioEnabled)
 
@@ -156,6 +170,19 @@ class MirrorForegroundService : Service() {
                     server.setTouchListener { event -> touchInjector?.onTouchEvent(event) }
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
+
+                    // Internal listener: when browser connects, launch target app on VD
+                    server.setBrowserConnectionListener { connected ->
+                        if (connected && !browserConnected) {
+                            browserConnected = true
+                            onBrowserConnected()
+                        } else if (!connected) {
+                            browserConnected = false
+                        }
+                        // Forward to external listener (UI)
+                        browserConnectionListener?.invoke(connected)
+                    }
+
                     server.start(0) // no read timeout — WebSockets stay open indefinitely
                     Log.i(TAG, "Server started on port 8080")
                 }
@@ -165,15 +192,30 @@ class MirrorForegroundService : Service() {
                     mirrorServer?.broadcastFrame(frameData, isKeyFrame)
                 }
 
-                // 6. Try Shizuku virtual display for independent phone operation
-                // If Shizuku succeeds: VD renders onto encoder surface, touch goes to VD
-                // If Shizuku fails: fall back to MediaProjection screen mirror
+                // 6. Try Shizuku virtual display for viewport matching + touch injection.
+                // Both modes use VD when Shizuku is available.
+                // APP mode: launches selected app on VD.
+                // FULL_SCREEN mode: VD shows home/launcher (no specific app).
+                // If Shizuku unavailable: fall back to MediaProjection (FULL_SCREEN only).
                 trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
-                    if (!shizukuActive) {
-                        // Shizuku unavailable — capture main screen via MediaProjection
+                    if (shizukuActive) {
+                        // Launch initial content on VD based on mirroring mode
+                        if (mirroringMode == "FULL_SCREEN") {
+                            // Full screen: launch home screen on VD
+                            virtualDisplayManager?.launchHomeOnDisplay()
+                            currentVdApp = "HOME"
+                        } else if (mirroringMode == "APP" && targetPackage.isNotEmpty()) {
+                            // Single app: launch the target app immediately
+                            virtualDisplayManager?.launchAppOnDisplay(targetPackage)
+                            currentVdApp = targetPackage
+                        }
+                    } else if (mirroringMode == "APP") {
+                        Log.e(TAG, "APP mode requires Shizuku — cannot fall back to MediaProjection")
+                    } else {
+                        // FULL_SCREEN fallback: capture phone screen via MediaProjection
                         try {
                             screenCapture?.startCapture(surface, width, height)
-                            Log.i(TAG, "Using MediaProjection screen mirror at ${width}x${height}")
+                            Log.i(TAG, "Full screen mirroring via MediaProjection at ${width}x${height}")
                         } catch (e: Exception) {
                             Log.e(TAG, "MediaProjection fallback failed", e)
                         }
@@ -273,6 +315,15 @@ class MirrorForegroundService : Service() {
     }
 
     /**
+     * Called when the first browser client connects.
+     * Switches VD from placeholder (Settings) to the actual target app.
+     */
+    private fun onBrowserConnected() {
+        Log.i(TAG, "Browser connected — mode=$mirroringMode, currentVdApp=$currentVdApp")
+        // No action needed — apps are launched when VD is created
+    }
+
+    /**
      * Called when the Tesla browser reports its viewport dimensions.
      * Debounces by cancelling any previous resize job.
      */
@@ -340,6 +391,12 @@ class MirrorForegroundService : Service() {
                 if (virtualDisplayManager?.hasVirtualDisplay() == true) {
                     touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                         virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                    }
+                    // Re-launch whatever was running on VD before rebuild
+                    if (currentVdApp == "HOME") {
+                        virtualDisplayManager?.launchHomeOnDisplay()
+                    } else if (currentVdApp.isNotEmpty()) {
+                        virtualDisplayManager?.launchAppOnDisplay(currentVdApp)
                     }
                     Log.i(TAG, "Virtual display recreated at ${width}x${height}")
                 } else {

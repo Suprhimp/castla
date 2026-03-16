@@ -24,6 +24,7 @@ class MirrorServer(
     private var keyframeRequester: (() -> Unit)? = null
     private var codecModeListener: ((String) -> Unit)? = null
     private var viewportChangeListener: ((Int, Int) -> Unit)? = null
+    private var browserConnectionListener: ((Boolean) -> Unit)? = null
 
     /** Random 4-digit PIN generated on each server start for authentication */
     val sessionPin: String = generatePin()
@@ -59,6 +60,10 @@ class MirrorServer(
 
     fun setViewportChangeListener(listener: (Int, Int) -> Unit) {
         viewportChangeListener = listener
+    }
+
+    fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
+        browserConnectionListener = listener
     }
 
     fun onViewportChange(width: Int, height: Int) {
@@ -108,11 +113,17 @@ class MirrorServer(
     fun registerControlSocket(socket: ControlSocket) {
         controlSockets.add(socket)
         Log.i(TAG, "Control client connected (total: ${controlSockets.size})")
+        if (controlSockets.size == 1) {
+            browserConnectionListener?.invoke(true)
+        }
     }
 
     fun unregisterControlSocket(socket: ControlSocket) {
         controlSockets.remove(socket)
         Log.i(TAG, "Control client disconnected (total: ${controlSockets.size})")
+        if (controlSockets.isEmpty()) {
+            browserConnectionListener?.invoke(false)
+        }
     }
 
     fun registerAudioSocket(socket: AudioStreamSocket) {

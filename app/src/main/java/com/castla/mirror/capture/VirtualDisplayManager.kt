@@ -145,6 +145,32 @@ class VirtualDisplayManager {
         }
     }
 
+    /** Launch the home screen on the virtual display. */
+    fun launchHomeOnDisplay(): Boolean {
+        if (displayId < 0) return false
+        return try {
+            privilegedService?.launchHomeOnDisplay(displayId)
+            Log.i(TAG, "Launched HOME on virtual display $displayId")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch HOME on virtual display", e)
+            false
+        }
+    }
+
+    /** Launch an app on the virtual display. */
+    fun launchAppOnDisplay(packageName: String): Boolean {
+        if (displayId < 0 || packageName.isEmpty()) return false
+        return try {
+            privilegedService?.launchAppOnDisplay(displayId, packageName)
+            Log.i(TAG, "Launched $packageName on virtual display $displayId")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch $packageName on virtual display", e)
+            false
+        }
+    }
+
     /**
      * Release just the virtual display, keeping the Shizuku service bound.
      * Use this when rebuilding the pipeline with new dimensions.

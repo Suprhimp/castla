@@ -3,11 +3,16 @@ package com.castla.mirror.ui
 import android.content.Context
 import android.content.SharedPreferences
 
+enum class MirroringMode { FULL_SCREEN, APP }
+
 data class StreamSettings(
     val resolution: Resolution = Resolution.HD_720,
     val bitrate: Int = 2_000_000,
     val fps: Int = 30,
-    val audioEnabled: Boolean = false
+    val audioEnabled: Boolean = false,
+    val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
+    val targetAppPackage: String = "",
+    val targetAppLabel: String = ""
 ) {
     enum class Resolution(val width: Int, val height: Int, val label: String) {
         AUTO(0, 0, "Auto (Tesla)"),
@@ -22,6 +27,9 @@ data class StreamSettings(
         private const val KEY_BITRATE = "bitrate"
         private const val KEY_FPS = "fps"
         private const val KEY_AUDIO = "audio"
+        private const val KEY_MIRRORING_MODE = "mirroring_mode"
+        private const val KEY_TARGET_APP_PACKAGE = "target_app_package"
+        private const val KEY_TARGET_APP_LABEL = "target_app_label"
 
         val BITRATE_OPTIONS = listOf(
             2_000_000 to "2 Mbps",
@@ -40,7 +48,12 @@ data class StreamSettings(
                 } catch (_: Exception) { Resolution.HD_720 },
                 bitrate = prefs.getInt(KEY_BITRATE, 2_000_000),
                 fps = prefs.getInt(KEY_FPS, 30),
-                audioEnabled = prefs.getBoolean(KEY_AUDIO, false)
+                audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
+                mirroringMode = try {
+                    MirroringMode.valueOf(prefs.getString(KEY_MIRRORING_MODE, MirroringMode.FULL_SCREEN.name)!!)
+                } catch (_: Exception) { MirroringMode.FULL_SCREEN },
+                targetAppPackage = prefs.getString(KEY_TARGET_APP_PACKAGE, "") ?: "",
+                targetAppLabel = prefs.getString(KEY_TARGET_APP_LABEL, "") ?: ""
             )
         }
 
@@ -50,6 +63,9 @@ data class StreamSettings(
                 .putInt(KEY_BITRATE, settings.bitrate)
                 .putInt(KEY_FPS, settings.fps)
                 .putBoolean(KEY_AUDIO, settings.audioEnabled)
+                .putString(KEY_MIRRORING_MODE, settings.mirroringMode.name)
+                .putString(KEY_TARGET_APP_PACKAGE, settings.targetAppPackage)
+                .putString(KEY_TARGET_APP_LABEL, settings.targetAppLabel)
                 .apply()
         }
     }

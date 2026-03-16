@@ -64,4 +64,16 @@ interface IPrivilegedService {
      * Returns a diagnostic log string.
      */
     String restartTetheringWithCgnat() = 10;
+
+    /**
+     * Launch an app on a specific virtual display.
+     * Uses am start --display to place the app on the given display.
+     */
+    void launchAppOnDisplay(int displayId, String packageName) = 11;
+
+    /**
+     * Launch the home screen on a specific virtual display.
+     * Uses am start with HOME category.
+     */
+    void launchHomeOnDisplay(int displayId) = 12;
 }
