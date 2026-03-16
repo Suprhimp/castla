@@ -525,18 +525,6 @@ class MainActivity : ComponentActivity() {
     private fun onStartMirroring() {
         Log.i(TAG, "onStartMirroring called")
 
-        // APP mode requires Shizuku
-        if (streamSettings.mirroringMode == MirroringMode.APP) {
-            if (!shizukuRunning) {
-                Toast.makeText(this, "App mirroring requires Shizuku. Please set up Shizuku first.", Toast.LENGTH_LONG).show()
-                return
-            }
-            if (streamSettings.targetAppPackage.isEmpty()) {
-                Toast.makeText(this, "Please select an app to mirror in Settings.", Toast.LENGTH_LONG).show()
-                return
-            }
-        }
-
         // Step 1: Notification permission (Android 13+) — needed for foreground service
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

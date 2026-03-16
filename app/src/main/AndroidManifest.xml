@@ -13,6 +13,9 @@
     <!-- Install APKs (for Shizuku auto-install) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Query all installed apps for VD launcher grid -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
     <!-- Shizuku -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
@@ -34,6 +37,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Launcher for Virtual Display — shows app grid, launched on VD -->
+        <activity
+            android:name=".ui.DesktopActivity"
+            android:exported="true"
+            android:launchMode="standard"
+            android:taskAffinity="com.castla.mirror.desktop"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
 
         <service
             android:name=".service.MirrorForegroundService"

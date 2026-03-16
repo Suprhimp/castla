@@ -63,50 +63,8 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Mirroring Mode
+            // App picker removed — DesktopActivity on VD provides app selection via browser touch
             var showAppPicker by remember { mutableStateOf(false) }
-
-            SettingSection(title = "Mirroring Mode") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = settings.mirroringMode == MirroringMode.FULL_SCREEN,
-                        onClick = {
-                            if (!isStreaming) onSettingsChanged(settings.copy(mirroringMode = MirroringMode.FULL_SCREEN))
-                        },
-                        label = { Text("Full Screen") },
-                        enabled = !isStreaming
-                    )
-                    FilterChip(
-                        selected = settings.mirroringMode == MirroringMode.APP,
-                        onClick = {
-                            if (!isStreaming) onSettingsChanged(settings.copy(mirroringMode = MirroringMode.APP))
-                        },
-                        label = { Text("App") },
-                        enabled = !isStreaming
-                    )
-                }
-                if (settings.mirroringMode == MirroringMode.APP) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (settings.targetAppLabel.isNotEmpty()) {
-                        Text(
-                            text = "Selected: ${settings.targetAppLabel}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
-                    Button(
-                        onClick = { showAppPicker = true },
-                        enabled = !isStreaming,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(if (settings.targetAppLabel.isEmpty()) "Select App" else "Change App")
-                    }
-                }
-            }
 
             if (showAppPicker) {
                 AppPickerDialog(
