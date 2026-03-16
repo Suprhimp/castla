@@ -239,15 +239,9 @@ class DesktopActivity : Activity() {
     }
 
     private fun launchApp(packageName: String, className: String) {
-        // Send broadcast to MirrorForegroundService which has Shizuku access (uid 2000)
-        val intent = Intent("com.castla.mirror.LAUNCH_ON_VD").apply {
-            setPackage("com.castla.mirror")
-            putExtra("package", packageName)
-            putExtra("class", className)
-            putExtra("displayId", displayId)
-        }
-        sendBroadcast(intent)
-        Log.i(TAG, "Requested launch of $packageName/$className on display $displayId")
+        // In-process event bus — no Broadcast/Binder needed (same process as service)
+        com.castla.mirror.utils.AppLaunchBus.requestLaunch(packageName, className)
+        Log.i(TAG, "Requested launch of $packageName on display $displayId")
     }
 
     private fun isNavigationApp(app: AppInfo): Boolean {

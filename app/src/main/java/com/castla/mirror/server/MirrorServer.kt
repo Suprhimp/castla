@@ -29,6 +29,16 @@ class MirrorServer(
     /** Random 4-digit PIN generated on each server start for authentication */
     val sessionPin: String = generatePin()
 
+    /** Disable Nagle algorithm on all client connections for lower latency */
+    override fun createClientHandler(finalAccept: java.net.Socket, inputStream: java.io.InputStream): NanoHTTPD.ClientHandler {
+        try {
+            finalAccept.tcpNoDelay = true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set TCP_NODELAY", e)
+        }
+        return super.createClientHandler(finalAccept, inputStream)
+    }
+
     data class TouchEvent(
         val action: String,
         val x: Float,

@@ -13,7 +13,7 @@ import java.nio.ByteBuffer
 class VideoEncoder(
     private val width: Int,
     private val height: Int,
-    private val bitrate: Int = 2_000_000,
+    private val bitrate: Int = 4_000_000,
     private val fps: Int = 30
 ) {
     companion object {
@@ -43,6 +43,7 @@ class VideoEncoder(
             // Low latency hints
             setInteger(MediaFormat.KEY_LATENCY, 0)
             setInteger(MediaFormat.KEY_PRIORITY, 0) // real-time priority
+            setInteger("max-bframes", 0) // Explicit B-frame disable (Samsung quirk safety)
         }
 
         val encoder = MediaCodec.createEncoderByType(MIME_TYPE)

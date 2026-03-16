@@ -26,7 +26,7 @@ class StreamSettingsTest {
         val settings = StreamSettings()
         assertEquals(StreamSettings.Resolution.HD_720, settings.resolution)
         assertEquals(4_000_000, settings.bitrate)
-        assertEquals(60, settings.fps)
+        assertEquals(30, settings.fps)
         assertFalse(settings.audioEnabled)
     }
 
@@ -35,7 +35,7 @@ class StreamSettingsTest {
         val settings = StreamSettings.load(context)
         assertEquals(StreamSettings.Resolution.HD_720, settings.resolution)
         assertEquals(4_000_000, settings.bitrate)
-        assertEquals(60, settings.fps)
+        assertEquals(30, settings.fps)
         assertFalse(settings.audioEnabled)
     }
 
