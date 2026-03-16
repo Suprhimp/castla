@@ -25,12 +25,24 @@
     let codecMode = 'h264'; // 'h264' (WebCodecs), 'mse' (MSE fMP4), 'mjpeg'
     let lastViewport = { width: 0, height: 0 };
     let awaitingNewDecoder = false;
+    let controlReady = false;
+    let firstFrameReceived = false;
 
     const host = window.location.host;
 
     function setStatus(text, className) {
         statusEl.textContent = text;
         statusEl.className = className || '';
+    }
+
+    function checkReady() {
+        if (controlReady && firstFrameReceived) {
+            // Everything ready — show the video, hide loading
+            overlay.classList.add('hidden');
+            const videoEl = document.getElementById('mse-video');
+            if (videoEl) videoEl.style.opacity = '1';
+            canvas.style.opacity = '1';
+        }
     }
 
     function showOverlay() {
@@ -100,8 +112,7 @@
 
         videoSocket.onopen = () => {
             console.log('[Main] Video connected');
-            setStatus('Connected', 'connected');
-            showOverlay();
+            setStatus('Loading...', '');
             if (kbBtn) kbBtn.style.display = 'block';
         };
 
@@ -112,9 +123,10 @@
                     return;
                 }
                 const v = new Uint8Array(event.data);
-                if (v.length > 0 && v[0] === 0x01 && !window._firstKfLogged) {
+                if (v.length > 0 && v[0] === 0x01 && !firstFrameReceived) {
                     console.log('[Main] First keyframe received, size=' + v.length);
-                    window._firstKfLogged = true;
+                    firstFrameReceived = true;
+                    checkReady();
                 }
                 decoder.decode(event.data);
             }
@@ -139,6 +151,8 @@
 
         controlSocket.onopen = () => {
             console.log('[Main] Control connected');
+            controlReady = true;
+            checkReady();
             if (codecMode === 'mjpeg') {
                 controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
                 console.log('[Main] Requested MJPEG mode from server');
@@ -237,6 +251,8 @@
         clearInterval(pingTimer);
         clearTimeout(viewportTimer);
         awaitingNewDecoder = false;
+        controlReady = false;
+        firstFrameReceived = false;
         lastViewport = { width: 0, height: 0 };
         if (videoSocket) {
             videoSocket.onclose = null; // prevent reconnect loop
