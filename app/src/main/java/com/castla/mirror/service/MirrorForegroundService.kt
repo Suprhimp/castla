@@ -187,6 +187,7 @@ class MirrorForegroundService : Service() {
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
                     server.setTextInputListener { text -> injectText(text) }
+                    server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
 
                     // Internal listener: when browser connects, launch target app on VD
                     server.setBrowserConnectionListener { connected ->
@@ -336,6 +337,27 @@ class MirrorForegroundService : Service() {
     private fun onBrowserConnected() {
         Log.i(TAG, "Browser connected — mode=$mirroringMode, currentVdApp=$currentVdApp")
         // No action needed — apps are launched when VD is created
+    }
+
+    /**
+     * Client requested a different audio codec (e.g. "pcm" when Opus is unsupported).
+     * Restart AudioCapture in the requested mode.
+     */
+    private fun onAudioCodecRequest(codec: String) {
+        if (codec != "pcm") return
+        serviceScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Switching audio to PCM (client doesn't support Opus)")
+            audioCapture?.stop()
+            audioCapture = null
+
+            val projection = screenCapture?.getMediaProjection() ?: return@launch
+            audioCapture = AudioCapture(projection).also { audio ->
+                audio.startPcmOnly { audioData ->
+                    mirrorServer?.broadcastAudio(audioData)
+                }
+            }
+            Log.i(TAG, "Audio restarted in PCM mode")
+        }
     }
 
     private fun onBrowserDisconnected() {

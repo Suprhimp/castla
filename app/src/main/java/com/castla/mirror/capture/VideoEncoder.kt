@@ -32,14 +32,34 @@ class VideoEncoder(
     private var pps: ByteArray? = null
 
     fun createInputSurface(): Surface {
+        // Try High Profile first (15-25% better compression via CABAC + 8x8 transform),
+        // fall back to Baseline if the hardware encoder rejects it
+        // (some Exynos/MediaTek SoCs crash with High Profile + low-latency + no B-frames)
+        return try {
+            createEncoderWithProfile(
+                MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
+                MediaCodecInfo.CodecProfileLevel.AVCLevel4,
+                "High"
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "High Profile failed, falling back to Baseline", e)
+            createEncoderWithProfile(
+                MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
+                MediaCodecInfo.CodecProfileLevel.AVCLevel31,
+                "Baseline"
+            )
+        }
+    }
+
+    private fun createEncoderWithProfile(profile: Int, level: Int, profileName: String): Surface {
         val format = MediaFormat.createVideoFormat(MIME_TYPE, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, KEYFRAME_INTERVAL)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
-            setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+            setInteger(MediaFormat.KEY_PROFILE, profile)
+            setInteger(MediaFormat.KEY_LEVEL, level)
             // Low latency hints
             setInteger(MediaFormat.KEY_LATENCY, 0)
             setInteger(MediaFormat.KEY_PRIORITY, 0) // real-time priority
@@ -51,7 +71,7 @@ class VideoEncoder(
         val surface = encoder.createInputSurface()
         codec = encoder
 
-        Log.i(TAG, "Encoder created: ${width}x${height} @ ${bitrate / 1000}kbps, ${fps}fps")
+        Log.i(TAG, "Encoder created ($profileName): ${width}x${height} @ ${bitrate / 1000}kbps, ${fps}fps")
         return surface
     }
 

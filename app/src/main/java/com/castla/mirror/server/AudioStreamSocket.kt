@@ -23,7 +23,11 @@ class AudioStreamSocket(
     }
 
     override fun onMessage(message: NanoWSD.WebSocketFrame) {
-        // No client-to-server audio messages expected
+        val text = message.textPayload ?: return
+        if (text == "requestPcm") {
+            Log.i(TAG, "Client requested PCM audio fallback")
+            server.onAudioCodecRequest("pcm")
+        }
     }
 
     override fun onPong(pong: NanoWSD.WebSocketFrame?) {}

@@ -24,7 +24,11 @@ class MirrorServer(
     private var keyframeRequester: (() -> Unit)? = null
     private var codecModeListener: ((String) -> Unit)? = null
     private var viewportChangeListener: ((Int, Int) -> Unit)? = null
+    private var audioCodecListener: ((String) -> Unit)? = null
     private var browserConnectionListener: ((Boolean) -> Unit)? = null
+
+    /** Cached audio config (0x00 message) — replayed to late-joining audio clients */
+    @Volatile private var audioConfig: ByteArray? = null
 
     /** Disable Nagle algorithm on all client connections for lower latency */
     override fun createClientHandler(finalAccept: java.net.Socket, inputStream: java.io.InputStream): NanoHTTPD.ClientHandler {
@@ -64,6 +68,15 @@ class MirrorServer(
 
     fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
         browserConnectionListener = listener
+    }
+
+    fun setAudioCodecListener(listener: (String) -> Unit) {
+        audioCodecListener = listener
+    }
+
+    fun onAudioCodecRequest(codec: String) {
+        Log.i(TAG, "Audio codec request: $codec")
+        audioCodecListener?.invoke(codec)
     }
 
     fun setTextInputListener(listener: (String) -> Unit) {
@@ -138,6 +151,15 @@ class MirrorServer(
     fun registerAudioSocket(socket: AudioStreamSocket) {
         audioSockets.add(socket)
         Log.i(TAG, "Audio client connected (total: ${audioSockets.size})")
+        // Replay cached audio config so late-joining clients know the codec
+        audioConfig?.let { config ->
+            try {
+                socket.sendBinary(config)
+                Log.i(TAG, "Replayed audio config to new client (${config.size} bytes)")
+            } catch (e: IOException) {
+                Log.w(TAG, "Failed to send audio config to new client", e)
+            }
+        }
     }
 
     fun unregisterAudioSocket(socket: AudioStreamSocket) {
@@ -146,6 +168,11 @@ class MirrorServer(
     }
 
     fun broadcastAudio(data: ByteArray) {
+        // Cache config messages (0x00 header) for late-joining clients
+        if (data.isNotEmpty() && data[0] == 0x00.toByte()) {
+            audioConfig = data.copyOf()
+        }
+
         val deadSockets = mutableListOf<AudioStreamSocket>()
         for (socket in audioSockets) {
             try {

@@ -4,32 +4,38 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.os.Build
 import android.util.Log
 
 /**
- * Captures system audio via AudioPlaybackCapture (Android 10+) and streams
- * raw PCM Int16 directly — no encoding step.
+ * Captures system audio via AudioPlaybackCapture (Android 10+) and encodes to Opus
+ * for efficient streaming (~96kbps vs ~1.4Mbps raw PCM).
  *
  * Protocol: each callback ByteArray has a 1-byte header:
- *   0x00 = config JSON (sent once): {"sampleRate":44100,"channels":2}
- *   0x01 = raw PCM Int16 LE interleaved samples
+ *   0x00 = config JSON: {"codec":"opus"|"pcm","sampleRate":48000,"channels":2}
+ *   0x01 = encoded Opus frame or raw PCM Int16 LE
+ *
+ * Falls back to raw PCM if Opus encoding fails to initialize.
  */
 class AudioCapture(
     private val mediaProjection: MediaProjection
 ) {
     companion object {
         private const val TAG = "AudioCapture"
-        const val SAMPLE_RATE = 44100
+        const val SAMPLE_RATE = 48000  // Opus native sample rate
         const val CHANNEL_COUNT = 2
-        // ~23ms per chunk (matches AAC frame duration) = 1024 stereo frames = 4096 bytes
-        private const val PCM_BUFFER_SIZE = 4096
+        private const val OPUS_BITRATE = 96_000
+        // 20ms of audio at 48kHz stereo Int16 = 960 frames * 2ch * 2 bytes = 3840 bytes
+        private const val PCM_BUFFER_SIZE = 3840
 
         fun isSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     }
 
     private var audioRecord: AudioRecord? = null
+    private var encoder: MediaCodec? = null
     @Volatile
     private var isRunning = false
     private var captureThread: Thread? = null
@@ -43,35 +49,143 @@ class AudioCapture(
         try {
             setupAudioRecord()
 
+            val useOpus = trySetupOpusEncoder()
+
             isRunning = true
             audioRecord?.startRecording()
 
-            // Send config as first message
-            val config = """{"sampleRate":$SAMPLE_RATE,"channels":$CHANNEL_COUNT}""".toByteArray()
-            val configMsg = ByteArray(1 + config.size)
-            configMsg[0] = 0x00
-            System.arraycopy(config, 0, configMsg, 1, config.size)
-            onAudioData(configMsg)
+            // Send config JSON so client knows codec type immediately
+            val codec = if (useOpus) "opus" else "pcm"
+            sendConfig(codec, onAudioData)
 
-            captureThread = Thread({
-                val pcmBuffer = ByteArray(PCM_BUFFER_SIZE)
+            if (useOpus) {
+                startOpusCapture(onAudioData)
+            } else {
+                startRawPcmCapture(onAudioData)
+            }
 
-                while (isRunning) {
-                    val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
-                    if (read > 0) {
-                        val msg = ByteArray(1 + read)
-                        msg[0] = 0x01
-                        System.arraycopy(pcmBuffer, 0, msg, 1, read)
-                        onAudioData(msg)
-                    }
-                }
-            }, "AudioCapture").also { it.start() }
-
-            Log.i(TAG, "Audio capture started: ${SAMPLE_RATE}Hz, ${CHANNEL_COUNT}ch, raw PCM")
+            Log.i(TAG, "Audio capture started: ${SAMPLE_RATE}Hz, ${CHANNEL_COUNT}ch, $codec")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start audio capture", e)
             stop()
         }
+    }
+
+    /**
+     * Start in PCM-only mode (no Opus). Used when client doesn't support WebCodecs AudioDecoder.
+     */
+    fun startPcmOnly(onAudioData: (data: ByteArray) -> Unit) {
+        if (!isSupported()) return
+        try {
+            setupAudioRecord()
+            isRunning = true
+            audioRecord?.startRecording()
+            sendConfig("pcm", onAudioData)
+            startRawPcmCapture(onAudioData)
+            Log.i(TAG, "Audio capture started (PCM only): ${SAMPLE_RATE}Hz, ${CHANNEL_COUNT}ch")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start PCM audio capture", e)
+            stop()
+        }
+    }
+
+    private fun sendConfig(codec: String, onAudioData: (data: ByteArray) -> Unit) {
+        val json = """{"codec":"$codec","sampleRate":$SAMPLE_RATE,"channels":$CHANNEL_COUNT}""".toByteArray()
+        val msg = ByteArray(1 + json.size)
+        msg[0] = 0x00
+        System.arraycopy(json, 0, msg, 1, json.size)
+        onAudioData(msg)
+    }
+
+    private fun trySetupOpusEncoder(): Boolean {
+        return try {
+            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, SAMPLE_RATE, CHANNEL_COUNT).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, OPUS_BITRATE)
+            }
+            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.start()
+            encoder = codec
+            Log.i(TAG, "Opus encoder ready")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Opus encoder unavailable, using raw PCM", e)
+            try { encoder?.stop() } catch (_: Exception) {}
+            try { encoder?.release() } catch (_: Exception) {}
+            encoder = null
+            false
+        }
+    }
+
+    private fun startOpusCapture(onAudioData: (data: ByteArray) -> Unit) {
+        val codec = encoder ?: return
+
+        captureThread = Thread({
+            val pcmBuffer = ByteArray(PCM_BUFFER_SIZE)
+            val bufferInfo = MediaCodec.BufferInfo()
+
+            while (isRunning) {
+                // Feed PCM to encoder
+                val inputIdx = codec.dequeueInputBuffer(5_000)
+                if (inputIdx >= 0) {
+                    val inputBuf = codec.getInputBuffer(inputIdx)
+                    if (inputBuf != null) {
+                        val read = audioRecord?.read(pcmBuffer, 0, minOf(pcmBuffer.size, inputBuf.remaining())) ?: -1
+                        if (read > 0) {
+                            inputBuf.clear()
+                            inputBuf.put(pcmBuffer, 0, read)
+                            codec.queueInputBuffer(inputIdx, 0, read, System.nanoTime() / 1000, 0)
+                        } else {
+                            codec.queueInputBuffer(inputIdx, 0, 0, 0, 0)
+                        }
+                    }
+                }
+
+                // Drain encoded output
+                while (isRunning) {
+                    val outputIdx = codec.dequeueOutputBuffer(bufferInfo, 0)
+                    if (outputIdx < 0) break
+
+                    // Skip codec config buffers (client configures via JSON config)
+                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        Log.d(TAG, "Opus CSD received (${bufferInfo.size} bytes), skipping")
+                        codec.releaseOutputBuffer(outputIdx, false)
+                        continue
+                    }
+
+                    if (bufferInfo.size > 0) {
+                        val outputBuf = codec.getOutputBuffer(outputIdx)
+                        if (outputBuf != null) {
+                            val encoded = ByteArray(bufferInfo.size)
+                            outputBuf.position(bufferInfo.offset)
+                            outputBuf.limit(bufferInfo.offset + bufferInfo.size)
+                            outputBuf.get(encoded)
+
+                            val msg = ByteArray(1 + encoded.size)
+                            msg[0] = 0x01
+                            System.arraycopy(encoded, 0, msg, 1, encoded.size)
+                            onAudioData(msg)
+                        }
+                    }
+                    codec.releaseOutputBuffer(outputIdx, false)
+                }
+            }
+        }, "AudioCapture-Opus").also { it.start() }
+    }
+
+    private fun startRawPcmCapture(onAudioData: (data: ByteArray) -> Unit) {
+        captureThread = Thread({
+            val pcmBuffer = ByteArray(PCM_BUFFER_SIZE)
+            while (isRunning) {
+                val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
+                if (read > 0) {
+                    val msg = ByteArray(1 + read)
+                    msg[0] = 0x01
+                    System.arraycopy(pcmBuffer, 0, msg, 1, read)
+                    onAudioData(msg)
+                }
+            }
+        }, "AudioCapture-PCM").also { it.start() }
     }
 
     private fun setupAudioRecord() {
@@ -90,9 +204,7 @@ class AudioCapture(
             .build()
 
         val minBufferSize = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_STEREO,
-            AudioFormat.ENCODING_PCM_16BIT
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT
         )
 
         audioRecord = AudioRecord.Builder()
@@ -106,11 +218,12 @@ class AudioCapture(
         isRunning = false
         captureThread?.join(1000)
         captureThread = null
-
+        try { encoder?.stop() } catch (_: Exception) {}
+        try { encoder?.release() } catch (_: Exception) {}
+        encoder = null
         try { audioRecord?.stop() } catch (_: Exception) {}
         try { audioRecord?.release() } catch (_: Exception) {}
         audioRecord = null
-
         Log.i(TAG, "Audio capture stopped")
     }
 }

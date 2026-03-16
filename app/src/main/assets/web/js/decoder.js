@@ -10,6 +10,7 @@ class H264Decoder {
         this.configured = false;
         this.frameCount = 0;
         this.startTime = 0;
+        this.codecString = null; // dynamically detected from SPS
     }
 
     static isSupported() {
@@ -21,16 +22,27 @@ class H264Decoder {
             throw new Error('WebCodecs VideoDecoder not available');
         }
 
-        // Check H.264 Baseline support
-        const support = await VideoDecoder.isConfigSupported({
-            codec: 'avc1.42001e', // Baseline profile, level 3.0
-            optimizeForLatency: true,
-            hardwareAcceleration: 'prefer-hardware'
-        });
-
-        if (!support.supported) {
-            throw new Error('H.264 Baseline not supported');
+        // Check H.264 support — try High Profile first (better compression),
+        // then Baseline as fallback. Actual codec string will be updated from SPS.
+        const codecs = ['avc1.640028', 'avc1.42001e'];
+        let supportedCodec = null;
+        for (const codec of codecs) {
+            const support = await VideoDecoder.isConfigSupported({
+                codec,
+                optimizeForLatency: true,
+                hardwareAcceleration: 'prefer-hardware'
+            });
+            if (support.supported) {
+                supportedCodec = codec;
+                break;
+            }
         }
+
+        if (!supportedCodec) {
+            throw new Error('H.264 not supported');
+        }
+
+        this.codecString = supportedCodec;
 
         this.decoder = new VideoDecoder({
             output: (frame) => {
@@ -44,14 +56,14 @@ class H264Decoder {
         });
 
         this.decoder.configure({
-            codec: 'avc1.42001e',
+            codec: supportedCodec,
             optimizeForLatency: true,
             hardwareAcceleration: 'prefer-hardware'
         });
 
         this.configured = true;
         this.startTime = performance.now();
-        console.log('[Decoder] Initialized with WebCodecs');
+        console.log('[Decoder] Initialized with WebCodecs, codec:', supportedCodec);
     }
 
     /**
@@ -68,6 +80,12 @@ class H264Decoder {
 
         const isKeyFrame = view[0] === 0x01;
         const nalData = data.slice(1); // Remove our 1-byte header
+
+        // On keyframes, detect codec string from SPS and reconfigure if changed
+        // (e.g. server switched from High Profile to Baseline or vice versa)
+        if (isKeyFrame) {
+            this._detectCodecFromSps(new Uint8Array(nalData));
+        }
 
         try {
             const chunk = new EncodedVideoChunk({
@@ -86,6 +104,42 @@ class H264Decoder {
         } catch (e) {
             console.error('[Decoder] Decode error:', e);
             this.onError(e);
+        }
+    }
+
+    /**
+     * Parse SPS NAL from keyframe to detect actual codec string (avc1.XXYYZZ).
+     * Reconfigure decoder if profile changed (e.g. High ↔ Baseline fallback).
+     */
+    _detectCodecFromSps(nalData) {
+        // Find SPS NAL unit (type 7) after start code 0x00000001
+        for (let i = 0; i < nalData.length - 7; i++) {
+            if (nalData[i] === 0 && nalData[i+1] === 0 && nalData[i+2] === 0 && nalData[i+3] === 1) {
+                const nalType = nalData[i+4] & 0x1F;
+                if (nalType === 7 && i + 7 < nalData.length) {
+                    const profile = nalData[i+5];
+                    const compat = nalData[i+6];
+                    const level = nalData[i+7];
+                    const newCodec = 'avc1.' +
+                        profile.toString(16).padStart(2, '0') +
+                        compat.toString(16).padStart(2, '0') +
+                        level.toString(16).padStart(2, '0');
+                    if (newCodec !== this.codecString) {
+                        console.log('[Decoder] Codec changed:', this.codecString, '->', newCodec);
+                        this.codecString = newCodec;
+                        try {
+                            this.decoder.configure({
+                                codec: newCodec,
+                                optimizeForLatency: true,
+                                hardwareAcceleration: 'prefer-hardware'
+                            });
+                        } catch (e) {
+                            console.warn('[Decoder] Reconfigure failed for', newCodec, e);
+                        }
+                    }
+                    return;
+                }
+            }
         }
     }
 

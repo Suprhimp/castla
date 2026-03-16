@@ -594,13 +594,13 @@ class MseDecoder {
             const buf = this.sourceBuffer.buffered;
             if (buf.length > 0) {
                 const end = buf.end(buf.length - 1);
-                if (end - this.video.currentTime > 0.3) {
+                if (end - this.video.currentTime > 0.15) {
                     this.video.currentTime = end - 0.05;
                 }
                 // Remove old data to prevent memory buildup
-                if (buf.start(0) < end - 5 && !this.sourceBuffer.updating) {
+                if (buf.start(0) < end - 3 && !this.sourceBuffer.updating) {
                     try {
-                        this.sourceBuffer.remove(0, end - 3);
+                        this.sourceBuffer.remove(0, end - 2);
                     } catch (_) {}
                 }
             }
