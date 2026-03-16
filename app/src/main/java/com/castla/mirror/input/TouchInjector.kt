@@ -22,6 +22,14 @@ class TouchInjector(
 
     private val activePointers = mutableMapOf<Int, Pair<Float, Float>>()
 
+    // Cached objects for single-pointer events (most common case) — avoids GC pressure
+    private val singleProps = arrayOf(
+        MotionEvent.PointerProperties().apply { toolType = MotionEvent.TOOL_TYPE_FINGER }
+    )
+    private val singleCoords = arrayOf(
+        MotionEvent.PointerCoords().apply { pressure = 1.0f; size = 1.0f }
+    )
+
     // Shizuku-based IInputManager
     private var inputManagerInstance: Any? = null
     private var injectMethod: Method? = null
@@ -148,6 +156,22 @@ class TouchInjector(
         val now = SystemClock.uptimeMillis()
 
         val pointerCount = activePointers.size.coerceAtLeast(1)
+
+        // Fast path: single pointer — reuse cached arrays
+        if (pointerCount == 1) {
+            singleProps[0].id = pointerId
+            singleCoords[0].x = x
+            singleCoords[0].y = y
+
+            return MotionEvent.obtain(
+                now, now, action, 1,
+                singleProps, singleCoords,
+                0, 0, 1.0f, 1.0f, 0, 0,
+                InputDevice.SOURCE_TOUCHSCREEN, 0
+            )
+        }
+
+        // Multi-pointer: allocate arrays
         val pointerProperties = Array(pointerCount) { i ->
             MotionEvent.PointerProperties().apply {
                 id = if (i == 0) pointerId else activePointers.keys.elementAtOrNull(i) ?: 0
@@ -172,20 +196,10 @@ class TouchInjector(
         }
 
         return MotionEvent.obtain(
-            now,       // downTime
-            now,       // eventTime
-            action,
-            pointerCount,
-            pointerProperties,
-            pointerCoords,
-            0,         // metaState
-            0,         // buttonState
-            1.0f,      // xPrecision
-            1.0f,      // yPrecision
-            0,         // deviceId
-            0,         // edgeFlags
-            InputDevice.SOURCE_TOUCHSCREEN,
-            0          // flags
+            now, now, action, pointerCount,
+            pointerProperties, pointerCoords,
+            0, 0, 1.0f, 1.0f, 0, 0,
+            InputDevice.SOURCE_TOUCHSCREEN, 0
         )
     }
 

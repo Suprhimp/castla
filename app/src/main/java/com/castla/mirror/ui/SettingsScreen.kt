@@ -1,6 +1,11 @@
 package com.castla.mirror.ui
 
+import android.content.Intent
+import android.content.pm.ResolveInfo
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -8,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +62,66 @@ fun SettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+
+            // Mirroring Mode
+            var showAppPicker by remember { mutableStateOf(false) }
+
+            SettingSection(title = "Mirroring Mode") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = settings.mirroringMode == MirroringMode.FULL_SCREEN,
+                        onClick = {
+                            if (!isStreaming) onSettingsChanged(settings.copy(mirroringMode = MirroringMode.FULL_SCREEN))
+                        },
+                        label = { Text("Full Screen") },
+                        enabled = !isStreaming
+                    )
+                    FilterChip(
+                        selected = settings.mirroringMode == MirroringMode.APP,
+                        onClick = {
+                            if (!isStreaming) onSettingsChanged(settings.copy(mirroringMode = MirroringMode.APP))
+                        },
+                        label = { Text("App") },
+                        enabled = !isStreaming
+                    )
+                }
+                if (settings.mirroringMode == MirroringMode.APP) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (settings.targetAppLabel.isNotEmpty()) {
+                        Text(
+                            text = "Selected: ${settings.targetAppLabel}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    Button(
+                        onClick = { showAppPicker = true },
+                        enabled = !isStreaming,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(if (settings.targetAppLabel.isEmpty()) "Select App" else "Change App")
+                    }
+                }
+            }
+
+            if (showAppPicker) {
+                AppPickerDialog(
+                    onAppSelected = { packageName, label ->
+                        onSettingsChanged(settings.copy(
+                            targetAppPackage = packageName,
+                            targetAppLabel = label
+                        ))
+                        showAppPicker = false
+                    },
+                    onDismiss = { showAppPicker = false }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Resolution
             SettingSection(title = "Resolution") {
@@ -164,8 +230,13 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(8.dp))
+                    val modeText = if (settings.mirroringMode == MirroringMode.APP && settings.targetAppLabel.isNotEmpty()) {
+                        "App: ${settings.targetAppLabel}"
+                    } else {
+                        "Full Screen"
+                    }
                     Text(
-                        text = "${settings.resolution.width}x${settings.resolution.height} @ " +
+                        text = "$modeText, ${settings.resolution.width}x${settings.resolution.height} @ " +
                             "${settings.fps}fps, ${settings.bitrate / 1_000_000}Mbps" +
                             if (settings.audioEnabled) ", audio on" else "",
                         style = MaterialTheme.typography.bodySmall,
@@ -175,6 +246,56 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+fun AppPickerDialog(
+    onAppSelected: (packageName: String, label: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val apps = remember {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val pm = context.packageManager
+        pm.queryIntentActivities(intent, 0)
+            .filter { it.activityInfo.packageName != context.packageName }
+            .sortedBy { it.loadLabel(pm).toString().lowercase() }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select App") },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+            ) {
+                items(apps) { app ->
+                    val pm = context.packageManager
+                    val label = app.loadLabel(pm).toString()
+                    val packageName = app.activityInfo.packageName
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onAppSelected(packageName, label) }
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

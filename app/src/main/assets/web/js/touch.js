@@ -1,79 +1,135 @@
 /**
  * Touch Event Handler
- * Captures touch events on the canvas and sends them via WebSocket
+ * Captures touch/pointer events on the canvas and sends them via WebSocket
+ * Uses binary protocol (10 bytes) for minimal latency and rAF-based throttling
  */
 class TouchHandler {
+    static ACTION_DOWN = 0;
+    static ACTION_UP = 1;
+    static ACTION_MOVE = 2;
+
     constructor(canvas, renderer, controlSocket) {
         this.canvas = canvas;
         this.renderer = renderer;
         this.controlSocket = controlSocket;
-        this.lastMoveTime = 0;
-        this.minMoveInterval = 1000 / 60; // max 60 events/sec
+        this.pendingMoves = new Map(); // pointerId -> {action, x, y}
+        this.rafId = null;
+        this.mouseDown = false;
+
+        // Pre-allocate binary buffer for touch events (reused)
+        this._buf = new ArrayBuffer(10);
+        this._view = new DataView(this._buf);
 
         this.bindEvents();
+        this.startRAFLoop();
     }
 
     bindEvents() {
-        this.canvas.addEventListener('touchstart', (e) => this.onTouch(e, 'down'), { passive: false });
-        this.canvas.addEventListener('touchmove', (e) => this.onTouch(e, 'move'), { passive: false });
-        this.canvas.addEventListener('touchend', (e) => this.onTouch(e, 'up'), { passive: false });
-        this.canvas.addEventListener('touchcancel', (e) => this.onTouch(e, 'up'), { passive: false });
-
-        // Mouse fallback for desktop testing
-        this.mouseDown = false;
-        this.canvas.addEventListener('mousedown', (e) => {
-            this.mouseDown = true;
-            this.sendMouseEvent(e, 'down');
-        });
-        this.canvas.addEventListener('mousemove', (e) => {
-            if (this.mouseDown) this.sendMouseEvent(e, 'move');
-        });
-        this.canvas.addEventListener('mouseup', (e) => {
-            this.mouseDown = false;
-            this.sendMouseEvent(e, 'up');
-        });
-    }
-
-    onTouch(event, action) {
-        event.preventDefault();
-
-        // Throttle move events
-        if (action === 'move') {
-            const now = performance.now();
-            if (now - this.lastMoveTime < this.minMoveInterval) return;
-            this.lastMoveTime = now;
+        // Prefer Pointer Events (better coalescing, pressure support)
+        if (window.PointerEvent) {
+            this.canvas.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                this._onPointer(e, TouchHandler.ACTION_DOWN);
+            });
+            this.canvas.addEventListener('pointermove', (e) => {
+                e.preventDefault();
+                this._onPointer(e, TouchHandler.ACTION_MOVE);
+            });
+            this.canvas.addEventListener('pointerup', (e) => {
+                e.preventDefault();
+                this._onPointer(e, TouchHandler.ACTION_UP);
+            });
+            this.canvas.addEventListener('pointercancel', (e) => {
+                e.preventDefault();
+                this._onPointer(e, TouchHandler.ACTION_UP);
+            });
+            // Prevent default touch behavior (scrolling, zooming)
+            this.canvas.style.touchAction = 'none';
+        } else {
+            // Fallback: Touch events
+            this.canvas.addEventListener('touchstart', (e) => this._onTouch(e, TouchHandler.ACTION_DOWN), { passive: false });
+            this.canvas.addEventListener('touchmove', (e) => this._onTouch(e, TouchHandler.ACTION_MOVE), { passive: false });
+            this.canvas.addEventListener('touchend', (e) => this._onTouch(e, TouchHandler.ACTION_UP), { passive: false });
+            this.canvas.addEventListener('touchcancel', (e) => this._onTouch(e, TouchHandler.ACTION_UP), { passive: false });
         }
 
+        // Mouse fallback for desktop testing
+        if (!window.PointerEvent) {
+            this.canvas.addEventListener('mousedown', (e) => {
+                this.mouseDown = true;
+                this._sendMouse(e, TouchHandler.ACTION_DOWN);
+            });
+            this.canvas.addEventListener('mousemove', (e) => {
+                if (this.mouseDown) this._sendMouse(e, TouchHandler.ACTION_MOVE);
+            });
+            this.canvas.addEventListener('mouseup', (e) => {
+                this.mouseDown = false;
+                this._sendMouse(e, TouchHandler.ACTION_UP);
+            });
+        }
+    }
+
+    startRAFLoop() {
+        const tick = () => {
+            // Flush coalesced move events — one per pointer per frame
+            for (const [id, data] of this.pendingMoves) {
+                this._sendBinary(data.action, id, data.x, data.y);
+            }
+            this.pendingMoves.clear();
+            this.rafId = requestAnimationFrame(tick);
+        };
+        this.rafId = requestAnimationFrame(tick);
+    }
+
+    _onPointer(event, actionCode) {
+        const rect = this.canvas.getBoundingClientRect();
+        const coords = this._toNormalized(event.clientX, event.clientY, rect);
+
+        if (actionCode === TouchHandler.ACTION_MOVE) {
+            // Coalesce: only store latest position per pointer, sent on next rAF
+            if (coords.inBounds) {
+                this.pendingMoves.set(event.pointerId, {
+                    action: actionCode, x: coords.x, y: coords.y
+                });
+            }
+        } else {
+            // down/up: send immediately
+            if (coords.inBounds || actionCode === TouchHandler.ACTION_UP) {
+                this._sendBinary(actionCode, event.pointerId, coords.x, coords.y);
+            }
+        }
+    }
+
+    _onTouch(event, actionCode) {
+        event.preventDefault();
         const rect = this.canvas.getBoundingClientRect();
 
         for (let i = 0; i < event.changedTouches.length; i++) {
             const touch = event.changedTouches[i];
             const coords = this._toNormalized(touch.clientX, touch.clientY, rect);
 
-            if (coords.inBounds || action === 'up') {
-                this.send({
-                    type: 'touch',
-                    action: action,
-                    x: coords.x,
-                    y: coords.y,
-                    id: touch.identifier
-                });
+            if (actionCode === TouchHandler.ACTION_MOVE) {
+                if (coords.inBounds) {
+                    this.pendingMoves.set(touch.identifier, {
+                        action: actionCode, x: coords.x, y: coords.y
+                    });
+                }
+            } else if (coords.inBounds || actionCode === TouchHandler.ACTION_UP) {
+                this._sendBinary(actionCode, touch.identifier, coords.x, coords.y);
             }
         }
     }
 
-    sendMouseEvent(event, action) {
+    _sendMouse(event, actionCode) {
         const rect = this.canvas.getBoundingClientRect();
         const coords = this._toNormalized(event.clientX, event.clientY, rect);
 
-        if (coords.inBounds || action === 'up') {
-            this.send({
-                type: 'touch',
-                action: action,
-                x: coords.x,
-                y: coords.y,
-                id: 0
-            });
+        if (actionCode === TouchHandler.ACTION_MOVE) {
+            if (coords.inBounds) {
+                this.pendingMoves.set(0, { action: actionCode, x: coords.x, y: coords.y });
+            }
+        } else if (coords.inBounds || actionCode === TouchHandler.ACTION_UP) {
+            this._sendBinary(actionCode, 0, coords.x, coords.y);
         }
     }
 
@@ -92,13 +148,21 @@ class TouchHandler {
         };
     }
 
-    send(event) {
-        if (this.controlSocket && this.controlSocket.readyState === WebSocket.OPEN) {
-            this.controlSocket.send(JSON.stringify(event));
-        }
+    /** Send touch event as 10-byte binary: [action:u8][id:u8][x:f32LE][y:f32LE] */
+    _sendBinary(action, id, x, y) {
+        if (!this.controlSocket || this.controlSocket.readyState !== WebSocket.OPEN) return;
+        this._view.setUint8(0, action);
+        this._view.setUint8(1, id & 0xFF);
+        this._view.setFloat32(2, x, true); // little-endian
+        this._view.setFloat32(6, y, true);
+        this.controlSocket.send(this._buf);
     }
 
     destroy() {
-        // Events will be GC'd with the canvas
+        if (this.rafId !== null) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+        this.pendingMoves.clear();
     }
 }

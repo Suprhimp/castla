@@ -48,6 +48,7 @@ import com.castla.mirror.network.TeslaVpnService
 import com.castla.mirror.service.MirrorForegroundService
 import com.castla.mirror.shizuku.ShizukuSetup
 import com.castla.mirror.ui.SettingsScreen
+import com.castla.mirror.ui.MirroringMode
 import com.castla.mirror.ui.StreamSettings
 import kotlinx.coroutines.launch
 
@@ -94,6 +95,12 @@ class MainActivity : ComponentActivity() {
             // though we already set isStreaming = true in startMirrorService().
             if (!isStreaming) {
                 isStreaming = localBinder.service.isRunning
+            }
+            // Auto-minimize in FULL_SCREEN mode when browser connects
+            if (streamSettings.mirroringMode == MirroringMode.FULL_SCREEN) {
+                localBinder.service.setBrowserConnectionListener { connected ->
+                    if (connected) runOnUiThread { moveTaskToBack(true) }
+                }
             }
             updateServerUrl()
             serviceBound = true
@@ -518,6 +525,18 @@ class MainActivity : ComponentActivity() {
     private fun onStartMirroring() {
         Log.i(TAG, "onStartMirroring called")
 
+        // APP mode requires Shizuku
+        if (streamSettings.mirroringMode == MirroringMode.APP) {
+            if (!shizukuRunning) {
+                Toast.makeText(this, "App mirroring requires Shizuku. Please set up Shizuku first.", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (streamSettings.targetAppPackage.isEmpty()) {
+                Toast.makeText(this, "Please select an app to mirror in Settings.", Toast.LENGTH_LONG).show()
+                return
+            }
+        }
+
         // Step 1: Notification permission (Android 13+) — needed for foreground service
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -566,6 +585,8 @@ class MainActivity : ComponentActivity() {
             putExtra(MirrorForegroundService.EXTRA_BITRATE, streamSettings.bitrate)
             putExtra(MirrorForegroundService.EXTRA_FPS, streamSettings.fps)
             putExtra(MirrorForegroundService.EXTRA_AUDIO, streamSettings.audioEnabled)
+            putExtra(MirrorForegroundService.EXTRA_MIRRORING_MODE, streamSettings.mirroringMode.name)
+            putExtra(MirrorForegroundService.EXTRA_TARGET_PACKAGE, streamSettings.targetAppPackage)
         }
         startForegroundService(intent)
         if (serviceBound || bindRequested) {

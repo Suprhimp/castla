@@ -27,6 +27,15 @@ class PrivilegedService : IPrivilegedService.Stub() {
     private var injectMethod: Method? = null
     private var shellContext: android.content.Context? = null
 
+    // Cached objects for injectInput — avoids allocation per touch event
+    private val cachedProps = arrayOf(
+        MotionEvent.PointerProperties().apply { toolType = MotionEvent.TOOL_TYPE_FINGER }
+    )
+    private val cachedCoords = arrayOf(
+        MotionEvent.PointerCoords().apply { pressure = 1.0f; size = 1.0f }
+    )
+    private var setDisplayIdMethod: Method? = null
+
     init {
         tryInitInputManager()
         tryInitShellContext()
@@ -85,8 +94,13 @@ class PrivilegedService : IPrivilegedService.Stub() {
             val configClass = Class.forName("android.hardware.display.VirtualDisplayConfig")
             val builderClass = Class.forName("android.hardware.display.VirtualDisplayConfig\$Builder")
 
+            // FLAG_PUBLIC (1): visible to other apps
+            // FLAG_OWN_CONTENT_ONLY (2048): don't mirror main display
+            // SHOULD_SHOW_SYSTEM_DECORATIONS (512): Android auto-launches home + system bars
+            val VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS = 1 shl 9 // 512
             val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
+                    VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS
 
             val builderCtor = builderClass.getConstructor(
                 String::class.java, Int::class.javaPrimitiveType,
@@ -124,38 +138,6 @@ class PrivilegedService : IPrivilegedService.Stub() {
                 val displayId = display.display.displayId
                 virtualDisplays[displayId] = display
                 Log.i(TAG, "Virtual display created: id=$displayId, ${width}x${height}")
-
-                // Launch an activity on the VD to provide renderable content.
-                // Cannot use HOME intent — Samsung launcher is SINGLE_TASK and
-                // kills the main Castla activity when launched on a secondary display.
-                // Instead, launch our own transparent activity or Settings.
-                try {
-                    // Try Calculator (common, not SINGLE_TASK)
-                    val candidates = listOf(
-                        "com.sec.android.app.popupcalculator/.Calculator",
-                        "com.google.android.calculator/com.android.calculator2.Calculator",
-                        "com.android.calculator2/.Calculator"
-                    )
-                    var launched = false
-                    for (comp in candidates) {
-                        val cmd = "am start --display $displayId -n $comp"
-                        val result = execCommand(cmd)
-                        if (!result.contains("Error") && !result.contains("does not exist")) {
-                            Log.i(TAG, "Launched on display $displayId: $comp")
-                            launched = true
-                            break
-                        }
-                    }
-                    if (!launched) {
-                        // Fallback: Settings (always available)
-                        val cmd = "am start --display $displayId -n com.android.settings/.Settings"
-                        execCommand(cmd)
-                        Log.i(TAG, "Launched Settings on display $displayId (fallback)")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to launch on VD (non-fatal)", e)
-                }
-
                 displayId
             } else {
                 Log.e(TAG, "createVirtualDisplay returned null")
@@ -186,39 +168,30 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun injectInput(displayId: Int, action: Int, x: Float, y: Float, pointerId: Int) {
         val now = SystemClock.uptimeMillis()
-        val properties = arrayOf(
-            MotionEvent.PointerProperties().apply {
-                id = pointerId
-                toolType = MotionEvent.TOOL_TYPE_FINGER
-            }
-        )
-        val coords = arrayOf(
-            MotionEvent.PointerCoords().apply {
-                this.x = x
-                this.y = y
-                pressure = 1.0f
-                size = 1.0f
-            }
-        )
+
+        // Reuse cached objects — update values in place (avoids GC pressure)
+        cachedProps[0].id = pointerId
+        cachedCoords[0].x = x
+        cachedCoords[0].y = y
 
         val event = MotionEvent.obtain(
             now, now, action, 1,
-            properties, coords,
+            cachedProps, cachedCoords,
             0, 0, 1.0f, 1.0f,
             0, 0,
             InputDevice.SOURCE_TOUCHSCREEN,
             0
         )
 
-        // Set display ID via reflection (hidden API)
+        // Set display ID via reflection (hidden API) — cache the method
         try {
-            val setDisplayId = MotionEvent::class.java.getMethod(
-                "setDisplayId", Int::class.javaPrimitiveType
-            )
-            setDisplayId.invoke(event, displayId)
-        } catch (_: Exception) {
-            // Fallback: use setSource with display info
-        }
+            if (setDisplayIdMethod == null) {
+                setDisplayIdMethod = MotionEvent::class.java.getMethod(
+                    "setDisplayId", Int::class.javaPrimitiveType
+                )
+            }
+            setDisplayIdMethod?.invoke(event, displayId)
+        } catch (_: Exception) {}
 
         try {
             injectMethod?.invoke(inputManagerInstance, event, 0) // INJECT_INPUT_EVENT_MODE_ASYNC
@@ -241,6 +214,57 @@ class PrivilegedService : IPrivilegedService.Stub() {
         } catch (e: Exception) {
             Log.e(TAG, "exec failed: $command", e)
             ""
+        }
+    }
+
+    override fun launchAppOnDisplay(displayId: Int, packageName: String) {
+        try {
+            val cmd = "am start --display $displayId " +
+                "-a android.intent.action.MAIN " +
+                "-c android.intent.category.LAUNCHER " +
+                packageName
+            val result = execCommand(cmd)
+            if (result.contains("Error") || result.contains("does not exist")) {
+                // Fallback: use monkey to launch
+                val monkeyCmd = "monkey -p $packageName -c android.intent.category.LAUNCHER 1"
+                execCommand(monkeyCmd)
+            }
+            Log.i(TAG, "Launched $packageName on display $displayId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
+        }
+    }
+
+    override fun launchHomeOnDisplay(displayId: Int) {
+        try {
+            // Step 1: Launch a lightweight app on the VD to force rendering.
+            // Without this, the encoder surface gets no input and produces no frames.
+            // Calculator is lightweight and available on all Android devices.
+            val launchCmd = "am start --display $displayId " +
+                "-a android.intent.action.MAIN " +
+                "-c android.intent.category.LAUNCHER " +
+                "com.sec.android.app.popupcalculator"
+            var result = execCommand(launchCmd)
+            Log.i(TAG, "Launch calculator on display $displayId: $result")
+
+            // If Samsung calculator not found, try AOSP calculator
+            if (result.contains("Error") || result.contains("does not exist")) {
+                val fallback = "am start --display $displayId " +
+                    "-a android.intent.action.MAIN " +
+                    "-c android.intent.category.LAUNCHER " +
+                    "com.google.android.calculator"
+                result = execCommand(fallback)
+                Log.i(TAG, "Launch Google calculator on display $displayId: $result")
+            }
+
+            // Step 2: After the app starts, send HOME key to go to home screen.
+            // This triggers the system launcher on the VD.
+            Thread.sleep(500)
+            val homeCmd = "input -d $displayId keyevent KEYCODE_HOME"
+            result = execCommand(homeCmd)
+            Log.i(TAG, "Sent HOME keyevent to display $displayId: $result")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch HOME on display $displayId", e)
         }
     }
 
