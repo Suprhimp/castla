@@ -20,6 +20,8 @@ class ScreenCaptureManager(private val context: Context) {
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
+    @Volatile
+    var isRebuilding = false
 
     fun getMediaProjection(): MediaProjection? = mediaProjection
 
@@ -32,6 +34,10 @@ class ScreenCaptureManager(private val context: Context) {
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
+            if (isRebuilding) {
+                Log.i(TAG, "MediaProjection onStop during rebuild — ignoring")
+                return
+            }
             Log.i(TAG, "MediaProjection stopped")
             release()
         }
@@ -69,6 +75,22 @@ class ScreenCaptureManager(private val context: Context) {
         )
 
         Log.i(TAG, "Capture started: ${width}x${height}")
+    }
+
+    /**
+     * Reconfigure the existing VirtualDisplay with a new surface and dimensions.
+     * Does NOT release the MediaProjection — safe for pipeline rebuild.
+     */
+    fun reconfigure(surface: Surface, width: Int, height: Int) {
+        val vd = virtualDisplay
+        if (vd != null) {
+            vd.resize(width, height, captureDpi)
+            vd.setSurface(surface)
+            Log.i(TAG, "VirtualDisplay reconfigured: ${width}x${height}")
+        } else {
+            // No existing VD — create fresh
+            startCapture(surface, width, height)
+        }
     }
 
     fun stopCapture() {

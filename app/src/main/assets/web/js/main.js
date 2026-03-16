@@ -21,7 +21,10 @@
     let statsTimer = null;
     let overlayTimer = null;
     let pingTimer = null;
+    let viewportTimer = null;
     let codecMode = 'h264'; // 'h264' (WebCodecs), 'mse' (MSE fMP4), 'mjpeg'
+    let lastViewport = { width: 0, height: 0 };
+    let awaitingNewDecoder = false;
 
     const host = window.location.host;
     const pin = new URLSearchParams(window.location.search).get('pin') || '';
@@ -102,8 +105,17 @@
             showOverlay();
         };
 
-        videoSocket.onmessage = (event) => {
+        videoSocket.onmessage = async (event) => {
             if (event.data instanceof ArrayBuffer) {
+                if (!decoder) {
+                    console.warn('[Main] Frame arrived but no decoder');
+                    return;
+                }
+                const v = new Uint8Array(event.data);
+                if (v.length > 0 && v[0] === 0x01 && !window._firstKfLogged) {
+                    console.log('[Main] First keyframe received, size=' + v.length);
+                    window._firstKfLogged = true;
+                }
                 decoder.decode(event.data);
             }
         };
@@ -131,6 +143,10 @@
                 controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
                 console.log('[Main] Requested MJPEG mode from server');
             }
+
+            // Send viewport dimensions to server
+            sendViewport();
+
             const touchTarget = codecMode === 'mse'
                 ? document.getElementById('mse-video') : canvas;
             touchHandler = new TouchHandler(touchTarget, renderer, controlSocket);
@@ -142,6 +158,23 @@
                     controlSocket.send(JSON.stringify({ type: 'ping' }));
                 }
             }, 15000);
+        };
+
+        controlSocket.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'resolutionChanged') {
+                    console.log('[Main] Server resolution changed:', msg.width, 'x', msg.height);
+                    // Don't destroy decoder here — MSE decoder handles resolution change
+                    // internally by detecting SPS change in the video stream.
+                    // Just request a keyframe so the decoder gets new SPS/PPS quickly.
+                    if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
+                        videoSocket.send('requestKeyframe');
+                    }
+                }
+            } catch (e) {
+                // Ignore non-JSON messages
+            }
         };
 
         controlSocket.onclose = () => {
@@ -202,6 +235,9 @@
 
     function cleanup() {
         clearInterval(pingTimer);
+        clearTimeout(viewportTimer);
+        awaitingNewDecoder = false;
+        lastViewport = { width: 0, height: 0 };
         if (videoSocket) {
             videoSocket.onclose = null; // prevent reconnect loop
             videoSocket.close();
@@ -231,11 +267,24 @@
         }, 1000);
     }
 
-    // Handle window resize
+    function sendViewport() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        if (w === lastViewport.width && h === lastViewport.height) return;
+        lastViewport = { width: w, height: h };
+        if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            controlSocket.send(JSON.stringify({ type: 'viewport', width: w, height: h }));
+            console.log('[Main] Sent viewport:', w, 'x', h);
+        }
+    }
+
+    // Handle window resize — update renderer layout + send viewport (debounced 500ms)
     window.addEventListener('resize', () => {
         if (renderer && renderer.videoWidth > 0) {
             renderer.updateLayout();
         }
+        clearTimeout(viewportTimer);
+        viewportTimer = setTimeout(() => sendViewport(), 500);
     });
 
     // Handle visibility change — request keyframe when tab becomes visible

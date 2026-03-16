@@ -45,9 +45,27 @@ class ControlSocket(
                     val mode = json.optString("mode", "h264")
                     server.onCodecModeRequest(mode)
                 }
+                "viewport" -> {
+                    val width = json.optInt("width", 0)
+                    val height = json.optInt("height", 0)
+                    if (width > 0 && height > 0) {
+                        server.onViewportChange(width, height)
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)
+        }
+    }
+
+    /**
+     * Send a text message to this control socket client.
+     */
+    fun sendMessage(text: String) {
+        try {
+            send(text)
+        } catch (e: IOException) {
+            Log.w(TAG, "Failed to send control message", e)
         }
     }
 

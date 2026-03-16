@@ -23,6 +23,7 @@ class MirrorServer(
     private var touchListener: ((TouchEvent) -> Unit)? = null
     private var keyframeRequester: (() -> Unit)? = null
     private var codecModeListener: ((String) -> Unit)? = null
+    private var viewportChangeListener: ((Int, Int) -> Unit)? = null
 
     /** Random 4-digit PIN generated on each server start for authentication */
     val sessionPin: String = generatePin()
@@ -54,6 +55,24 @@ class MirrorServer(
 
     fun setCodecModeListener(listener: (String) -> Unit) {
         codecModeListener = listener
+    }
+
+    fun setViewportChangeListener(listener: (Int, Int) -> Unit) {
+        viewportChangeListener = listener
+    }
+
+    fun onViewportChange(width: Int, height: Int) {
+        Log.i(TAG, "Client viewport change: ${width}x${height}")
+        viewportChangeListener?.invoke(width, height)
+    }
+
+    /**
+     * Send a text message to all connected control sockets.
+     */
+    fun broadcastControlMessage(json: String) {
+        for (socket in controlSockets) {
+            socket.sendMessage(json)
+        }
     }
 
     fun onCodecModeRequest(mode: String) {

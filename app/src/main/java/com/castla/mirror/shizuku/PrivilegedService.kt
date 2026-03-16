@@ -25,9 +25,36 @@ class PrivilegedService : IPrivilegedService.Stub() {
     private val virtualDisplays = mutableMapOf<Int, VirtualDisplay>()
     private var inputManagerInstance: Any? = null
     private var injectMethod: Method? = null
+    private var shellContext: android.content.Context? = null
 
     init {
         tryInitInputManager()
+        tryInitShellContext()
+    }
+
+    private fun tryInitShellContext() {
+        try {
+            if (android.os.Looper.myLooper() == null) {
+                android.os.Looper.prepare()
+            }
+            val atClass = Class.forName("android.app.ActivityThread")
+            val at = try {
+                atClass.getMethod("currentActivityThread").invoke(null)
+            } catch (_: Exception) {
+                atClass.getMethod("systemMain").invoke(null)
+            }
+            val systemContext = atClass.getMethod("getSystemContext").invoke(at) as android.content.Context
+
+            // Wrap with "com.android.shell" package name to match Shizuku uid 2000
+            shellContext = object : android.content.ContextWrapper(systemContext) {
+                override fun getPackageName(): String = "com.android.shell"
+                override fun getOpPackageName(): String = "com.android.shell"
+                override fun getAttributionTag(): String? = null
+            }
+            Log.i(TAG, "Shell context initialized: pkg=${shellContext?.packageName}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to init shell context", e)
+        }
     }
 
     private fun tryInitInputManager() {
@@ -48,45 +75,87 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun createVirtualDisplay(width: Int, height: Int, dpi: Int, name: String): Int {
         return try {
-            // Use hidden DisplayManager API to create virtual display without Activity context
-            val dmClass = Class.forName("android.hardware.display.DisplayManagerGlobal")
-            val getInstance = dmClass.getMethod("getInstance")
-            val dmInstance = getInstance.invoke(null)
+            val ctx = shellContext
+            if (ctx == null) {
+                Log.e(TAG, "Shell context not initialized")
+                return -1
+            }
 
-            val createMethod = dmClass.getMethod(
-                "createVirtualDisplay",
-                android.content.Context::class.java,
-                android.media.projection.MediaProjection::class.java,
-                String::class.java,
-                Int::class.javaPrimitiveType,     // width
-                Int::class.javaPrimitiveType,     // height
-                Int::class.javaPrimitiveType,     // dpi
-                android.view.Surface::class.java,
-                Int::class.javaPrimitiveType,     // flags
-                android.hardware.display.VirtualDisplay.Callback::class.java,
-                android.os.Handler::class.java,
-                String::class.java                // uniqueId
+            // Build VirtualDisplayConfig
+            val configClass = Class.forName("android.hardware.display.VirtualDisplayConfig")
+            val builderClass = Class.forName("android.hardware.display.VirtualDisplayConfig\$Builder")
+
+            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+
+            val builderCtor = builderClass.getConstructor(
+                String::class.java, Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
             )
+            val builder = builderCtor.newInstance(name, width, height, dpi)
+            builderClass.getMethod("setFlags", Int::class.javaPrimitiveType).invoke(builder, flags)
+            val config = builderClass.getMethod("build").invoke(builder)
 
-            val display = createMethod.invoke(
-                dmInstance,
-                null,    // context
-                null,    // projection
-                name,
-                width,
-                height,
-                dpi,
-                null,    // surface (set later)
-                DISPLAY_FLAG_PUBLIC,
-                null,    // callback
-                null,    // handler
-                null     // uniqueId
-            ) as? VirtualDisplay
+            // Get DisplayManagerGlobal instance
+            val dmgClass = Class.forName("android.hardware.display.DisplayManagerGlobal")
+            val dmg = dmgClass.getMethod("getInstance").invoke(null)
+
+            // Find createVirtualDisplay method with VirtualDisplayConfig param
+            val createMethod = dmgClass.declaredMethods.first { m ->
+                m.name == "createVirtualDisplay" &&
+                m.parameterTypes.any { it == configClass }
+            }
+            createMethod.isAccessible = true
+            Log.i(TAG, "DMG.createVirtualDisplay(${createMethod.parameterTypes.joinToString(",") { it.simpleName }})")
+
+            // Build args — pass shellContext directly (not through DisplayManager)
+            val params = createMethod.parameterTypes
+            val args = arrayOfNulls<Any>(params.size)
+            for (i in params.indices) {
+                when {
+                    params[i] == configClass -> args[i] = config
+                    params[i] == android.content.Context::class.java -> args[i] = ctx // shellContext wrapper!
+                }
+            }
+
+            val display = createMethod.invoke(dmg, *args) as? VirtualDisplay
 
             if (display != null) {
                 val displayId = display.display.displayId
                 virtualDisplays[displayId] = display
                 Log.i(TAG, "Virtual display created: id=$displayId, ${width}x${height}")
+
+                // Launch an activity on the VD to provide renderable content.
+                // Cannot use HOME intent — Samsung launcher is SINGLE_TASK and
+                // kills the main Castla activity when launched on a secondary display.
+                // Instead, launch our own transparent activity or Settings.
+                try {
+                    // Try Calculator (common, not SINGLE_TASK)
+                    val candidates = listOf(
+                        "com.sec.android.app.popupcalculator/.Calculator",
+                        "com.google.android.calculator/com.android.calculator2.Calculator",
+                        "com.android.calculator2/.Calculator"
+                    )
+                    var launched = false
+                    for (comp in candidates) {
+                        val cmd = "am start --display $displayId -n $comp"
+                        val result = execCommand(cmd)
+                        if (!result.contains("Error") && !result.contains("does not exist")) {
+                            Log.i(TAG, "Launched on display $displayId: $comp")
+                            launched = true
+                            break
+                        }
+                    }
+                    if (!launched) {
+                        // Fallback: Settings (always available)
+                        val cmd = "am start --display $displayId -n com.android.settings/.Settings"
+                        execCommand(cmd)
+                        Log.i(TAG, "Launched Settings on display $displayId (fallback)")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to launch on VD (non-fatal)", e)
+                }
+
                 displayId
             } else {
                 Log.e(TAG, "createVirtualDisplay returned null")

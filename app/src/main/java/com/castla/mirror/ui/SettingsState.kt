@@ -10,6 +10,7 @@ data class StreamSettings(
     val audioEnabled: Boolean = false
 ) {
     enum class Resolution(val width: Int, val height: Int, val label: String) {
+        AUTO(0, 0, "Auto (Tesla)"),
         SD_480(854, 480, "480p"),
         HD_720(1280, 720, "720p"),
         FHD_1080(1920, 1080, "1080p");
