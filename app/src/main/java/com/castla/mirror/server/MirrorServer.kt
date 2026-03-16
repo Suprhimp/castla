@@ -9,10 +9,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class MirrorServer(
     private val context: Context,
-    port: Int = 8080
+    port: Int = DEFAULT_PORT
 ) : NanoWSD(port) {
 
     companion object {
+        const val DEFAULT_PORT = 9090
         private const val TAG = "MirrorServer"
     }
 

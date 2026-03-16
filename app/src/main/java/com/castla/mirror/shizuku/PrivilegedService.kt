@@ -465,7 +465,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             .firstOrNull { it.contains("inet ") && !it.contains("inet6") }
             ?.trim()?.split(" ")?.getOrNull(1)?.split("/")?.firstOrNull()
             ?: "10.22.128.243"
-        val ipt1 = execCommand("iptables -t nat -A PREROUTING -d $virtualIp -p tcp --dport 8080 -j DNAT --to-destination $hotspotIp:8080 2>&1")
+        val ipt1 = execCommand("iptables -t nat -A PREROUTING -d $virtualIp -p tcp --dport 9090 -j DNAT --to-destination $hotspotIp:9090 2>&1")
         log("iptables DNAT: $ipt1")
         val ipt2 = execCommand("iptables -I INPUT -d $virtualIp -j ACCEPT 2>&1")
         log("iptables INPUT ACCEPT: $ipt2")
@@ -520,8 +520,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         log("local route: $localRoute")
 
         // Test local connectivity
-        val curlTest = execCommand("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://$virtualIp:8080/ 2>&1").trim()
-        log("curl $virtualIp:8080 from shizuku: $curlTest")
+        val curlTest = execCommand("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://$virtualIp:9090/ 2>&1").trim()
+        log("curl $virtualIp:9090 from shizuku: $curlTest")
 
         // Final interface state
         val finalAddrs = execCommand("ip addr show dev $ifName").trim()
@@ -540,7 +540,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             log.appendLine(msg)
         }
 
-        log("=== Restart Tethering with CGNAT (uid=${android.os.Process.myUid()}) ===")
+        log("=== Restart Tethering with 192.168.43.x (uid=${android.os.Process.myUid()}) ===")
 
         // Step 1: Find the TetheringManager (system service, hidden API)
         try {
@@ -570,8 +570,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // setLocalIpv4Address(LinkAddress)
             val linkAddressClass = Class.forName("android.net.LinkAddress")
             val linkAddrCtor = linkAddressClass.getConstructor(String::class.java)
-            val cgnatAddr = linkAddrCtor.newInstance("100.64.0.1/24")
-            log("LinkAddress created: 100.64.0.1/24")
+            val cgnatAddr = linkAddrCtor.newInstance("192.168.43.1/24")
+            log("LinkAddress created: 192.168.43.1/24")
 
             // Try setLocalIpv4Address (Android 11-12)
             var setAddrSuccess = false
@@ -579,7 +579,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
                 val setLocalIpv4 = builderClass.getMethod("setLocalIpv4Address", linkAddressClass)
                 setLocalIpv4.invoke(builder, cgnatAddr)
                 setAddrSuccess = true
-                log("setLocalIpv4Address(100.64.0.1/24) set")
+                log("setLocalIpv4Address(192.168.43.1/24) set")
             } catch (e: NoSuchMethodException) {
                 log("setLocalIpv4Address not found, trying alternative...")
             }
@@ -587,14 +587,14 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // Try setStaticIpv4Addresses (Android 13+)
             if (!setAddrSuccess) {
                 try {
-                    val clientAddr = linkAddrCtor.newInstance("100.64.0.2/24")
+                    val clientAddr = linkAddrCtor.newInstance("192.168.43.2/24")
                     val setStatic = builderClass.getMethod(
                         "setStaticIpv4Addresses",
                         linkAddressClass, linkAddressClass
                     )
                     setStatic.invoke(builder, cgnatAddr, clientAddr)
                     setAddrSuccess = true
-                    log("setStaticIpv4Addresses(100.64.0.1/24, 100.64.0.2/24) set")
+                    log("setStaticIpv4Addresses(192.168.43.1/24, 192.168.43.2/24) set")
                 } catch (e: NoSuchMethodException) {
                     log("setStaticIpv4Addresses not found either")
                 }
@@ -880,8 +880,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         val iface = ifaceResult.split(":").getOrNull(1)?.trim()?.split(" ")?.firstOrNull() ?: "swlan0"
 
         // Try to add CGNAT IP as secondary address
-        val addResult = execCommand("ip addr add 100.64.0.1/24 dev $iface 2>&1").trim()
-        log("ip addr add 100.64.0.1/24 dev $iface: $addResult")
+        val addResult = execCommand("ip addr add 192.168.43.1/24 dev $iface 2>&1").trim()
+        log("ip addr add 192.168.43.1/24 dev $iface: $addResult")
 
         // Verify
         val finalAddrs = execCommand("ip addr show dev $iface 2>&1").trim()

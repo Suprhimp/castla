@@ -199,7 +199,7 @@ class MirrorForegroundService : Service() {
                     }
 
                     server.start(0) // no read timeout — WebSockets stay open indefinitely
-                    Log.i(TAG, "Server started on port 8080")
+                    Log.i(TAG, "Server started on port ${MirrorServer.DEFAULT_PORT}")
                 }
 
                 // 5. Start encoding — frames go to server

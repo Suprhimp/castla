@@ -24,8 +24,8 @@ class QrCodeGeneratorTest {
 
     @Test
     fun `generates different bitmaps for different URLs`() {
-        val bmp1 = QrCodeGenerator.generate("http://192.168.1.1:8080/?token=abc", 64)
-        val bmp2 = QrCodeGenerator.generate("http://192.168.1.1:8080/?token=xyz", 64)
+        val bmp1 = QrCodeGenerator.generate("http://192.168.1.1:9090/?token=abc", 64)
+        val bmp2 = QrCodeGenerator.generate("http://192.168.1.1:9090/?token=xyz", 64)
         // At least one pixel should differ
         var differ = false
         outer@ for (x in 0 until 64) {
@@ -41,7 +41,7 @@ class QrCodeGeneratorTest {
 
     @Test
     fun `handles long URL content`() {
-        val longUrl = "http://192.168.1.100:8080/?token=" + "a".repeat(100)
+        val longUrl = "http://192.168.1.100:9090/?token=" + "a".repeat(100)
         val bitmap = QrCodeGenerator.generate(longUrl, 300)
         assertEquals(300, bitmap.width)
     }

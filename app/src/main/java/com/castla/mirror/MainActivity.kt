@@ -17,6 +17,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
+import com.castla.mirror.server.MirrorServer
 import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -57,7 +58,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val TESLA_VIRTUAL_IP = "100.99.9.9"
-        private const val CGNAT_IP = "100.64.0.1"
+        private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
         private const val SHIZUKU_APK_URL = "https://github.com/RikkaApps/Shizuku/releases/download/v13.5.4/shizuku-v13.5.4.r1049.0e53409-release.apk"
         private const val SHIZUKU_APK_NAME = "shizuku.apk"
@@ -285,9 +286,9 @@ class MainActivity : ComponentActivity() {
         val ip = currentIp
         if (ip != "0.0.0.0" && ip.isNotEmpty()) {
             val sslipDomain = ip.replace('.', '-') + ".sslip.io"
-            serverUrl = "http://${sslipDomain}:8080"
+            serverUrl = "http://${sslipDomain}:${MirrorServer.DEFAULT_PORT}"
         } else {
-            serverUrl = "http://${ip}:8080"
+            serverUrl = "http://${ip}:${MirrorServer.DEFAULT_PORT}"
         }
     }
 

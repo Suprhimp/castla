@@ -18,7 +18,7 @@ import kotlin.random.Random
  */
 class TunTcpRelay(
     tunFd: FileDescriptor,
-    private val localPort: Int = 8080
+    private val localPort: Int = 9090
 ) {
     companion object {
         private const val TAG = "TunTcpRelay"
