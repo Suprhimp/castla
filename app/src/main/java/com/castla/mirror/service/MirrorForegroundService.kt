@@ -192,8 +192,9 @@ class MirrorForegroundService : Service() {
                         if (connected && !browserConnected) {
                             browserConnected = true
                             onBrowserConnected()
-                        } else if (!connected) {
+                        } else if (!connected && browserConnected) {
                             browserConnected = false
+                            onBrowserDisconnected()
                         }
                         // Forward to external listener (UI)
                         browserConnectionListener?.invoke(connected)
@@ -330,6 +331,11 @@ class MirrorForegroundService : Service() {
     private fun onBrowserConnected() {
         Log.i(TAG, "Browser connected — mode=$mirroringMode, currentVdApp=$currentVdApp")
         // No action needed — apps are launched when VD is created
+    }
+
+    private fun onBrowserDisconnected() {
+        Log.i(TAG, "Browser disconnected — releasing VD to free resources")
+        virtualDisplayManager?.releaseVirtualDisplay()
     }
 
     /**

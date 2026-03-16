@@ -84,17 +84,37 @@ class TouchInjector(
         val absX = event.x * displayWidth
         val absY = event.y * displayHeight
 
-        val action = when (event.action) {
-            "down" -> MotionEvent.ACTION_DOWN
-            "move" -> MotionEvent.ACTION_MOVE
-            "up" -> MotionEvent.ACTION_UP
+        val action: Int
+        when (event.action) {
+            "down" -> {
+                if (activePointers.isEmpty()) {
+                    // First finger — primary pointer down
+                    action = MotionEvent.ACTION_DOWN
+                } else {
+                    // Additional finger — secondary pointer down
+                    // Must encode pointer index in upper bits
+                    activePointers[event.pointerId] = Pair(absX, absY)
+                    val pointerIndex = activePointers.keys.toList().indexOf(event.pointerId)
+                    action = MotionEvent.ACTION_POINTER_DOWN or (pointerIndex shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+                }
+                activePointers[event.pointerId] = Pair(absX, absY)
+            }
+            "move" -> {
+                activePointers[event.pointerId] = Pair(absX, absY)
+                action = MotionEvent.ACTION_MOVE
+            }
+            "up" -> {
+                if (activePointers.size <= 1) {
+                    // Last finger — primary pointer up
+                    action = MotionEvent.ACTION_UP
+                } else {
+                    // Non-last finger — secondary pointer up
+                    val pointerIndex = activePointers.keys.toList().indexOf(event.pointerId)
+                    action = MotionEvent.ACTION_POINTER_UP or (pointerIndex shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+                }
+                activePointers.remove(event.pointerId)
+            }
             else -> return
-        }
-
-        activePointers[event.pointerId] = Pair(absX, absY)
-
-        if (action == MotionEvent.ACTION_UP) {
-            activePointers.remove(event.pointerId)
         }
 
         // Route to virtual display if active, otherwise use main screen injection
@@ -171,25 +191,21 @@ class TouchInjector(
             )
         }
 
-        // Multi-pointer: allocate arrays
+        // Multi-pointer: build arrays from activePointers map in stable order
+        val pointerIds = activePointers.keys.toList()
         val pointerProperties = Array(pointerCount) { i ->
             MotionEvent.PointerProperties().apply {
-                id = if (i == 0) pointerId else activePointers.keys.elementAtOrNull(i) ?: 0
+                id = pointerIds.getOrElse(i) { 0 }
                 toolType = MotionEvent.TOOL_TYPE_FINGER
             }
         }
 
         val pointerCoords = Array(pointerCount) { i ->
             MotionEvent.PointerCoords().apply {
-                if (i == 0) {
-                    this.x = x
-                    this.y = y
-                } else {
-                    val key = activePointers.keys.elementAtOrNull(i)
-                    val pos = key?.let { activePointers[it] }
-                    this.x = pos?.first ?: x
-                    this.y = pos?.second ?: y
-                }
+                val pid = pointerIds.getOrElse(i) { -1 }
+                val pos = activePointers[pid]
+                this.x = pos?.first ?: x
+                this.y = pos?.second ?: y
                 pressure = 1.0f
                 size = 1.0f
             }
