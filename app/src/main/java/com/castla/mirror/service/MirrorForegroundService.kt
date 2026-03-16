@@ -72,6 +72,7 @@ class MirrorForegroundService : Service() {
     private var resizeJob: Job? = null
     private var browserConnected = false
     private var currentVdApp: String = "com.android.settings" // what's running on VD
+    private var currentCodecMode: String = "h264"
 
     val isRunning: Boolean
         get() = mirrorServer != null
@@ -375,6 +376,10 @@ class MirrorForegroundService : Service() {
     private fun onViewportChange(width: Int, height: Int) {
         resizeJob?.cancel()
         resizeJob = serviceScope.launch {
+            if (currentCodecMode == "mjpeg") {
+                // MJPEG mode: skip viewport rebuild (JPEG doesn't benefit from resize)
+                return@launch
+            }
             rebuildPipeline(width, height)
         }
     }
@@ -478,6 +483,7 @@ class MirrorForegroundService : Service() {
      */
     private fun onCodecModeRequest(mode: String) {
         if (mode != "mjpeg" || jpegEncoder != null) return
+        currentCodecMode = "mjpeg"
 
         Log.i(TAG, "Switching to MJPEG mode")
         try {
