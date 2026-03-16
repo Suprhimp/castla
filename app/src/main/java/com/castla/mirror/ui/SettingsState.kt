@@ -7,7 +7,7 @@ enum class MirroringMode { FULL_SCREEN, APP }
 
 data class StreamSettings(
     val resolution: Resolution = Resolution.HD_720,
-    val bitrate: Int = 2_000_000,
+    val bitrate: Int = 4_000_000,
     val fps: Int = 30,
     val audioEnabled: Boolean = false,
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
@@ -46,7 +46,7 @@ data class StreamSettings(
                 resolution = try {
                     Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.HD_720.name)!!)
                 } catch (_: Exception) { Resolution.HD_720 },
-                bitrate = prefs.getInt(KEY_BITRATE, 2_000_000),
+                bitrate = prefs.getInt(KEY_BITRATE, 4_000_000),
                 fps = prefs.getInt(KEY_FPS, 30),
                 audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
                 mirroringMode = try {

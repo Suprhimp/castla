@@ -5,10 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Binder
@@ -66,7 +63,7 @@ class MirrorForegroundService : Service() {
     private var shizukuSetup: ShizukuSetup? = null
     private var currentWidth: Int = 0
     private var currentHeight: Int = 0
-    private var currentBitrate: Int = 2_000_000
+    private var currentBitrate: Int = 4_000_000
     private var currentFps: Int = 30
     private var mirroringMode: String = "FULL_SCREEN"
     private var targetPackage: String = ""
@@ -90,22 +87,25 @@ class MirrorForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
-    private val vdLaunchReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val pkg = intent.getStringExtra("package") ?: return
-            val cls = intent.getStringExtra("class") ?: return
-            val displayId = intent.getIntExtra("displayId", -1)
-            if (displayId < 0) return
-            Log.i(TAG, "VD launch request: $pkg/$cls on display $displayId")
-            virtualDisplayManager?.launchAppOnDisplay(pkg)
-        }
-    }
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        registerReceiver(vdLaunchReceiver, IntentFilter("com.castla.mirror.LAUNCH_ON_VD"),
-            Context.RECEIVER_NOT_EXPORTED)
+        observeAppLaunchRequests()
+    }
+
+    /** Collect app launch requests from DesktopActivity via in-process SharedFlow */
+    private fun observeAppLaunchRequests() {
+        serviceScope.launch {
+            com.castla.mirror.utils.AppLaunchBus.events.collect { request ->
+                val component = if (request.className != null) {
+                    "${request.packageName}/${request.className}"
+                } else {
+                    request.packageName
+                }
+                Log.i(TAG, "VD launch request: $component")
+                virtualDisplayManager?.launchAppOnDisplay(component)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -139,7 +139,7 @@ class MirrorForegroundService : Service() {
 
         val settingsWidth = intent!!.getIntExtra(EXTRA_WIDTH, 0)
         val settingsHeight = intent.getIntExtra(EXTRA_HEIGHT, 0)
-        val settingsBitrate = intent.getIntExtra(EXTRA_BITRATE, 2_000_000)
+        val settingsBitrate = intent.getIntExtra(EXTRA_BITRATE, 4_000_000)
         val settingsFps = intent.getIntExtra(EXTRA_FPS, 30)
         val audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, false)
         mirroringMode = intent.getStringExtra(EXTRA_MIRRORING_MODE) ?: "FULL_SCREEN"
@@ -481,7 +481,6 @@ class MirrorForegroundService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "Stopping pipeline")
-        try { unregisterReceiver(vdLaunchReceiver) } catch (_: Exception) {}
         resizeJob?.cancel()
         serviceScope.cancel()
         audioCapture?.stop()

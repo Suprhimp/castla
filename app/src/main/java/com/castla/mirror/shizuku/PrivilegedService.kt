@@ -219,19 +219,16 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun launchAppOnDisplay(displayId: Int, packageName: String) {
         try {
-            // First try: use monkey (most reliable for launching by package name)
-            val monkeyCmd = "monkey -p $packageName --display $displayId -c android.intent.category.LAUNCHER 1"
-            var result = execCommand(monkeyCmd)
-
-            // Fallback: am start with package name
-            if (result.contains("Error") || result.contains("No activities")) {
-                val cmd = "am start --display $displayId " +
-                    "-f 0x18000000 " +
-                    "-a android.intent.action.MAIN " +
-                    "-c android.intent.category.LAUNCHER " +
+            val cmd = if (packageName.contains("/")) {
+                // Component name format: "com.pkg/com.pkg.Activity"
+                "am start --display $displayId -n $packageName -f 0x18000000"
+            } else {
+                // Package name only: try LAUNCHER category
+                "am start --display $displayId -f 0x18000000 " +
+                    "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
                     packageName
-                result = execCommand(cmd)
             }
+            val result = execCommand(cmd)
             Log.i(TAG, "Launched $packageName on display $displayId: $result")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on display $displayId", e)

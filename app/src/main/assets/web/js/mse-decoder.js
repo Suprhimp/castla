@@ -594,8 +594,8 @@ class MseDecoder {
             const buf = this.sourceBuffer.buffered;
             if (buf.length > 0) {
                 const end = buf.end(buf.length - 1);
-                if (end - this.video.currentTime > 0.5) {
-                    this.video.currentTime = end - 0.1;
+                if (end - this.video.currentTime > 0.3) {
+                    this.video.currentTime = end - 0.05;
                 }
                 // Remove old data to prevent memory buildup
                 if (buf.start(0) < end - 5 && !this.sourceBuffer.updating) {
