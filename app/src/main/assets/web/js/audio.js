@@ -1,7 +1,14 @@
 /**
  * Castla - Audio Player (WebCodecs)
- * Receives raw AAC-LC frames via WebSocket, decodes with AudioDecoder,
- * and plays through Web Audio API with low-latency scheduling.
+ *
+ * Protocol: each WebSocket binary message has a 1-byte header:
+ *   0x00 = Codec Specific Data (AudioSpecificConfig from MediaCodec)
+ *   0x01 = Encoded AAC-LC audio frame
+ *
+ * Flow:
+ *   1. First message (0x00) delivers the CSD → used as AudioDecoder.configure({ description })
+ *   2. Subsequent messages (0x01) are fed as EncodedAudioChunk to the decoder
+ *   3. Decoded PCM is scheduled for gapless playback via Web Audio API
  */
 class AudioPlayer {
     constructor() {
@@ -9,17 +16,19 @@ class AudioPlayer {
         this.decoder = null;
         this.nextPlayTime = 0;
         this.timestampUs = 0;
-        this.isPlaying = false;
         this.socket = null;
+        this.csd = null; // AudioSpecificConfig from Android encoder
+        this.useWebCodecs = typeof AudioDecoder !== 'undefined';
         // AAC-LC frame = 1024 samples @ 44100Hz ~ 23.22ms
         this.FRAME_DURATION_US = 23219;
+        // Jitter buffer: intentional delay to absorb WiFi packet jitter
+        this.JITTER_BUFFER_SEC = 0.3;
         // Max buffer before catch-up skip (seconds)
-        this.MAX_LATENCY = 0.5;
+        this.MAX_LATENCY = 1.0;
     }
 
     /**
      * Initialize AudioContext (starts suspended per autoplay policy).
-     * Returns true if supported and initialized.
      */
     init() {
         try {
@@ -28,8 +37,8 @@ class AudioPlayer {
                 latencyHint: 'interactive'
             });
             this.nextPlayTime = 0;
-            this.isPlaying = false;
             this.timestampUs = 0;
+            this.csd = null;
             console.log('[Audio] AudioContext created, state:', this.audioCtx.state);
             return true;
         } catch (e) {
@@ -39,59 +48,54 @@ class AudioPlayer {
     }
 
     /**
-     * Resume AudioContext (must be called from user gesture) and start WebSocket + decoder.
+     * Resume AudioContext (must be called from user gesture) and connect WebSocket.
+     * Decoder is configured lazily when the first CSD message arrives.
      */
     async startFromUserGesture(wsUrl) {
         if (!this.audioCtx) {
             if (!this.init()) return false;
         }
 
-        // Resume AudioContext — requires user gesture context
         if (this.audioCtx.state === 'suspended') {
             await this.audioCtx.resume();
             console.log('[Audio] AudioContext resumed');
         }
 
-        // Set up WebCodecs AudioDecoder
-        if (!this._initDecoder()) return false;
-
-        // Connect WebSocket
         this._connectSocket(wsUrl);
         return true;
     }
 
     /**
-     * Initialize WebCodecs AudioDecoder for AAC-LC 44100Hz stereo.
+     * Configure WebCodecs AudioDecoder using the CSD received from Android.
      */
-    _initDecoder() {
-        if (typeof AudioDecoder === 'undefined') {
-            console.warn('[Audio] WebCodecs AudioDecoder not available, falling back to decodeAudioData');
-            this.decoder = null;
-            return true; // will use fallback path
-        }
+    _configureDecoder(csd) {
+        if (!this.useWebCodecs) return false;
 
         try {
             this.decoder = new AudioDecoder({
                 output: (audioData) => this._handleDecodedAudio(audioData),
-                error: (e) => console.error('[Audio] Decoder error:', e)
+                error: (e) => {
+                    console.error('[Audio] Decoder error:', e);
+                    // Reset decoder on error so next CSD re-configures
+                    this.decoder = null;
+                    this.csd = null;
+                }
             });
 
             this.decoder.configure({
                 codec: 'mp4a.40.2', // AAC-LC
                 sampleRate: 44100,
                 numberOfChannels: 2,
-                // AudioSpecificConfig for AAC-LC, 44100Hz, 2ch
-                // objectType=2(5bits) freqIdx=4(4bits) chanCfg=2(4bits) pad=000(3bits)
-                // = 00010 0100 0010 000 = 0x12 0x10
-                description: new Uint8Array([0x12, 0x10])
+                description: csd
             });
 
-            console.log('[Audio] WebCodecs AudioDecoder configured');
+            console.log('[Audio] AudioDecoder configured with CSD from encoder (' + csd.length + ' bytes)');
             return true;
         } catch (e) {
             console.error('[Audio] Failed to configure AudioDecoder:', e);
             this.decoder = null;
-            return true; // will use fallback
+            this.useWebCodecs = false;
+            return false;
         }
     }
 
@@ -109,7 +113,6 @@ class AudioPlayer {
             const frames = audioData.numberOfFrames;
             const sampleRate = audioData.sampleRate;
 
-            // Create AudioBuffer and copy PCM data
             const audioBuffer = this.audioCtx.createBuffer(channels, frames, sampleRate);
             for (let c = 0; c < channels; c++) {
                 const channelData = new Float32Array(frames);
@@ -119,9 +122,9 @@ class AudioPlayer {
 
             this._scheduleBuffer(audioBuffer);
         } catch (e) {
-            // Skip corrupt frames silently
+            // Skip corrupt frames
         } finally {
-            // CRITICAL: prevent OOM — must close WebCodecs AudioData
+            // CRITICAL: prevent OOM on Tesla browser
             audioData.close();
         }
     }
@@ -137,12 +140,13 @@ class AudioPlayer {
         const now = this.audioCtx.currentTime;
 
         if (this.nextPlayTime < now) {
-            // Buffer underrun or first play — start with small lead
-            this.nextPlayTime = now + 0.05;
+            // Buffer underrun or first play — re-buffer with jitter margin
+            console.warn('[Audio] Buffer underrun, re-buffering', this.JITTER_BUFFER_SEC + 's');
+            this.nextPlayTime = now + this.JITTER_BUFFER_SEC;
         } else if (this.nextPlayTime > now + this.MAX_LATENCY) {
-            // Too much latency accumulated — skip to live edge
+            // Too much latency — skip to live edge
             console.warn('[Audio] Latency exceeded, jumping to live edge');
-            this.nextPlayTime = now + 0.05;
+            this.nextPlayTime = now + this.JITTER_BUFFER_SEC;
         }
 
         source.start(this.nextPlayTime);
@@ -166,20 +170,37 @@ class AudioPlayer {
         };
 
         this.socket.onmessage = (event) => {
-            if (!(event.data instanceof ArrayBuffer)) return;
+            if (!(event.data instanceof ArrayBuffer) || event.data.byteLength < 2) return;
 
+            const view = new Uint8Array(event.data);
+            const type = view[0];
+            const payload = view.subarray(1);
+
+            if (type === 0x00) {
+                // CSD (AudioSpecificConfig) from MediaCodec
+                this.csd = new Uint8Array(payload);
+                console.log('[Audio] Received CSD:', Array.from(this.csd).map(b => b.toString(16).padStart(2, '0')).join(' '));
+                this._configureDecoder(this.csd);
+                return;
+            }
+
+            // type === 0x01: encoded AAC frame
             if (this.decoder && this.decoder.state === 'configured') {
-                // WebCodecs path: feed raw AAC as EncodedAudioChunk
-                const chunk = new EncodedAudioChunk({
-                    type: 'key', // all AAC frames are independently decodable
-                    timestamp: this.timestampUs,
-                    data: event.data
-                });
-                this.timestampUs += this.FRAME_DURATION_US;
-                this.decoder.decode(chunk);
+                // WebCodecs path
+                try {
+                    const chunk = new EncodedAudioChunk({
+                        type: 'key',
+                        timestamp: this.timestampUs,
+                        data: payload
+                    });
+                    this.timestampUs += this.FRAME_DURATION_US;
+                    this.decoder.decode(chunk);
+                } catch (e) {
+                    // Skip bad frames
+                }
             } else {
-                // Fallback: decodeAudioData (wrap in ADTS)
-                this._fallbackDecode(new Uint8Array(event.data));
+                // Fallback: decodeAudioData with ADTS wrapper
+                this._fallbackDecode(payload);
             }
         };
 
@@ -189,8 +210,7 @@ class AudioPlayer {
     }
 
     /**
-     * Fallback: wrap raw AAC in ADTS header and use decodeAudioData.
-     * Used when WebCodecs AudioDecoder is not available (older browsers).
+     * Fallback for browsers without WebCodecs AudioDecoder.
      */
     async _fallbackDecode(rawAAC) {
         if (!this.audioCtx || this.audioCtx.state === 'closed') return;
@@ -205,14 +225,13 @@ class AudioPlayer {
     }
 
     /**
-     * Wrap raw AAC-LC frame in 7-byte ADTS header.
-     * Only used in fallback path (decodeAudioData requires container).
+     * Wrap raw AAC-LC frame in 7-byte ADTS header (fallback path only).
      */
     _wrapADTS(rawAAC) {
         const frameLength = rawAAC.length + 7;
         const adts = new Uint8Array(frameLength);
         adts[0] = 0xFF;
-        adts[1] = 0xF1; // MPEG-4, Layer 0, no CRC
+        adts[1] = 0xF1;
         adts[2] = ((1 << 6) | (4 << 2) | (0 << 1) | ((2 >> 2) & 0x01));
         adts[3] = ((2 & 0x03) << 6) | ((frameLength >> 11) & 0x03);
         adts[4] = (frameLength >> 3) & 0xFF;
@@ -222,14 +241,12 @@ class AudioPlayer {
         return adts;
     }
 
-    /**
-     * Stop everything — decoder, socket, audio context.
-     */
     stop() {
         if (this.decoder && this.decoder.state !== 'closed') {
             try { this.decoder.close(); } catch (_) {}
         }
         this.decoder = null;
+        this.csd = null;
 
         if (this.socket) {
             this.socket.onclose = null;
@@ -241,7 +258,6 @@ class AudioPlayer {
             this.audioCtx.close().catch(() => {});
         }
         this.audioCtx = null;
-        this.isPlaying = false;
         this.nextPlayTime = 0;
         this.timestampUs = 0;
         console.log('[Audio] Stopped');

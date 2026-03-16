@@ -5,8 +5,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
@@ -73,6 +75,7 @@ class MirrorForegroundService : Service() {
     private var browserConnected = false
     private var currentVdApp: String = "com.android.settings" // what's running on VD
     private var currentCodecMode: String = "h264"
+    private var savedMediaVolume: Int = -1
 
     val isRunning: Boolean
         get() = mirrorServer != null
@@ -235,6 +238,10 @@ class MirrorForegroundService : Service() {
             if (audioEnabled && AudioCapture.isSupported()) {
                 val projection = screenCapture?.getMediaProjection()
                 if (projection != null) {
+                    // Mute device speaker — AudioPlaybackCapture still receives audio
+                    // at the mixer level, so capture is unaffected
+                    muteMediaVolume()
+
                     audioCapture = AudioCapture(projection).also { audio ->
                         audio.start { audioData ->
                             mirrorServer?.broadcastAudio(audioData)
@@ -531,6 +538,7 @@ class MirrorForegroundService : Service() {
         resizeJob?.cancel()
         serviceScope.cancel()
         audioCapture?.stop()
+        restoreMediaVolume()
         virtualDisplayManager?.release()
         shizukuSetup?.release()
         screenCapture?.release()
@@ -547,6 +555,34 @@ class MirrorForegroundService : Service() {
         touchInjector = null
         mirrorServer = null
         super.onDestroy()
+    }
+
+    /**
+     * Mute device media volume so audio only plays through the browser.
+     * AudioPlaybackCapture taps audio at the mixer level before volume is applied,
+     * so captured data is unaffected by the device volume being zero.
+     */
+    private fun muteMediaVolume() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            savedMediaVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            Log.i(TAG, "Media volume muted (saved=$savedMediaVolume)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to mute media volume", e)
+        }
+    }
+
+    private fun restoreMediaVolume() {
+        if (savedMediaVolume < 0) return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, savedMediaVolume, 0)
+            Log.i(TAG, "Media volume restored to $savedMediaVolume")
+            savedMediaVolume = -1
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to restore media volume", e)
+        }
     }
 
     private fun createNotificationChannel() {

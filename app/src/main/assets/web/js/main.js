@@ -23,6 +23,7 @@
     let viewportTimer = null;
     let codecMode = 'h264'; // 'h264' (WebCodecs), 'mse' (MSE fMP4), 'mjpeg'
     let lastViewport = { width: 0, height: 0 };
+    let currentServerWidth = 1280, currentServerHeight = 720;
     let awaitingNewDecoder = false;
     let controlReady = false;
     let firstFrameReceived = false;
@@ -157,11 +158,15 @@
                 console.log('[Main] Requested MJPEG mode from server');
             }
 
-            // Always send viewport on connect (reset lastViewport to force send)
-            lastViewport = { width: 0, height: 0 };
             sendViewport();
-            // Retry viewport after 3s in case server was still rebuilding
-            setTimeout(() => sendViewport(), 3000);
+            // If server is still at default resolution (1280x720), retry after 3s
+            setTimeout(() => {
+                if (currentServerWidth === 1280 && currentServerHeight === 720) {
+                    console.log('[Main] Still at default resolution, resending viewport');
+                    lastViewport = { width: 0, height: 0 };
+                    sendViewport();
+                }
+            }, 3000);
 
             const touchTarget = codecMode === 'mse'
                 ? document.getElementById('mse-video') : canvas;
@@ -180,7 +185,9 @@
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'resolutionChanged') {
-                    console.log('[Main] Server resolution changed:', msg.width, 'x', msg.height);
+                    currentServerWidth = msg.width || 1280;
+                    currentServerHeight = msg.height || 720;
+                    console.log('[Main] Server resolution changed:', currentServerWidth, 'x', currentServerHeight);
                     // Don't destroy decoder here — MSE decoder handles resolution change
                     // internally by detecting SPS change in the video stream.
                     // Just request a keyframe so the decoder gets new SPS/PPS quickly.
