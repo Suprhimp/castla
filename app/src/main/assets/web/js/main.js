@@ -27,7 +27,6 @@
     let awaitingNewDecoder = false;
 
     const host = window.location.host;
-    const pin = new URLSearchParams(window.location.search).get('pin') || '';
 
     function setStatus(text, className) {
         statusEl.textContent = text;
@@ -92,7 +91,7 @@
     }
 
     function connectVideo() {
-        const wsUrl = `ws://${host}/ws/video?pin=${encodeURIComponent(pin)}`;
+        const wsUrl = `ws://${host}/ws/video`;
         console.log('[Main] Connecting video:', wsUrl);
         setStatus('Connecting...', '');
 
@@ -103,6 +102,7 @@
             console.log('[Main] Video connected');
             setStatus('Connected', 'connected');
             showOverlay();
+            if (kbBtn) kbBtn.style.display = 'block';
         };
 
         videoSocket.onmessage = async (event) => {
@@ -134,7 +134,7 @@
     }
 
     function connectControl() {
-        const wsUrl = `ws://${host}/ws/control?pin=${encodeURIComponent(pin)}`;
+        const wsUrl = `ws://${host}/ws/control`;
         controlSocket = new WebSocket(wsUrl);
 
         controlSocket.onopen = () => {
@@ -191,7 +191,7 @@
         audioPlayer = new AudioPlayer();
         if (!audioPlayer.init()) return;
 
-        const wsUrl = `ws://${host}/ws/audio?pin=${encodeURIComponent(pin)}`;
+        const wsUrl = `ws://${host}/ws/audio`;
         audioSocket = new WebSocket(wsUrl);
         audioSocket.binaryType = 'arraybuffer';
 
@@ -296,6 +296,41 @@
 
     // Touch on canvas shows overlay briefly
     canvas.addEventListener('touchstart', () => showOverlay(), { passive: true });
+
+    // --- Tesla native keyboard integration ---
+    const kbInput = document.getElementById('keyboard-input');
+    const kbBtn = document.getElementById('keyboard-btn');
+
+    if (kbBtn && kbInput) {
+        kbBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            kbInput.style.pointerEvents = 'auto';
+            kbInput.focus();
+            // Tesla browser should pop up its native keyboard
+        });
+
+        // Capture input and send to server
+        kbInput.addEventListener('input', (e) => {
+            const text = e.target.value;
+            if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text: text }));
+                kbInput.value = ''; // clear for next input
+            }
+        });
+
+        // Also handle Enter key
+        kbInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text: '\n' }));
+                e.preventDefault();
+            }
+        });
+
+        // Hide keyboard input pointer events when blurred
+        kbInput.addEventListener('blur', () => {
+            kbInput.style.pointerEvents = 'none';
+        });
+    }
 
     // Start
     async function main() {

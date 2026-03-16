@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
     private var isStreaming by mutableStateOf(false)
     private var serverUrl by mutableStateOf("")
     private var currentIp by mutableStateOf("0.0.0.0")
-    private var sessionPin by mutableStateOf("")
+    @Suppress("unused") private var sessionPin by mutableStateOf("") // kept for UI compat
     private var showSettings by mutableStateOf(false)
     private var streamSettings by mutableStateOf(StreamSettings())
     private var shizukuInstalled by mutableStateOf(false)
@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val localBinder = binder as MirrorForegroundService.LocalBinder
             mirrorService = localBinder.service
-            sessionPin = localBinder.service.sessionPin ?: ""
+            // PIN removed — single-connection limit instead
             // Only update isStreaming from service if we didn't just request a start.
             // The service pipeline may still be initializing (isRunning == false) even
             // though we already set isStreaming = true in startMirrorService().
