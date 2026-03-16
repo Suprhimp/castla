@@ -157,8 +157,11 @@
                 console.log('[Main] Requested MJPEG mode from server');
             }
 
-            // Send viewport dimensions to server
+            // Always send viewport on connect (reset lastViewport to force send)
+            lastViewport = { width: 0, height: 0 };
             sendViewport();
+            // Retry viewport after 3s in case server was still rebuilding
+            setTimeout(() => sendViewport(), 3000);
 
             const touchTarget = codecMode === 'mse'
                 ? document.getElementById('mse-video') : canvas;

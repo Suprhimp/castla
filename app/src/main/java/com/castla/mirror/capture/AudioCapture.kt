@@ -35,6 +35,11 @@ class AudioCapture(
     private var isRunning = false
     private var captureThread: Thread? = null
 
+    /**
+     * Start capture. Each callback ByteArray is prefixed with a 1-byte type header:
+     *   0x00 = Codec Specific Data (AudioSpecificConfig) — sent once at start
+     *   0x01 = Encoded AAC audio frame
+     */
     fun start(onEncodedAudio: (data: ByteArray) -> Unit) {
         if (!isSupported()) {
             Log.w(TAG, "AudioPlaybackCapture requires Android 10+")
@@ -139,17 +144,24 @@ class AudioCapture(
                 }
                 index >= 0 -> {
                     try {
-                        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                            codec.releaseOutputBuffer(index, false)
-                            continue
-                        }
                         if (bufferInfo.size > 0) {
                             val buffer = codec.getOutputBuffer(index) ?: continue
-                            val data = ByteArray(bufferInfo.size)
+                            val rawData = ByteArray(bufferInfo.size)
                             buffer.position(bufferInfo.offset)
                             buffer.limit(bufferInfo.offset + bufferInfo.size)
-                            buffer.get(data)
-                            onEncodedAudio(data)
+                            buffer.get(rawData)
+
+                            val isConfig = bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                            // Prefix: 0x00 = CSD (AudioSpecificConfig), 0x01 = audio frame
+                            val header = if (isConfig) 0x00.toByte() else 0x01.toByte()
+                            val prefixed = ByteArray(1 + rawData.size)
+                            prefixed[0] = header
+                            System.arraycopy(rawData, 0, prefixed, 1, rawData.size)
+                            onEncodedAudio(prefixed)
+
+                            if (isConfig) {
+                                Log.i(TAG, "CSD sent: ${rawData.size} bytes = ${rawData.joinToString(" ") { "%02X".format(it) }}")
+                            }
                         }
                         codec.releaseOutputBuffer(index, false)
                     } catch (e: Exception) {
