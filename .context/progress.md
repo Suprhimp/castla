@@ -17,11 +17,12 @@ Tesla 차량 브라우저로 Android 폰 화면을 스트리밍하는 미러링 
 | 4 | Touch Relay | DONE |
 | 5 | Shizuku Integration (Virtual Display) | DONE |
 | 6 | Network + Hotspot | DONE (code written, not wired to UI fully) |
-| 7 | Polish + Settings UI | NOT STARTED |
+| 7 | Polish + Settings UI + Audio | DONE |
+| 8 | Production Readiness | DONE |
 
 ---
 
-## Test Suite (42 tests, all passing)
+## Test Suite (63 tests, all passing)
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -29,8 +30,11 @@ Tesla 차량 브라우저로 Android 폰 화면을 스트리밍하는 미러링 
 | MirrorServerAuthTest | 8 | Auth enforcement, sub-resource bypass, MIME types |
 | TouchInjectorTest | 10 | Coord scaling, action mapping, multi-touch, VD routing |
 | TouchEventTest | 5 | Data class behavior, equality, copy |
-| VirtualDisplayManagerTest | 5 | Create/release lifecycle, Shizuku fallback |
+| VirtualDisplayManagerTest | 8 | Create/release lifecycle, Shizuku fallback |
 | ShizukuStateTest | 6 | Sealed class states, equality |
+| QrCodeGeneratorTest | 4 | QR bitmap generation, different URLs |
+| StreamSettingsTest | 10 | Defaults, save/load round-trip, corrupted data, copy, resolution enums |
+| AudioCaptureTest | 4 | API level support detection (Android 10+ check) |
 
 ---
 
@@ -117,7 +121,10 @@ app/src/test/java/com/jakarta/mirror/
 │   ├── MirrorServerTokenTest.kt
 │   ├── MirrorServerAuthTest.kt
 │   └── TouchEventTest.kt
-└── shizuku/ShizukuStateTest.kt
+├── shizuku/ShizukuStateTest.kt
+└── ui/
+    ├── QrCodeGeneratorTest.kt
+    └── StreamSettingsTest.kt
 ```
 
 ### Config
@@ -132,18 +139,28 @@ app/src/main/res/xml/accessibility_config.xml     # Accessibility service config
 ## Remaining Work
 
 ### Phase 7: Polish (Priority: MEDIUM)
-- [ ] StatusScreen.kt — Compose UI with QR code for URL
-- [ ] SettingsScreen.kt — Resolution/bitrate/FPS controls
-- [ ] Server-side MJPEG encoding mode for fallback clients
-- [ ] Audio streaming (AudioPlaybackCapture → Opus → Web Audio)
+- [x] StatusScreen.kt — QR code + connection info (merged into CastlaScreen in MainActivity)
+- [x] SettingsScreen.kt — Resolution/bitrate/FPS/audio controls
+- [x] SettingsState.kt — StreamSettings data class + SharedPreferences persistence
+- [x] Settings integrated into MainActivity (navigation + service intent extras)
+- [x] VideoEncoder uses user settings (resolution/bitrate/fps from Intent)
+- [x] StreamSettingsTest — 10 tests for settings persistence + data integrity
+- [x] Audio streaming (AudioPlaybackCapture → AAC → WebSocket → Web Audio API)
+- [ ] Server-side MJPEG encoding mode for fallback clients (low priority)
+
+### Phase 8: Production Readiness
+- [x] ProGuard rules (NanoHTTPD, Shizuku, AIDL, ZXing protection)
+- [x] Release build: minification + resource shrinking enabled
+- [x] Debug log stripping in release (Log.d/v removed via ProGuard)
+- [x] Verified no token/sensitive data in log statements
 
 ### Known Limitations
 - Shizuku InputManager init uses reflection — may fail without Shizuku running
 - Virtual display creation uses hidden DisplayManagerGlobal API — device-dependent
 - MJPEG fallback requires server-side JPEG encoding (not yet implemented)
-- No audio streaming yet
+- Audio requires Android 10+ (AudioPlaybackCapture API)
 - DRM content cannot be mirrored (MediaProjection limitation)
-- Token is logged in plaintext (should be removed for production)
+- Debug logs stripped in release via ProGuard assumenosideeffects
 
 ---
 
@@ -154,5 +171,5 @@ app/src/main/res/xml/accessibility_config.xml     # Accessibility service config
 - **Streaming:** H.264 over WebSocket → WebCodecs VideoDecoder
 - **Touch:** Shizuku InputManager / VirtualDisplay injection / AccessibilityService
 - **Auth:** Per-session SecureRandom token
-- **Testing:** JUnit 4 + MockK + Robolectric (42 tests)
+- **Testing:** JUnit 4 + MockK + Robolectric (63 tests)
 - **Target Latency:** 17-43ms on LAN

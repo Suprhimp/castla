@@ -9,6 +9,7 @@
 <body>
     <div id="container">
         <canvas id="display"></canvas>
+        <video id="mse-video" muted autoplay playsinline></video>
         <div id="overlay">
             <div id="status">Connecting...</div>
             <div id="stats"></div>
@@ -16,8 +17,10 @@
     </div>
 
     <script src="js/decoder.js"></script>
+    <script src="js/mse-decoder.js"></script>
     <script src="js/renderer.js"></script>
     <script src="js/touch.js"></script>
+    <script src="js/audio.js"></script>
     <script src="js/fallback.js"></script>
     <script src="js/main.js"></script>
 </body>

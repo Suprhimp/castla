@@ -48,9 +48,7 @@ class TouchHandler {
 
         for (let i = 0; i < event.changedTouches.length; i++) {
             const touch = event.changedTouches[i];
-            const canvasX = touch.clientX - rect.left;
-            const canvasY = touch.clientY - rect.top;
-            const coords = this.renderer.canvasToVideo(canvasX, canvasY);
+            const coords = this._toNormalized(touch.clientX, touch.clientY, rect);
 
             if (coords.inBounds || action === 'up') {
                 this.send({
@@ -66,9 +64,7 @@ class TouchHandler {
 
     sendMouseEvent(event, action) {
         const rect = this.canvas.getBoundingClientRect();
-        const canvasX = event.clientX - rect.left;
-        const canvasY = event.clientY - rect.top;
-        const coords = this.renderer.canvasToVideo(canvasX, canvasY);
+        const coords = this._toNormalized(event.clientX, event.clientY, rect);
 
         if (coords.inBounds || action === 'up') {
             this.send({
@@ -79,6 +75,21 @@ class TouchHandler {
                 id: 0
             });
         }
+    }
+
+    /** Convert client coordinates to normalized 0-1 video coordinates */
+    _toNormalized(clientX, clientY, rect) {
+        if (this.renderer && typeof this.renderer.canvasToVideo === 'function') {
+            return this.renderer.canvasToVideo(clientX - rect.left, clientY - rect.top);
+        }
+        // Direct element mapping (for video element / MSE mode)
+        const x = (clientX - rect.left) / rect.width;
+        const y = (clientY - rect.top) / rect.height;
+        return {
+            x: Math.max(0, Math.min(1, x)),
+            y: Math.max(0, Math.min(1, y)),
+            inBounds: x >= 0 && x <= 1 && y >= 0 && y <= 1
+        };
     }
 
     send(event) {
