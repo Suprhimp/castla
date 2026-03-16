@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Castla</title>
+    <link rel="stylesheet" href="css/player.css">
+</head>
+<body>
+    <div id="container">
+        <canvas id="display"></canvas>
+        <video id="mse-video" muted autoplay playsinline></video>
+        <div id="overlay">
+            <div id="status">Connecting...</div>
+            <div id="stats"></div>
+        </div>
+        <!-- Hidden input to trigger Tesla native keyboard -->
+        <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off"
+               autocapitalize="off" spellcheck="false"
+               style="position:fixed;bottom:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;">
+        <button id="keyboard-btn" title="Open keyboard"
+                style="position:fixed;bottom:12px;right:12px;z-index:100;width:48px;height:48px;
+                       border-radius:50%;border:none;background:rgba(255,255,255,0.15);
+                       color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(4px);
+                       display:none;">&#x2328;</button>
+    </div>
+
+    <script src="js/decoder.js"></script>
+    <script src="js/mse-decoder.js"></script>
+    <script src="js/renderer.js"></script>
+    <script src="js/touch.js"></script>
+    <script src="js/audio.js"></script>
+    <script src="js/fallback.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
