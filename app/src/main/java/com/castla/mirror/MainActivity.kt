@@ -280,16 +280,50 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateServerUrl() {
-        // Use sslip.io wildcard DNS to wrap the private IP in a domain name.
-        // Tesla browser blocks direct private IP navigation but allows domain names
-        // that resolve to private IPs via DNS.
-        val ip = currentIp
-        if (ip != "0.0.0.0" && ip.isNotEmpty()) {
+        // Tesla's internal network uses 10.0.0.0/8, causing routing conflicts
+        // when the hotspot assigns a 10.x.x.x IP. To bypass this, we use the
+        // phone's cellular IP (e.g. 100.x.x.x) instead. Tesla sends packets to
+        // the cellular IP via the gateway (phone), and Android's kernel hairpins
+        // them back to the local server without hitting the internet.
+        val cellularIp = getCellularIpv4Address()
+        val hotspotIp = currentIp
+
+        val ip = when {
+            cellularIp != null && !cellularIp.startsWith("10.") -> cellularIp
+            hotspotIp != "0.0.0.0" && hotspotIp.isNotEmpty() -> hotspotIp
+            else -> "0.0.0.0"
+        }
+
+        if (ip != "0.0.0.0") {
             val sslipDomain = ip.replace('.', '-') + ".sslip.io"
             serverUrl = "http://${sslipDomain}:${MirrorServer.DEFAULT_PORT}"
         } else {
             serverUrl = "http://${ip}:${MirrorServer.DEFAULT_PORT}"
         }
+    }
+
+    private fun getCellularIpv4Address(): String? {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (iface.isLoopback || !iface.isUp) continue
+                val name = iface.name.lowercase()
+                // Skip WiFi/hotspot interfaces — we want cellular (rmnet, ccmni, etc.)
+                if (name.contains("wlan") || name.contains("swlan") || name.contains("ap")) continue
+
+                val addrs = iface.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (!addr.isLoopbackAddress && addr.address.size == 4) {
+                        return addr.hostAddress
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get cellular IP", e)
+        }
+        return null
     }
 
     private fun tryStartTeslaVpn() {
