@@ -168,9 +168,14 @@
                 }
             }, 3000);
 
-            const touchTarget = codecMode === 'mse'
-                ? document.getElementById('mse-video') : canvas;
-            touchHandler = new TouchHandler(touchTarget, renderer, controlSocket);
+            if (touchHandler) {
+                // Update existing handler's socket reference (avoids duplicate event listeners)
+                touchHandler.controlSocket = controlSocket;
+            } else {
+                const touchTarget = codecMode === 'mse'
+                    ? document.getElementById('mse-video') : canvas;
+                touchHandler = new TouchHandler(touchTarget, renderer, controlSocket);
+            }
 
             // Keepalive ping every 15s to prevent idle timeout
             clearInterval(pingTimer);
