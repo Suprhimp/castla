@@ -20,12 +20,18 @@ class VideoStreamSocket(
     private val sendQueue = ArrayBlockingQueue<ByteArray>(MAX_QUEUE)
     private val sending = AtomicBoolean(false)
     @Volatile private var closed = false
+    @Volatile private var framesSent = 0L
+
     private val sendThread = Thread({
         while (!closed) {
             try {
                 val data = sendQueue.take() // blocks until available
                 if (closed) break
                 send(data)
+                framesSent++
+                if (framesSent == 1L || framesSent % 100 == 0L) {
+                    Log.i(TAG, "Sent frame #$framesSent, size=${data.size}")
+                }
             } catch (_: InterruptedException) {
                 break
             } catch (e: IOException) {

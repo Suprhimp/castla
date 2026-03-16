@@ -34,11 +34,15 @@ class MseDecoder {
     init() {
         return new Promise((resolve, reject) => {
             this.mediaSource = new MediaSource();
-            this.video.src = URL.createObjectURL(this.mediaSource);
+
+            // Listen for video element errors
+            this.video.addEventListener('error', (e) => {
+                const err = this.video.error;
+                console.error('[MSE] Video element error:', err ? `code=${err.code} message=${err.message}` : e);
+            });
 
             this.mediaSource.addEventListener('sourceopen', () => {
                 try {
-                    // Don't create SourceBuffer yet — wait for SPS to know the real codec
                     this.startTime = performance.now();
                     console.log('[MSE] MediaSource opened, waiting for SPS/PPS');
                     resolve();
@@ -50,11 +54,15 @@ class MseDecoder {
             this.mediaSource.addEventListener('sourceclose', () => {
                 console.log('[MSE] MediaSource closed');
                 this.ready = false;
+                // Don't access this.mediaSource here — it may have been nulled by destroy()
             });
 
             this.mediaSource.addEventListener('sourceended', () => {
                 console.log('[MSE] MediaSource ended');
             });
+
+            // Set src AFTER event listeners are attached
+            this.video.src = URL.createObjectURL(this.mediaSource);
 
             // Auto-play with low latency
             this.video.muted = true;
@@ -68,8 +76,6 @@ class MseDecoder {
      * @param {ArrayBuffer} data - 1-byte header (0x01=key, 0x00=delta) + H.264 NAL units
      */
     decode(data) {
-        if (!this.mediaSource || this.mediaSource.readyState !== 'open') return;
-
         const view = new Uint8Array(data);
         if (view.length < 2) return;
 
@@ -77,7 +83,26 @@ class MseDecoder {
         const nalData = new Uint8Array(data, 1);
 
         if (isKeyFrame) {
+            const oldWidth = this.width;
+            const oldHeight = this.height;
             this._extractSpsPps(nalData);
+
+            // Detect resolution change from SPS — reinit everything
+            if (this.initSegmentSent && this.sps && this.pps &&
+                (this.width !== oldWidth || this.height !== oldHeight)) {
+                console.log('[MSE] Resolution changed: ' + oldWidth + 'x' + oldHeight +
+                    ' -> ' + this.width + 'x' + this.height + ', reinitializing');
+                this._reinit(data);
+                return;
+            }
+        }
+
+        if (!this.mediaSource || this.mediaSource.readyState !== 'open') {
+            // Queue frame if we're in the middle of reinit
+            if (this._pendingReinit && isKeyFrame) {
+                this._pendingKeyframe = data;
+            }
+            return;
         }
 
         // Create SourceBuffer and send init segment once we have SPS/PPS
@@ -86,7 +111,7 @@ class MseDecoder {
             this._sendInitSegment();
         }
 
-        if (!this.initSegmentSent || !this.ready) return;
+        if (!this.initSegmentSent) return;
 
         // Wrap NAL units in moof+mdat
         const segment = this._createMediaSegment(nalData, isKeyFrame);
@@ -99,6 +124,69 @@ class MseDecoder {
         this._maintainLiveEdge();
     }
 
+    /**
+     * Reinitialize MSE pipeline with new resolution.
+     * Tears down old MediaSource and creates a fresh one.
+     */
+    _reinit(keyframeData) {
+        this._pendingReinit = true;
+        this._pendingKeyframe = keyframeData;
+
+        // Tear down old pipeline
+        const oldMs = this.mediaSource;
+        this.mediaSource = null;
+        this.sourceBuffer = null;
+        this.queue = [];
+        this.appending = false;
+        this.initSegmentSent = false;
+        this.ready = false;
+        this.sequenceNumber = 0;
+        this.baseDecodeTime = 0;
+
+        if (oldMs) {
+            try {
+                if (oldMs.readyState === 'open') oldMs.endOfStream();
+            } catch (_) {}
+        }
+
+        // Create new MediaSource
+        this.mediaSource = new MediaSource();
+
+        this.mediaSource.addEventListener('sourceopen', () => {
+            console.log('[MSE] Reinit: MediaSource opened');
+            this._pendingReinit = false;
+
+            // Process the pending keyframe
+            if (this._pendingKeyframe) {
+                const kf = this._pendingKeyframe;
+                this._pendingKeyframe = null;
+                const kfNalData = new Uint8Array(kf, 1);
+
+                if (!this._createSourceBuffer()) return;
+                this._sendInitSegment();
+
+                const segment = this._createMediaSegment(kfNalData, true);
+                if (segment.length > 0) {
+                    this._appendBuffer(segment);
+                    this.frameCount++;
+                }
+            }
+        });
+
+        this.mediaSource.addEventListener('sourceclose', () => {
+            this.ready = false;
+        });
+
+        // Revoke old URL and set new one
+        if (this.video.src) {
+            try { URL.revokeObjectURL(this.video.src); } catch (_) {}
+        }
+        this.video.src = URL.createObjectURL(this.mediaSource);
+        this.video.muted = true;
+        this.video.autoplay = true;
+        this.video.playsInline = true;
+    }
+
     _createSourceBuffer() {
         if (this.sourceBuffer) return true;
         if (!this.mediaSource || this.mediaSource.readyState !== 'open') return false;
@@ -109,9 +197,13 @@ class MseDecoder {
             console.log('[MSE] Creating SourceBuffer with codec:', codec);
 
             this.sourceBuffer = this.mediaSource.addSourceBuffer(codec);
-            this.sourceBuffer.mode = 'segments';
             this.sourceBuffer.addEventListener('updateend', () => {
                 this.appending = false;
+                // Mark ready only after init segment is processed
+                if (!this.ready && this.initSegmentSent) {
+                    this.ready = true;
+                    console.log('[MSE] Init segment processed, ready for media segments');
+                }
                 this._flushQueue();
             });
             this.sourceBuffer.addEventListener('error', (e) => {
@@ -130,21 +222,21 @@ class MseDecoder {
         for (const nal of nals) {
             const type = nal[0] & 0x1F;
             if (type === 7) { // SPS
-                this.sps = nal;
-                this._parseSps(nal);
+                this.sps = new Uint8Array(nal); // copy, not view
+                this._parseSps(this.sps);
                 // Build codec string from SPS: avc1.XXYYZZ
-                const profile = nal[1];
-                const compat = nal[2];
-                const level = nal[3];
+                const profile = this.sps[1];
+                const compat = this.sps[2];
+                const level = this.sps[3];
                 this.codecString = 'avc1.' +
                     profile.toString(16).padStart(2, '0') +
                     compat.toString(16).padStart(2, '0') +
                     level.toString(16).padStart(2, '0');
                 console.log('[MSE] SPS found: codec=' + this.codecString +
-                    ' size=' + nal.length + ' w=' + this.width + ' h=' + this.height);
+                    ' size=' + this.sps.length + ' w=' + this.width + ' h=' + this.height);
             } else if (type === 8) { // PPS
-                this.pps = nal;
-                console.log('[MSE] PPS found: size=' + nal.length);
+                this.pps = new Uint8Array(nal); // copy, not view
+                console.log('[MSE] PPS found: size=' + this.pps.length);
             }
         }
     }
@@ -264,10 +356,11 @@ class MseDecoder {
         if (this.mediaSource.readyState !== 'open') return;
 
         const initSeg = this._createInitSegment(this.sps, this.pps);
-        console.log('[MSE] Sending init segment (' + initSeg.length + ' bytes)');
+        console.log('[MSE] Sending init segment (' + initSeg.length + ' bytes), ' +
+            'codec=' + this.codecString + ', ' + this.width + 'x' + this.height);
         this._appendBuffer(initSeg);
         this.initSegmentSent = true;
-        this.ready = true;
+        // ready=true is set in updateend handler after init segment is processed
     }
 
     /**
@@ -558,12 +651,25 @@ class MseDecoder {
 
     destroy() {
         this.ready = false;
-        if (this.mediaSource && this.mediaSource.readyState === 'open') {
-            try { this.mediaSource.endOfStream(); } catch (_) {}
-        }
-        this.sourceBuffer = null;
+        this.initSegmentSent = false;
+        this.sps = null;
+        this.pps = null;
+        this.sequenceNumber = 0;
+        this.baseDecodeTime = 0;
+        const ms = this.mediaSource;
         this.mediaSource = null;
+        this.sourceBuffer = null;
         this.queue = [];
+        this._pendingReinit = false;
+        this._pendingKeyframe = null;
+        if (ms) {
+            try {
+                if (ms.readyState === 'open') ms.endOfStream();
+            } catch (_) {}
+            if (this.video && this.video.src) {
+                try { URL.revokeObjectURL(this.video.src); } catch (_) {}
+            }
+        }
     }
 
     // ---- MP4 Box helpers ----

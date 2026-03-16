@@ -12,8 +12,8 @@ import java.lang.reflect.Method
  * Uses Shizuku's InputManager when available, falls back to Accessibility Service.
  */
 class TouchInjector(
-    private val displayWidth: Int,
-    private val displayHeight: Int
+    private var displayWidth: Int,
+    private var displayHeight: Int
 ) {
     companion object {
         private const val TAG = "TouchInjector"
@@ -37,6 +37,16 @@ class TouchInjector(
 
     init {
         tryInitShizukuInputManager()
+    }
+
+    /**
+     * Update the display dimensions used for touch coordinate scaling.
+     * Clears active pointers to avoid stale state after a resize.
+     */
+    fun updateDimensions(width: Int, height: Int) {
+        displayWidth = width
+        displayHeight = height
+        activePointers.clear()
     }
 
     /**

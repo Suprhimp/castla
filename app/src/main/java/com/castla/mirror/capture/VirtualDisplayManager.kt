@@ -126,6 +126,9 @@ class VirtualDisplayManager {
         }
     }
 
+    /** Returns true if the Shizuku service is bound (even if no VD is active). */
+    fun isBound(): Boolean = isBound && privilegedService != null
+
     /** Display ID of the Shizuku-created virtual display, or -1. */
     fun getDisplayId(): Int = displayId
 
@@ -140,6 +143,23 @@ class VirtualDisplayManager {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to inject input on virtual display", e)
         }
+    }
+
+    /**
+     * Release just the virtual display, keeping the Shizuku service bound.
+     * Use this when rebuilding the pipeline with new dimensions.
+     */
+    fun releaseVirtualDisplay() {
+        if (displayId >= 0) {
+            try {
+                privilegedService?.releaseVirtualDisplay(displayId)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to release virtual display", e)
+            }
+        }
+        virtualDisplay?.release()
+        virtualDisplay = null
+        displayId = -1
     }
 
     fun release() {

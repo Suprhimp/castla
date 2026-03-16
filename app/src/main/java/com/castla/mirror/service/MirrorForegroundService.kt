@@ -21,6 +21,13 @@ import com.castla.mirror.capture.VirtualDisplayManager
 import com.castla.mirror.input.TouchInjector
 import com.castla.mirror.server.MirrorServer
 import com.castla.mirror.shizuku.ShizukuSetup
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class MirrorForegroundService : Service() {
 
@@ -56,6 +63,8 @@ class MirrorForegroundService : Service() {
     private var currentHeight: Int = 0
     private var currentBitrate: Int = 2_000_000
     private var currentFps: Int = 30
+    private var serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var resizeJob: Job? = null
 
     /** Session PIN — available immediately after pipeline starts */
     val sessionPin: String?
@@ -146,6 +155,7 @@ class MirrorForegroundService : Service() {
                     server.setKeyframeRequester { encoder.requestKeyFrame() }
                     server.setTouchListener { event -> touchInjector?.onTouchEvent(event) }
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
+                    server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
                     server.start(0) // no read timeout — WebSockets stay open indefinitely
                     Log.i(TAG, "Server started on port 8080")
                 }
@@ -263,6 +273,107 @@ class MirrorForegroundService : Service() {
     }
 
     /**
+     * Called when the Tesla browser reports its viewport dimensions.
+     * Debounces by cancelling any previous resize job.
+     */
+    private fun onViewportChange(width: Int, height: Int) {
+        resizeJob?.cancel()
+        resizeJob = serviceScope.launch {
+            rebuildPipeline(width, height)
+        }
+    }
+
+    /**
+     * Rebuild the capture/encode pipeline with new dimensions to match
+     * the Tesla browser viewport.
+     */
+    private suspend fun rebuildPipeline(newWidth: Int, newHeight: Int) {
+        // Guard: same size — no-op
+        if (newWidth == currentWidth && newHeight == currentHeight) return
+
+        // Range check
+        if (newWidth < 320 || newWidth > 3840 || newHeight < 320 || newHeight > 3840) {
+            Log.w(TAG, "Viewport out of range: ${newWidth}x${newHeight}, ignoring")
+            return
+        }
+
+        // Align to 16-multiple (required by H.264 encoders)
+        val width = (newWidth + 15) and 15.inv()
+        val height = (newHeight + 15) and 15.inv()
+
+        // Compute DPI proportional to height
+        val dpi = (height * 240 / 720).coerceIn(120, 320)
+
+        // Dynamic bitrate: scale proportionally to pixel count relative to 720p base
+        val newBitrate = (currentBitrate.toLong() * width * height / (1280L * 720)).toInt()
+            .coerceIn(1_000_000, 20_000_000)
+
+        Log.i(TAG, "Rebuilding pipeline: ${currentWidth}x${currentHeight} -> ${width}x${height}, " +
+            "bitrate=${newBitrate / 1000}kbps, dpi=$dpi")
+
+        try {
+            // 1. Release old video encoder
+            videoEncoder?.release()
+            videoEncoder = null
+
+            // 2. Create new VideoEncoder at new dimensions
+            val encoder = VideoEncoder(width, height, newBitrate, currentFps)
+            val surface = encoder.createInputSurface()
+            videoEncoder = encoder
+
+            // 3. Update touch injector dimensions
+            touchInjector?.updateDimensions(width, height)
+
+            // 4. Start encoder with broadcast callback
+            encoder.start { frameData, isKeyFrame ->
+                mirrorServer?.broadcastFrame(frameData, isKeyFrame)
+            }
+
+            // 5. Wire up keyframe requester to new encoder
+            mirrorServer?.setKeyframeRequester { encoder.requestKeyFrame() }
+
+            // 6. Reconnect capture to new encoder surface
+            if (virtualDisplayManager?.isBound() == true) {
+                // Shizuku path: release old VD, create new one
+                virtualDisplayManager?.releaseVirtualDisplay()
+                virtualDisplayManager?.createVirtualDisplay(width, height, dpi, surface)
+                if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                    touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                        virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                    }
+                    Log.i(TAG, "Virtual display recreated at ${width}x${height}")
+                } else {
+                    screenCapture?.reconfigure(surface, width, height)
+                    Log.i(TAG, "VD recreate failed, using MediaProjection at ${width}x${height}")
+                }
+            } else {
+                // MediaProjection path: resize + setSurface (no release needed)
+                screenCapture?.reconfigure(surface, width, height)
+                Log.i(TAG, "MediaProjection reconfigured at ${width}x${height}")
+            }
+
+            // 8. Update state
+            currentWidth = width
+            currentHeight = height
+            currentBitrate = newBitrate
+
+            // 9. Notify clients that resolution changed
+            val msg = JSONObject().apply {
+                put("type", "resolutionChanged")
+                put("width", width)
+                put("height", height)
+            }
+            mirrorServer?.broadcastControlMessage(msg.toString())
+
+            Log.i(TAG, "Pipeline rebuilt: ${width}x${height}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to rebuild pipeline", e)
+        } finally {
+            screenCapture?.isRebuilding = false
+        }
+    }
+
+    /**
      * Switch encoding mode when client requests MJPEG (no WebCodecs available).
      * Creates a JpegEncoder, captures screen to it, stops the H.264 encoder.
      */
@@ -307,6 +418,8 @@ class MirrorForegroundService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "Stopping pipeline")
+        resizeJob?.cancel()
+        serviceScope.cancel()
         audioCapture?.stop()
         virtualDisplayManager?.release()
         shizukuSetup?.release()
