@@ -5,7 +5,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Binder
@@ -87,9 +90,22 @@ class MirrorForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
+    private val vdLaunchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val pkg = intent.getStringExtra("package") ?: return
+            val cls = intent.getStringExtra("class") ?: return
+            val displayId = intent.getIntExtra("displayId", -1)
+            if (displayId < 0) return
+            Log.i(TAG, "VD launch request: $pkg/$cls on display $displayId")
+            virtualDisplayManager?.launchAppOnDisplay(pkg)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerReceiver(vdLaunchReceiver, IntentFilter("com.castla.mirror.LAUNCH_ON_VD"),
+            Context.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -199,23 +215,16 @@ class MirrorForegroundService : Service() {
                 // If Shizuku unavailable: fall back to MediaProjection (FULL_SCREEN only).
                 trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
                     if (shizukuActive) {
-                        // Launch initial content on VD based on mirroring mode
-                        if (mirroringMode == "FULL_SCREEN") {
-                            // Full screen: launch home screen on VD
-                            virtualDisplayManager?.launchHomeOnDisplay()
-                            currentVdApp = "HOME"
-                        } else if (mirroringMode == "APP" && targetPackage.isNotEmpty()) {
-                            // Single app: launch the target app immediately
-                            virtualDisplayManager?.launchAppOnDisplay(targetPackage)
-                            currentVdApp = targetPackage
-                        }
-                    } else if (mirroringMode == "APP") {
-                        Log.e(TAG, "APP mode requires Shizuku — cannot fall back to MediaProjection")
+                        // Always launch DesktopActivity first — it provides a visible
+                        // app grid so the encoder starts producing frames immediately.
+                        // User picks apps from the browser via touch.
+                        virtualDisplayManager?.launchHomeOnDisplay()
+                        currentVdApp = "HOME"
                     } else {
-                        // FULL_SCREEN fallback: capture phone screen via MediaProjection
+                        // Shizuku unavailable: fall back to MediaProjection screen mirror
                         try {
                             screenCapture?.startCapture(surface, width, height)
-                            Log.i(TAG, "Full screen mirroring via MediaProjection at ${width}x${height}")
+                            Log.i(TAG, "Fallback: MediaProjection mirroring at ${width}x${height}")
                         } catch (e: Exception) {
                             Log.e(TAG, "MediaProjection fallback failed", e)
                         }
@@ -392,12 +401,9 @@ class MirrorForegroundService : Service() {
                     touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                         virtualDisplayManager?.injectInput(action, x, y, pointerId)
                     }
-                    // Re-launch whatever was running on VD before rebuild
-                    if (currentVdApp == "HOME") {
-                        virtualDisplayManager?.launchHomeOnDisplay()
-                    } else if (currentVdApp.isNotEmpty()) {
-                        virtualDisplayManager?.launchAppOnDisplay(currentVdApp)
-                    }
+                    // Re-launch DesktopActivity on VD to ensure content renders
+                    virtualDisplayManager?.launchHomeOnDisplay()
+                    currentVdApp = "HOME"
                     Log.i(TAG, "Virtual display recreated at ${width}x${height}")
                 } else {
                     screenCapture?.reconfigure(surface, width, height)
@@ -475,6 +481,7 @@ class MirrorForegroundService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "Stopping pipeline")
+        try { unregisterReceiver(vdLaunchReceiver) } catch (_: Exception) {}
         resizeJob?.cancel()
         serviceScope.cancel()
         audioCapture?.stop()

@@ -219,17 +219,20 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun launchAppOnDisplay(displayId: Int, packageName: String) {
         try {
-            val cmd = "am start --display $displayId " +
-                "-a android.intent.action.MAIN " +
-                "-c android.intent.category.LAUNCHER " +
-                packageName
-            val result = execCommand(cmd)
-            if (result.contains("Error") || result.contains("does not exist")) {
-                // Fallback: use monkey to launch
-                val monkeyCmd = "monkey -p $packageName -c android.intent.category.LAUNCHER 1"
-                execCommand(monkeyCmd)
+            // First try: use monkey (most reliable for launching by package name)
+            val monkeyCmd = "monkey -p $packageName --display $displayId -c android.intent.category.LAUNCHER 1"
+            var result = execCommand(monkeyCmd)
+
+            // Fallback: am start with package name
+            if (result.contains("Error") || result.contains("No activities")) {
+                val cmd = "am start --display $displayId " +
+                    "-f 0x18000000 " +
+                    "-a android.intent.action.MAIN " +
+                    "-c android.intent.category.LAUNCHER " +
+                    packageName
+                result = execCommand(cmd)
             }
-            Log.i(TAG, "Launched $packageName on display $displayId")
+            Log.i(TAG, "Launched $packageName on display $displayId: $result")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
         }
@@ -237,34 +240,15 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun launchHomeOnDisplay(displayId: Int) {
         try {
-            // Step 1: Launch a lightweight app on the VD to force rendering.
-            // Without this, the encoder surface gets no input and produces no frames.
-            // Calculator is lightweight and available on all Android devices.
-            val launchCmd = "am start --display $displayId " +
-                "-a android.intent.action.MAIN " +
-                "-c android.intent.category.LAUNCHER " +
-                "com.sec.android.app.popupcalculator"
-            var result = execCommand(launchCmd)
-            Log.i(TAG, "Launch calculator on display $displayId: $result")
-
-            // If Samsung calculator not found, try AOSP calculator
-            if (result.contains("Error") || result.contains("does not exist")) {
-                val fallback = "am start --display $displayId " +
-                    "-a android.intent.action.MAIN " +
-                    "-c android.intent.category.LAUNCHER " +
-                    "com.google.android.calculator"
-                result = execCommand(fallback)
-                Log.i(TAG, "Launch Google calculator on display $displayId: $result")
-            }
-
-            // Step 2: After the app starts, send HOME key to go to home screen.
-            // This triggers the system launcher on the VD.
-            Thread.sleep(500)
-            val homeCmd = "input -d $displayId keyevent KEYCODE_HOME"
-            result = execCommand(homeCmd)
-            Log.i(TAG, "Sent HOME keyevent to display $displayId: $result")
+            // Launch Castla's DesktopActivity on the VD.
+            // -f 0x18000000 = FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK
+            val cmd = "am start --display $displayId " +
+                "-n com.castla.mirror/.ui.DesktopActivity " +
+                "-f 0x18000000"
+            val result = execCommand(cmd)
+            Log.i(TAG, "Launched DesktopActivity on display $displayId: $result")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch HOME on display $displayId", e)
+            Log.e(TAG, "Failed to launch DesktopActivity on display $displayId", e)
         }
     }
 
