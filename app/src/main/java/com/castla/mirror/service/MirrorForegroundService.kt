@@ -73,10 +73,6 @@ class MirrorForegroundService : Service() {
     private var browserConnected = false
     private var currentVdApp: String = "com.android.settings" // what's running on VD
 
-    /** Session PIN — available immediately after pipeline starts */
-    val sessionPin: String?
-        get() = mirrorServer?.sessionPin
-
     val isRunning: Boolean
         get() = mirrorServer != null
 
@@ -186,6 +182,7 @@ class MirrorForegroundService : Service() {
                     server.setTouchListener { event -> touchInjector?.onTouchEvent(event) }
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
+                    server.setTextInputListener { text -> injectText(text) }
 
                     // Internal listener: when browser connects, launch target app on VD
                     server.setBrowserConnectionListener { connected ->
@@ -336,6 +333,39 @@ class MirrorForegroundService : Service() {
     private fun onBrowserDisconnected() {
         Log.i(TAG, "Browser disconnected — releasing VD to free resources")
         virtualDisplayManager?.releaseVirtualDisplay()
+        browserConnected = false
+    }
+
+    /**
+     * Inject text into the currently focused field on the VD via Shizuku shell.
+     * Uses `input text` which types character-by-character.
+     */
+    private fun injectText(text: String) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                // Escape special shell characters
+                val escaped = text.replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("'", "\\'")
+                    .replace(" ", "%s") // `input text` uses %s for space
+                    .replace("&", "\\&")
+                    .replace("|", "\\|")
+                    .replace(";", "\\;")
+                    .replace("(", "\\(")
+                    .replace(")", "\\)")
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val cmd = if (displayId > 0) {
+                    "input -d $displayId text \"$escaped\""
+                } else {
+                    "input text \"$escaped\""
+                }
+                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+                process.waitFor()
+                Log.i(TAG, "Text injected: ${text.length} chars")
+            } catch (e: Exception) {
+                Log.e(TAG, "Text injection failed", e)
+            }
+        }
     }
 
     /**

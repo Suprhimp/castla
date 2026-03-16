@@ -60,6 +60,12 @@ class ControlSocket(
                         server.onViewportChange(width, height)
                     }
                 }
+                "textInput" -> {
+                    val text = json.optString("text", "")
+                    if (text.isNotEmpty()) {
+                        server.onTextInput(text)
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)

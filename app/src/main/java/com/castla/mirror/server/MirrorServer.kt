@@ -5,7 +5,6 @@ import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
 import java.io.IOException
-import java.security.SecureRandom
 import java.util.concurrent.CopyOnWriteArrayList
 
 class MirrorServer(
@@ -26,9 +25,6 @@ class MirrorServer(
     private var viewportChangeListener: ((Int, Int) -> Unit)? = null
     private var browserConnectionListener: ((Boolean) -> Unit)? = null
 
-    /** Random 4-digit PIN generated on each server start for authentication */
-    val sessionPin: String = generatePin()
-
     /** Disable Nagle algorithm on all client connections for lower latency */
     override fun createClientHandler(finalAccept: java.net.Socket, inputStream: java.io.InputStream): NanoHTTPD.ClientHandler {
         try {
@@ -46,15 +42,8 @@ class MirrorServer(
         val pointerId: Int
     )
 
-    private fun generatePin(): String {
-        val random = SecureRandom()
-        return String.format("%04d", random.nextInt(10000))
-    }
-
-    private fun isAuthorized(session: IHTTPSession): Boolean {
-        val params = session.parms ?: return false
-        return params["pin"] == sessionPin
-    }
+    /** Text input listener for keyboard events from the browser */
+    private var textInputListener: ((String) -> Unit)? = null
 
     fun setTouchListener(listener: (TouchEvent) -> Unit) {
         touchListener = listener
@@ -74,6 +63,15 @@ class MirrorServer(
 
     fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
         browserConnectionListener = listener
+    }
+
+    fun setTextInputListener(listener: (String) -> Unit) {
+        textInputListener = listener
+    }
+
+    fun onTextInput(text: String) {
+        Log.i(TAG, "Text input: ${text.length} chars")
+        textInputListener?.invoke(text)
     }
 
     fun onViewportChange(width: Int, height: Int) {
@@ -171,12 +169,13 @@ class MirrorServer(
         get() = videoSockets.size
 
     override fun openWebSocket(handshake: IHTTPSession): WebSocket {
-        if (!isAuthorized(handshake)) {
-            Log.w(TAG, "Unauthorized WebSocket attempt from ${handshake.remoteIpAddress}")
+        // Single-connection limit: reject if a video client is already connected
+        val uri = handshake.uri
+        if (uri.startsWith("/ws/video") && videoSockets.isNotEmpty()) {
+            Log.w(TAG, "Rejecting second video connection from ${handshake.remoteIpAddress}")
             return UnauthorizedSocket(handshake)
         }
 
-        val uri = handshake.uri
         return when {
             uri.startsWith("/ws/video") -> VideoStreamSocket(handshake, this)
             uri.startsWith("/ws/control") -> ControlSocket(handshake, this)
@@ -187,29 +186,7 @@ class MirrorServer(
 
     override fun serveHttp(session: IHTTPSession): Response {
         var uri = session.uri
-
-        // Static sub-resources (JS, CSS, images) are loaded by the browser without pin params.
-        // Only the initial page load (/ or /index.html) and WS connections require pin auth.
-        val isSubResource = uri.endsWith(".js") || uri.endsWith(".css") ||
-            uri.endsWith(".png") || uri.endsWith(".jpg") || uri.endsWith(".jpeg") ||
-            uri.endsWith(".svg") || uri.endsWith(".ico") || uri.endsWith(".woff") ||
-            uri.endsWith(".woff2")
-
-        // Root without valid pin → show PIN entry page
-        if (uri == "/" && !isAuthorized(session)) {
-            return serveAsset("/pin.html")
-        }
-
-        if (!isSubResource && !isAuthorized(session)) {
-            return newFixedLengthResponse(
-                Response.Status.FORBIDDEN,
-                "text/plain",
-                "403 Forbidden: Invalid or missing PIN"
-            )
-        }
-
         if (uri == "/") uri = "/index.html"
-
         return serveAsset(uri)
     }
 
