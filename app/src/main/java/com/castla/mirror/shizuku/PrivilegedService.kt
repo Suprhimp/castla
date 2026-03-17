@@ -345,63 +345,22 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun injectComposingText(backspaces: Int, text: String, displayId: Int) {
         try {
-            val imClass = Class.forName("android.hardware.input.InputManager")
-            val getInstance = imClass.getMethod("getInstance")
-            val im = getInstance.invoke(null)
-            val injectMethod = imClass.getMethod(
-                "injectInputEvent",
-                android.view.InputEvent::class.java,
-                Int::class.javaPrimitiveType
-            )
-
-            // Helper: set displayId on KeyEvent via reflection
-            val setDisplayId = try {
-                android.view.KeyEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
-            } catch (_: Exception) { null }
-
-            fun injectKey(event: android.view.KeyEvent) {
-                if (displayId > 0 && setDisplayId != null) {
-                    setDisplayId.invoke(event, displayId)
-                }
-                injectMethod.invoke(im, event, 0) // ASYNC
+            // Step 1: Delete previous composition via shell (serialized, reliable)
+            if (backspaces > 0) {
+                val bsKeys = (1..backspaces).joinToString(" ") { "67" }
+                val cmd = if (displayId > 0) "input -d $displayId keyevent $bsKeys"
+                          else "input keyevent $bsKeys"
+                execCommand(cmd)
             }
 
-            // Step 1: Delete previous composition
-            for (i in 0 until backspaces) {
-                val time = android.os.SystemClock.uptimeMillis()
-                injectKey(android.view.KeyEvent(time, time,
-                    android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DEL, 0))
-                injectKey(android.view.KeyEvent(time, time,
-                    android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_DEL, 0))
-            }
-
-            // Step 2: Insert text via ACTION_MULTIPLE
+            // Step 2: Insert new text via clipboard+CTRL+V (handles Korean/CJK)
             if (text.isNotEmpty()) {
-                val time = android.os.SystemClock.uptimeMillis()
-                val event = android.view.KeyEvent(
-                    time, text,
-                    android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0
-                )
-                injectKey(event)
+                injectText(text, displayId) // routes to clipboard+CTRL+V for non-ASCII
             }
 
             Log.d(TAG, "Composing: bs=$backspaces text=$text (display=$displayId)")
         } catch (e: Exception) {
-            Log.e(TAG, "injectComposingText failed, falling back to shell", e)
-            // Fallback: shell commands
-            try {
-                if (backspaces > 0) {
-                    val cmd = if (displayId > 0) "input -d $displayId keyevent " +
-                        (1..backspaces).joinToString(" ") { "67" }
-                    else "input keyevent " + (1..backspaces).joinToString(" ") { "67" }
-                    execCommand(cmd)
-                }
-                if (text.isNotEmpty()) {
-                    injectText(text, displayId)
-                }
-            } catch (e2: Exception) {
-                Log.e(TAG, "Composition fallback also failed", e2)
-            }
+            Log.e(TAG, "injectComposingText failed", e)
         }
     }
 
