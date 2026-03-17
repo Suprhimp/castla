@@ -202,6 +202,17 @@
                     if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
                         videoSocket.send('requestKeyframe');
                     }
+                } else if (msg.type === 'showKeyboard') {
+                    console.log('[Main] Server detected IME open — showing keyboard bar');
+                    const bar = document.getElementById('keyboard-bar');
+                    const ki = document.getElementById('keyboard-input');
+                    if (bar && ki) {
+                        bar.classList.add('visible');
+                        ki.focus();
+                    }
+                } else if (msg.type === 'hideKeyboard') {
+                    console.log('[Main] Server detected IME closed');
+                    // Don't auto-hide — user might still be typing in the bar
                 } else if (msg.type === 'premiumStatus') {
                     const banner = document.getElementById('ad-banner');
                     if (banner) {
@@ -351,37 +362,47 @@
         });
     }
 
-    // --- Tesla native keyboard integration ---
+    // --- Keyboard integration (auto-detected via IME state) ---
     const kbInput = document.getElementById('keyboard-input');
-    const kbBtn = document.getElementById('keyboard-btn');
 
-    let kbOpen = false;
-    if (kbBtn && kbInput) {
-        kbBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (kbOpen) {
-                // Close keyboard
-                kbInput.blur();
-                kbInput.style.pointerEvents = 'none';
-                kbOpen = false;
-                kbBtn.textContent = '⌨';
-            } else {
-                // Open keyboard
-                kbInput.style.pointerEvents = 'auto';
-                kbInput.focus();
-                kbOpen = true;
-                kbBtn.textContent = '✕';
-            }
+    if (kbInput) {
+        // Plan A: Real-time composition — backspace old chars + paste new composed text
+        let lastCompositionLength = 0;
+        let composing = false;
+
+        kbInput.addEventListener('compositionstart', () => {
+            composing = true;
+            lastCompositionLength = 0;
         });
 
-        // Capture input — use e.data for IME (Korean) compatibility
+        kbInput.addEventListener('compositionupdate', (e) => {
+            const newText = e.data;
+            if (!newText || !controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+
+            controlSocket.send(JSON.stringify({
+                type: 'compositionUpdate',
+                backspaces: lastCompositionLength,
+                text: newText
+            }));
+            console.log('[KB] Composition:', newText, '(bs:', lastCompositionLength, ')');
+            lastCompositionLength = newText.length;
+        });
+
+        kbInput.addEventListener('compositionend', (e) => {
+            composing = false;
+            lastCompositionLength = 0;
+            kbInput.value = '';
+        });
+
+        // Non-IME input (English, numbers) — send immediately
         kbInput.addEventListener('input', (e) => {
+            if (composing) return;
             const text = e.data || e.target.value;
             if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text: text }));
                 console.log('[KB] Sent:', text);
             }
-            kbInput.value = ''; // clear for next input
+            kbInput.value = '';
         });
 
         // Handle Enter and Backspace
@@ -390,8 +411,8 @@
             if (e.key === 'Enter') {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text: '\n' }));
                 e.preventDefault();
-            } else if (e.key === 'Backspace') {
-                controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 })); // KEYCODE_DEL
+            } else if (e.key === 'Backspace' && !composing) {
+                controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
                 e.preventDefault();
             }
         });
@@ -399,8 +420,6 @@
         // Sync state when keyboard dismissed externally
         kbInput.addEventListener('blur', () => {
             kbInput.style.pointerEvents = 'none';
-            kbOpen = false;
-            kbBtn.textContent = '⌨';
         });
     }
 

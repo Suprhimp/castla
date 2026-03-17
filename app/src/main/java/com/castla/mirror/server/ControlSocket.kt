@@ -74,6 +74,11 @@ class ControlSocket(
                         server.onKeyEvent(keyCode)
                     }
                 }
+                "compositionUpdate" -> {
+                    val backspaces = json.optInt("backspaces", 0)
+                    val text = json.optString("text", "")
+                    server.onCompositionUpdate(backspaces, text)
+                }
                 "requestPurchase" -> {
                     server.onPurchaseRequest()
                 }

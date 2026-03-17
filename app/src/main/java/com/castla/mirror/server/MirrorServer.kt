@@ -99,6 +99,13 @@ class MirrorServer(
         keyEventListener?.invoke(keyCode)
     }
 
+    private var compositionUpdateListener: ((Int, String) -> Unit)? = null
+    fun setCompositionUpdateListener(listener: (Int, String) -> Unit) { compositionUpdateListener = listener }
+    fun onCompositionUpdate(backspaces: Int, text: String) {
+        Log.i(TAG, "Composition update: bs=$backspaces text=$text")
+        compositionUpdateListener?.invoke(backspaces, text)
+    }
+
     fun setPurchaseRequestListener(listener: (() -> Unit)?) {
         purchaseRequestListener = listener
     }

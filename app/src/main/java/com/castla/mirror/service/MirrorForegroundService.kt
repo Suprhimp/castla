@@ -209,11 +209,16 @@ class MirrorForegroundService : Service() {
                 // 4. Start the web server
                 mirrorServer = MirrorServer(this).also { server ->
                     server.setKeyframeRequester { encoder.requestKeyFrame() }
-                    server.setTouchListener { event -> touchInjector?.onTouchEvent(event) }
+                    server.setTouchListener { event ->
+                        touchInjector?.onTouchEvent(event)
+                        // Check IME state after tap (ACTION_UP)
+                        if (event.action == "up") checkImeAndNotifyBrowser()
+                    }
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
                     server.setTextInputListener { text -> injectText(text) }
                     server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
+                    server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
                     server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
                     server.setGoHomeListener {
                         Log.i(TAG, "Navigating to home (DesktopActivity)")
@@ -433,6 +438,52 @@ class MirrorForegroundService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
+            }
+        }
+    }
+
+    private var lastImeState = false
+
+    /**
+     * Check if Android IME (keyboard) is visible and notify browser.
+     * Called after touch UP events with a small delay.
+     */
+    private fun checkImeAndNotifyBrowser() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                kotlinx.coroutines.delay(300) // wait for IME animation
+                val service = shizukuSetup?.privilegedService ?: return@launch
+                val result = service.execCommand("dumpsys input_method | grep mInputShown")
+                val imeVisible = result.contains("mInputShown=true")
+
+                if (imeVisible != lastImeState) {
+                    lastImeState = imeVisible
+                    val msg = if (imeVisible) {
+                        """{"type":"showKeyboard"}"""
+                    } else {
+                        """{"type":"hideKeyboard"}"""
+                    }
+                    mirrorServer?.broadcastControlMessage(msg)
+                    Log.i(TAG, "IME state changed: visible=$imeVisible")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "IME check failed", e)
+            }
+        }
+    }
+
+    private val compositionDispatcher = kotlinx.coroutines.newSingleThreadContext("composition")
+
+    private fun injectCompositionUpdate(backspaces: Int, text: String) {
+        serviceScope.launch(compositionDispatcher) {
+            try {
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val service = shizukuSetup?.privilegedService ?: return@launch
+
+                // Use Shizuku's fast ACTION_MULTIPLE injection (no clipboard)
+                service.injectComposingText(backspaces, text, displayId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Composition update failed", e)
             }
         }
     }

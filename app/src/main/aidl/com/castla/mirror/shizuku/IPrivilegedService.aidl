@@ -83,4 +83,10 @@ interface IPrivilegedService {
      * Falls back to clipboard+paste if ACTION_MULTIPLE fails.
      */
     void injectText(String text, int displayId) = 13;
+
+    /**
+     * Fast Korean composition: delete N chars + insert text via ACTION_MULTIPLE.
+     * No clipboard involved — sub-millisecond speed.
+     */
+    void injectComposingText(int backspaces, String text, int displayId) = 14;
 }
