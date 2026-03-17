@@ -3,6 +3,8 @@ package com.castla.mirror.input
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.MotionEvent
 import com.castla.mirror.server.MirrorServer
 import java.lang.reflect.Method
@@ -92,22 +94,30 @@ class TouchInjector(
         // Update pointer state BEFORE computing action
         when (event.action) {
             "down" -> {
+                // Clear stale pointers from lost "up" events before starting new gesture
+                if (activePointers.isNotEmpty() && !activePointers.containsKey(pointerId)) {
+                    activePointers.clear()
+                    pointerOrder.clear()
+                }
                 activePointers[pointerId] = Pair(absX, absY)
                 if (!pointerOrder.contains(pointerId)) {
                     pointerOrder.add(pointerId)
                 }
             }
             "move" -> {
+                if (!activePointers.containsKey(pointerId)) return // move without down — ignore
                 activePointers[pointerId] = Pair(absX, absY)
             }
-            "up" -> {} // remove AFTER injection
+            "up" -> {
+                if (!activePointers.containsKey(pointerId)) return // up without down — ignore
+            }
             else -> return
         }
 
         val index = pointerOrder.indexOf(pointerId).coerceAtLeast(0)
         val action = when (event.action) {
             "down" -> {
-                if (beforeCount == 0) MotionEvent.ACTION_DOWN
+                if (activePointers.size <= 1) MotionEvent.ACTION_DOWN
                 else MotionEvent.ACTION_POINTER_DOWN or (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
             }
             "move" -> MotionEvent.ACTION_MOVE
@@ -121,10 +131,13 @@ class TouchInjector(
         // Route to virtual display if active, otherwise use main screen injection
         val vdInjector = virtualDisplayInjector
         if (vdInjector != null) {
+            Log.d(TAG, "Routing touch to VD: action=$action x=${"%.1f".format(absX)} y=${"%.1f".format(absY)}")
             vdInjector(action, absX, absY, pointerId)
         } else if (useShizuku) {
+            Log.d(TAG, "Routing touch to InputManager (no VD injector)")
             injectViaInputManager(action, absX, absY, pointerId)
         } else {
+            Log.d(TAG, "Routing touch to Accessibility (no Shizuku)")
             injectViaAccessibility(action, absX, absY)
         }
 
@@ -223,6 +236,87 @@ class TouchInjector(
             0, 0, 1.0f, 1.0f, 0, 0,
             InputDevice.SOURCE_TOUCHSCREEN, 0
         )
+    }
+
+    /**
+     * Inject text into the focused field using ACTION_MULTIPLE KeyEvent.
+     * Works for all languages (Korean, Chinese, Japanese, emoji, etc.)
+     * Falls back to clipboard+paste if ACTION_MULTIPLE fails.
+     */
+    fun injectText(text: String): Boolean {
+        if (text.isEmpty()) return false
+
+        val im = inputManagerInstance
+        val method = injectMethod
+        if (im == null || method == null) {
+            Log.w(TAG, "InputManager not available for text injection")
+            return false
+        }
+
+        try {
+            // Method 1: ACTION_MULTIPLE — injects entire string as one event
+            val time = SystemClock.uptimeMillis()
+            val keyEvent = KeyEvent(time, text, KeyCharacterMap.VIRTUAL_KEYBOARD, 0)
+            method.invoke(im, keyEvent, 0) // INJECT_INPUT_EVENT_MODE_ASYNC
+            Log.i(TAG, "Text injected via ACTION_MULTIPLE: ${text.length} chars")
+            return true
+        } catch (e: Exception) {
+            Log.w(TAG, "ACTION_MULTIPLE failed, trying clipboard fallback", e)
+        }
+
+        // Method 2: Clipboard + PASTE fallback
+        try {
+            return injectTextViaClipboard(text)
+        } catch (e: Exception) {
+            Log.e(TAG, "Clipboard text injection also failed", e)
+            return false
+        }
+    }
+
+    private fun injectTextViaClipboard(text: String): Boolean {
+        val im = inputManagerInstance ?: return false
+        val method = injectMethod ?: return false
+
+        try {
+            // Get IClipboard via ServiceManager
+            val smClass = Class.forName("android.os.ServiceManager")
+            val getService = smClass.getMethod("getService", String::class.java)
+            val clipBinder = getService.invoke(null, "clipboard") as android.os.IBinder
+
+            val clipStubClass = Class.forName("android.content.IClipboard\$Stub")
+            val asInterface = clipStubClass.getMethod("asInterface", android.os.IBinder::class.java)
+            val clipService = asInterface.invoke(null, clipBinder)
+
+            // setPrimaryClip(ClipData, String packageName, String attributionTag, int userId)
+            val clipData = android.content.ClipData.newPlainText("castla", text)
+            val setPrimary = clipService.javaClass.methods.find { it.name == "setPrimaryClip" }
+            if (setPrimary != null) {
+                val params = setPrimary.parameterTypes
+                val args = when (params.size) {
+                    4 -> arrayOf(clipData, "com.android.shell", null, 0)
+                    3 -> arrayOf(clipData, "com.android.shell", 0)
+                    2 -> arrayOf(clipData, "com.android.shell")
+                    else -> arrayOf(clipData)
+                }
+                setPrimary.invoke(clipService, *args)
+            }
+
+            // Small delay for clipboard to settle
+            Thread.sleep(50)
+
+            // Send PASTE keyevent
+            val time = SystemClock.uptimeMillis()
+            val pasteDown = KeyEvent(time, time, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_PASTE, 0)
+            val pasteUp = KeyEvent(time, time, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_PASTE, 0)
+            method.invoke(im, pasteDown, 0)
+            method.invoke(im, pasteUp, 0)
+
+            Log.i(TAG, "Text injected via clipboard+paste: ${text.length} chars")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "Clipboard injection failed", e)
+            return false
+        }
     }
 
     fun release() {

@@ -1,9 +1,9 @@
 /**
  * Castla - Audio Player (Opus via WebCodecs + raw PCM fallback)
  *
- * Protocol: each WebSocket binary message has a 1-byte header:
- *   0x00 = config JSON: {"codec":"opus"|"pcm","sampleRate":48000,"channels":2}
- *   0x01 = encoded Opus frame (if codec=opus) or raw PCM Int16 LE (if codec=pcm)
+ * Protocol: each WebSocket binary message has a header:
+ *   0x00 + JSON = config: {"codec":"opus"|"pcm","sampleRate":48000,"channels":2}
+ *   0x01 + u32 LE timestamp(ms) + audio data = Opus or PCM Int16 LE
  *
  * Flow:
  *   1. User taps unmute → AudioContext created + resumed (autoplay policy)
@@ -25,6 +25,7 @@ class AudioPlayer {
         this.JITTER_BUFFER_SEC = 0.12;
         this.MAX_LATENCY = 0.4;
         this.OPUS_FRAME_DURATION_US = 20000; // 20ms
+        this.clockOffset = null; // EMA server-to-client clock offset for A/V sync
     }
 
     async startFromUserGesture(wsUrl) {
@@ -181,19 +182,33 @@ class AudioPlayer {
                 return;
             }
 
-            // type === 0x01: audio data
+            // type === 0x01: audio data with 5-byte header [0x01][tsMs u32 LE] + audio
+            if (event.data.byteLength < 6) return;
+            const dv = new DataView(event.data);
+            const serverTsMs = dv.getUint32(1, true); // LE timestamp
+            const audioPayload = event.data.slice(5);
+
+            // EMA clock offset for A/V sync
+            const clientNow = performance.now();
+            const currentOffset = clientNow - serverTsMs;
+            if (this.clockOffset === null) {
+                this.clockOffset = currentOffset;
+            } else {
+                this.clockOffset = this.clockOffset * 0.95 + currentOffset * 0.05;
+            }
+
             if (this.mode === 'opus' && this.decoder && this.decoder.state === 'configured') {
                 try {
                     const chunk = new EncodedAudioChunk({
                         type: 'key',
                         timestamp: this.timestampUs,
-                        data: event.data.slice(1)
+                        data: audioPayload
                     });
                     this.timestampUs += this.OPUS_FRAME_DURATION_US;
                     this.decoder.decode(chunk);
                 } catch (e) { /* skip bad frame */ }
             } else if (this.mode === 'pcm') {
-                this._playPCM(event.data.slice(1));
+                this._playPCM(audioPayload);
             }
         };
 

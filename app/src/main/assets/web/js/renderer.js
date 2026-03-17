@@ -36,35 +36,36 @@ class CanvasRenderer {
     }
 
     updateLayout() {
-        // Match canvas to container size
-        const container = this.canvas.parentElement;
-        const containerWidth = container.clientWidth;
-        const containerHeight = container.clientHeight;
+        // Use the canvas element's own CSS size, not the parent container.
+        // When the ad banner is visible, the canvas is shorter than the container
+        // due to flex layout — using container size would cause touch Y offset.
+        const canvasWidth = this.canvas.clientWidth;
+        const canvasHeight = this.canvas.clientHeight;
 
-        this.canvas.width = containerWidth;
-        this.canvas.height = containerHeight;
+        this.canvas.width = canvasWidth;
+        this.canvas.height = canvasHeight;
 
         // Calculate aspect-ratio-correct rendering area (letterbox/pillarbox)
         const videoAspect = this.videoWidth / this.videoHeight;
-        const containerAspect = containerWidth / containerHeight;
+        const canvasAspect = canvasWidth / canvasHeight;
 
-        if (videoAspect > containerAspect) {
+        if (videoAspect > canvasAspect) {
             // Video is wider — pillarbox (black bars top/bottom)
-            this.renderWidth = containerWidth;
-            this.renderHeight = containerWidth / videoAspect;
+            this.renderWidth = canvasWidth;
+            this.renderHeight = canvasWidth / videoAspect;
             this.renderX = 0;
-            this.renderY = (containerHeight - this.renderHeight) / 2;
+            this.renderY = (canvasHeight - this.renderHeight) / 2;
         } else {
             // Video is taller — letterbox (black bars left/right)
-            this.renderHeight = containerHeight;
-            this.renderWidth = containerHeight * videoAspect;
-            this.renderX = (containerWidth - this.renderWidth) / 2;
+            this.renderHeight = canvasHeight;
+            this.renderWidth = canvasHeight * videoAspect;
+            this.renderX = (canvasWidth - this.renderWidth) / 2;
             this.renderY = 0;
         }
 
         // Clear canvas (for letterbox/pillarbox bars)
         this.ctx.fillStyle = '#000';
-        this.ctx.fillRect(0, 0, containerWidth, containerHeight);
+        this.ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     }
 
     /**

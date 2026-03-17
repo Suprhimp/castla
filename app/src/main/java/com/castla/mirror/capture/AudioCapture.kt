@@ -8,15 +8,18 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Captures system audio via AudioPlaybackCapture (Android 10+) and encodes to Opus
  * for efficient streaming (~96kbps vs ~1.4Mbps raw PCM).
  *
- * Protocol: each callback ByteArray has a 1-byte header:
- *   0x00 = config JSON: {"codec":"opus"|"pcm","sampleRate":48000,"channels":2}
- *   0x01 = encoded Opus frame or raw PCM Int16 LE
+ * Protocol: each callback ByteArray has a header:
+ *   0x00 + JSON = config: {"codec":"opus"|"pcm","sampleRate":48000,"channels":2}
+ *   0x01 + u32 LE timestamp (ms) + audio data = encoded Opus frame or raw PCM Int16 LE
  *
  * Falls back to raw PCM if Opus encoding fails to initialize.
  */
@@ -161,9 +164,14 @@ class AudioCapture(
                             outputBuf.limit(bufferInfo.offset + bufferInfo.size)
                             outputBuf.get(encoded)
 
-                            val msg = ByteArray(1 + encoded.size)
-                            msg[0] = 0x01
-                            System.arraycopy(encoded, 0, msg, 1, encoded.size)
+                            // 5-byte header: [0x01][tsMs u32 LE] + opus data
+                            val tsMs = SystemClock.elapsedRealtime().toInt()
+                            val header = ByteBuffer.allocate(5).order(ByteOrder.LITTLE_ENDIAN)
+                            header.put(0x01.toByte())
+                            header.putInt(tsMs)
+                            val msg = ByteArray(5 + encoded.size)
+                            System.arraycopy(header.array(), 0, msg, 0, 5)
+                            System.arraycopy(encoded, 0, msg, 5, encoded.size)
                             onAudioData(msg)
                         }
                     }
@@ -179,9 +187,14 @@ class AudioCapture(
             while (isRunning) {
                 val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
                 if (read > 0) {
-                    val msg = ByteArray(1 + read)
-                    msg[0] = 0x01
-                    System.arraycopy(pcmBuffer, 0, msg, 1, read)
+                    // 5-byte header: [0x01][tsMs u32 LE] + pcm data
+                    val tsMs = SystemClock.elapsedRealtime().toInt()
+                    val header = ByteBuffer.allocate(5).order(ByteOrder.LITTLE_ENDIAN)
+                    header.put(0x01.toByte())
+                    header.putInt(tsMs)
+                    val msg = ByteArray(5 + read)
+                    System.arraycopy(header.array(), 0, msg, 0, 5)
+                    System.arraycopy(pcmBuffer, 0, msg, 5, read)
                     onAudioData(msg)
                 }
             }

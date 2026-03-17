@@ -194,7 +194,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         } catch (_: Exception) {}
 
         try {
-            injectMethod?.invoke(inputManagerInstance, event, 0) // INJECT_INPUT_EVENT_MODE_ASYNC
+            val result = injectMethod?.invoke(inputManagerInstance, event, 0) // INJECT_INPUT_EVENT_MODE_ASYNC
+            Log.d(TAG, "Touch injected on display $displayId: action=$action x=${"%.1f".format(x)} y=${"%.1f".format(y)} result=$result")
         } catch (e: Exception) {
             Log.e(TAG, "Input injection failed on display $displayId", e)
         } finally {
@@ -246,6 +247,95 @@ class PrivilegedService : IPrivilegedService.Stub() {
             Log.i(TAG, "Launched DesktopActivity on display $displayId: $result")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch DesktopActivity on display $displayId", e)
+        }
+    }
+
+    override fun injectText(text: String, displayId: Int) {
+        if (text.isEmpty()) return
+
+        val isAsciiOnly = text.all { it.code < 128 }
+
+        if (isAsciiOnly) {
+            // Route A: ASCII → shell `input text` (fast, reliable)
+            try {
+                val escaped = text.replace("'", "'\\''") // shell escape single quotes
+                    .replace(" ", "%s") // `input text` space encoding
+                val cmd = if (displayId > 0) "input -d $displayId text '$escaped'"
+                          else "input text '$escaped'"
+                execCommand(cmd)
+                Log.i(TAG, "Text injected via shell (ASCII): ${text.length} chars")
+            } catch (e: Exception) {
+                Log.e(TAG, "Shell text injection failed", e)
+            }
+            return
+        }
+
+        // Route B: Non-ASCII (Korean/CJK/emoji) → Clipboard + CTRL+V
+        try {
+            // Get InputManager for key injection
+            val imClass = Class.forName("android.hardware.input.InputManager")
+            val getInstance = imClass.getMethod("getInstance")
+            val im = getInstance.invoke(null)
+            val injectMethod = imClass.getMethod(
+                "injectInputEvent",
+                android.view.InputEvent::class.java,
+                Int::class.javaPrimitiveType
+            )
+
+            // Step 1: Write to system clipboard via IClipboard
+            val smClass = Class.forName("android.os.ServiceManager")
+            val getService = smClass.getMethod("getService", String::class.java)
+            val clipBinder = getService.invoke(null, "clipboard") as android.os.IBinder
+
+            val clipStubClass = Class.forName("android.content.IClipboard\$Stub")
+            val asInterface = clipStubClass.getMethod("asInterface", android.os.IBinder::class.java)
+            val clipService = asInterface.invoke(null, clipBinder)
+
+            val clipData = android.content.ClipData.newPlainText("castla", text)
+            val setPrimary = clipService.javaClass.methods.find { it.name == "setPrimaryClip" }
+            if (setPrimary != null) {
+                val args: Array<Any?> = when (setPrimary.parameterTypes.size) {
+                    4 -> arrayOf(clipData, "com.android.shell", null, 0)
+                    3 -> arrayOf(clipData, "com.android.shell", 0)
+                    else -> arrayOf(clipData, "com.android.shell")
+                }
+                setPrimary.invoke(clipService, *args)
+            }
+
+            // Step 2: Wait for clipboard sync
+            Thread.sleep(50)
+
+            // Step 3: CTRL+V (physical key combo — works in virtually all apps)
+            val time = android.os.SystemClock.uptimeMillis()
+
+            val ctrlDown = android.view.KeyEvent(
+                time, time, android.view.KeyEvent.ACTION_DOWN,
+                android.view.KeyEvent.KEYCODE_CTRL_LEFT, 0,
+                android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
+            )
+            val vDown = android.view.KeyEvent(
+                time, time, android.view.KeyEvent.ACTION_DOWN,
+                android.view.KeyEvent.KEYCODE_V, 0,
+                android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
+            )
+            val vUp = android.view.KeyEvent(
+                time, time, android.view.KeyEvent.ACTION_UP,
+                android.view.KeyEvent.KEYCODE_V, 0,
+                android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
+            )
+            val ctrlUp = android.view.KeyEvent(
+                time, time, android.view.KeyEvent.ACTION_UP,
+                android.view.KeyEvent.KEYCODE_CTRL_LEFT, 0, 0
+            )
+
+            injectMethod.invoke(im, ctrlDown, 0)
+            injectMethod.invoke(im, vDown, 0)
+            injectMethod.invoke(im, vUp, 0)
+            injectMethod.invoke(im, ctrlUp, 0)
+
+            Log.i(TAG, "Text injected via clipboard+CTRL+V: ${text.length} chars")
+        } catch (e: Exception) {
+            Log.e(TAG, "Clipboard+CTRL+V injection failed", e)
         }
     }
 

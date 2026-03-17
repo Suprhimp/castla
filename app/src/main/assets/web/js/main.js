@@ -171,11 +171,14 @@
             if (touchHandler) {
                 // Update existing handler's socket reference (avoids duplicate event listeners)
                 touchHandler.controlSocket = controlSocket;
+                console.log('[Main] TouchHandler socket updated');
             } else {
                 const touchTarget = codecMode === 'mse'
                     ? document.getElementById('mse-video') : canvas;
                 touchHandler = new TouchHandler(touchTarget, renderer, controlSocket);
+                console.log('[Main] TouchHandler created on', touchTarget.id || touchTarget.tagName);
             }
+            window._touchHandler = touchHandler; // expose for debugging
 
             // Keepalive ping every 15s to prevent idle timeout
             clearInterval(pingTimer);
@@ -199,6 +202,16 @@
                     if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
                         videoSocket.send('requestKeyframe');
                     }
+                } else if (msg.type === 'premiumStatus') {
+                    const banner = document.getElementById('ad-banner');
+                    if (banner) {
+                        banner.style.display = msg.isPremium ? 'none' : 'block';
+                    }
+                    // Banner visibility changes canvas size — recalculate layout
+                    if (renderer && renderer.videoWidth > 0) {
+                        setTimeout(() => renderer.updateLayout(), 50);
+                    }
+                    console.log('[Main] Premium status:', msg.isPremium);
                 }
             } catch (e) {
                 // Ignore non-JSON messages
@@ -230,6 +243,7 @@
                 console.log('[Main] Audio started via user gesture');
             } else {
                 console.warn('[Main] Audio init failed');
+                unmuteOverlay.classList.add('hidden');
                 audioPlayer = null;
             }
         }, { once: true });
@@ -313,6 +327,30 @@
     // Touch on canvas shows overlay briefly
     canvas.addEventListener('touchstart', () => showOverlay(), { passive: true });
 
+    // Ad banner click → request purchase on phone
+    const adBanner = document.getElementById('ad-banner');
+    if (adBanner) {
+        adBanner.addEventListener('click', () => {
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'requestPurchase' }));
+                console.log('[Main] Purchase requested via banner click');
+            }
+        });
+    }
+
+    // --- Home button ---
+    const homeBtn = document.getElementById('home-btn');
+    if (homeBtn) {
+        homeBtn.style.display = 'block';
+        homeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'goHome' }));
+                console.log('[Main] Home requested');
+            }
+        });
+    }
+
     // --- Tesla native keyboard integration ---
     const kbInput = document.getElementById('keyboard-input');
     const kbBtn = document.getElementById('keyboard-btn');
@@ -336,19 +374,24 @@
             }
         });
 
-        // Capture input and send to server
+        // Capture input — use e.data for IME (Korean) compatibility
         kbInput.addEventListener('input', (e) => {
-            const text = e.target.value;
+            const text = e.data || e.target.value;
             if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text: text }));
-                kbInput.value = ''; // clear for next input
+                console.log('[KB] Sent:', text);
             }
+            kbInput.value = ''; // clear for next input
         });
 
-        // Also handle Enter key
+        // Handle Enter and Backspace
         kbInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+            if (e.key === 'Enter') {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text: '\n' }));
+                e.preventDefault();
+            } else if (e.key === 'Backspace') {
+                controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 })); // KEYCODE_DEL
                 e.preventDefault();
             }
         });

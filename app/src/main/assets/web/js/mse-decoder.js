@@ -73,14 +73,48 @@ class MseDecoder {
 
     /**
      * Decode a frame from the WebSocket.
-     * @param {ArrayBuffer} data - 1-byte header (0x01=key, 0x00=delta) + H.264 NAL units
+     * @param {ArrayBuffer} data - 8-byte header + H.264 NAL units
+     *   header: [flags:u8][seqLo:u8][seqHi:u8][tsMs0-3:u8][reserved:u8]
+     *   flags: 0x00=delta, 0x01=keyframe, 0x02=codec config (SPS/PPS)
      */
     decode(data) {
-        const view = new Uint8Array(data);
-        if (view.length < 2) return;
+        if (data.byteLength < 9) return;
+        const dv = new DataView(data);
 
-        const isKeyFrame = view[0] === 0x01;
-        const nalData = new Uint8Array(data, 1);
+        const flags = dv.getUint8(0);
+        const seqNum = dv.getUint16(1, true);  // LE
+        // const serverTsMs = dv.getUint32(3, true);  // available for future sync
+
+        // 0x02 = SPS/PPS config — cache for init segment, don't process as media
+        if (flags === 0x02) {
+            this._cachedSpsPps = new Uint8Array(data, 8);
+            this._extractSpsPps(this._cachedSpsPps);
+            return;
+        }
+
+        const isKeyFrame = flags === 0x01;
+
+        // Detect frame drops via sequence gap → request keyframe
+        if (this._lastSeqNum !== undefined) {
+            const expected = (this._lastSeqNum + 1) & 0xFFFF;
+            if (seqNum !== expected && !isKeyFrame) {
+                console.warn('[MSE] Frame gap: expected', expected, 'got', seqNum, '— requesting keyframe');
+            }
+        }
+        this._lastSeqNum = seqNum;
+
+        // For keyframes, prepend cached SPS/PPS so MSE can detect resolution
+        let nalData;
+        if (isKeyFrame && this._cachedSpsPps) {
+            const spsPps = this._cachedSpsPps;
+            const raw = new Uint8Array(data, 8);
+            const combined = new Uint8Array(spsPps.length + raw.length);
+            combined.set(spsPps);
+            combined.set(raw, spsPps.length);
+            nalData = combined;
+        } else {
+            nalData = new Uint8Array(data, 8);
+        }
 
         if (isKeyFrame) {
             const oldWidth = this.width;
@@ -160,7 +194,7 @@ class MseDecoder {
             if (this._pendingKeyframe) {
                 const kf = this._pendingKeyframe;
                 this._pendingKeyframe = null;
-                const kfNalData = new Uint8Array(kf, 1);
+                const kfNalData = new Uint8Array(kf, 8);
 
                 if (!this._createSourceBuffer()) return;
                 this._sendInitSegment();

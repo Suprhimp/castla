@@ -19,6 +19,7 @@ html, body {
     width: 100%;
     height: 100%;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     position: relative;
@@ -26,14 +27,16 @@ html, body {
 
 #display {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     opacity: 0;
     transition: opacity 0.3s;
 }
 
 #mse-video {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     display: none;
     opacity: 0;
     transition: opacity 0.3s;
@@ -80,6 +83,23 @@ html, body {
     background: rgba(0, 0, 0, 0.6);
     padding: 4px 12px;
     border-radius: 4px;
+}
+
+#ad-banner {
+    width: 100%;
+    text-align: center;
+    flex-shrink: 0;
+    z-index: 10;
+    pointer-events: auto;
+    opacity: 0.92;
+    cursor: pointer;
+    background: #000;
+}
+
+#ad-banner img {
+    max-width: 100%;
+    height: auto;
+    display: block;
 }
 
 #unmute-overlay {

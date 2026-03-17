@@ -3,6 +3,7 @@ package com.castla.mirror
 import android.Manifest
 import android.app.Activity
 import android.app.DownloadManager
+import com.castla.mirror.BuildConfig
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -17,6 +18,8 @@ import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
+import com.castla.mirror.billing.BillingManager
+import com.castla.mirror.billing.LicenseManager
 import com.castla.mirror.server.MirrorServer
 import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var networkMonitor: NetworkMonitor
     private lateinit var shizukuSetup: ShizukuSetup
+    private lateinit var billingManager: BillingManager
     private var mirrorService: MirrorForegroundService? = null
     private var serviceBound = false
     private var bindRequested = false
@@ -102,6 +106,25 @@ class MainActivity : ComponentActivity() {
                 localBinder.service.setBrowserConnectionListener { connected ->
                     if (connected) runOnUiThread { moveTaskToBack(true) }
                 }
+            }
+
+            // Handle purchase request from browser banner
+            localBinder.service.setPurchaseRequestListener {
+                // Wake screen + bring MainActivity to foreground + trigger billing
+                val intent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("start_billing", true)
+                }
+                @Suppress("DEPRECATION")
+                val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                val wl = pm.newWakeLock(
+                    android.os.PowerManager.FULL_WAKE_LOCK or
+                        android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                        android.os.PowerManager.ON_AFTER_RELEASE,
+                    "castla:purchase"
+                )
+                wl.acquire(3000)
+                startActivity(intent)
             }
             updateServerUrl()
             serviceBound = true
@@ -162,6 +185,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Initialize license & billing
+        LicenseManager.init(this)
+        billingManager = BillingManager(this)
+        billingManager.init()
+
         networkMonitor = NetworkMonitor(this)
         networkMonitor.startMonitoring()
         streamSettings = StreamSettings.load(this)
@@ -212,16 +240,26 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val isPremium by LicenseManager.isPremium.collectAsState()
+
             MaterialTheme(colorScheme = darkColorScheme()) {
                 if (showSettings) {
                     SettingsScreen(
                         settings = streamSettings,
                         isStreaming = isStreaming,
+                        isPremium = isPremium,
                         onSettingsChanged = { newSettings ->
                             streamSettings = newSettings
                             StreamSettings.save(this@MainActivity, newSettings)
                         },
-                        onBackClick = { showSettings = false }
+                        onBackClick = { showSettings = false },
+                        onDebugTogglePremium = if (BuildConfig.DEBUG) {
+                            {
+                                LicenseManager.setPremium(!isPremium, this@MainActivity)
+                                // Reload settings to apply clamps
+                                streamSettings = StreamSettings.load(this@MainActivity)
+                            }
+                        } else null
                     )
                 } else {
                     CastlaScreen(
@@ -232,9 +270,11 @@ class MainActivity : ComponentActivity() {
                         shizukuInstalled = shizukuInstalled,
                         shizukuRunning = shizukuRunning,
                         teslaIpReady = teslaIpReady,
+                        isPremium = isPremium,
                         onStartClick = { onStartMirroring() },
                         onStopClick = { stopMirrorService() },
                         onSettingsClick = { showSettings = true },
+                        onUpgradeClick = { billingManager.launchPurchaseFlow(this@MainActivity) },
                         shizukuDownloading = shizukuDownloading,
                         downloadProgress = downloadProgress,
                         downloadStatusText = downloadStatusText,
@@ -244,6 +284,15 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Handle purchase request from browser banner (via ControlSocket → Intent)
+        if (intent.getBooleanExtra("start_billing", false)) {
+            Log.i(TAG, "Purchase flow triggered from browser banner")
+            billingManager.launchPurchaseFlow(this)
         }
     }
 
@@ -273,6 +322,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         try { unregisterReceiver(downloadReceiver) } catch (_: Exception) {}
+        billingManager.destroy()
         networkMonitor.stopMonitoring()
         stopTeslaVpn()
         shizukuSetup.release()
@@ -644,12 +694,14 @@ fun CastlaScreen(
     shizukuInstalled: Boolean,
     shizukuRunning: Boolean,
     teslaIpReady: Boolean,
+    isPremium: Boolean = false,
     shizukuDownloading: Boolean = false,
     downloadProgress: Int = 0,
     downloadStatusText: String = "",
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onUpgradeClick: () -> Unit = {},
     onInstallShizuku: () -> Unit,
     onOpenShizuku: () -> Unit,
     networkDiagLog: String = ""
@@ -684,6 +736,53 @@ fun CastlaScreen(
 
             TextButton(onClick = onSettingsClick) {
                 Text("Settings")
+            }
+
+            // PRO upgrade card (only for free users)
+            if (!isPremium) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF1A1A2E)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Castla PRO",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFFD700)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Unlock all apps  /  1080p streaming  /  No ads",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = onUpgradeClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFFFD700)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Upgrade — One-time Purchase",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))

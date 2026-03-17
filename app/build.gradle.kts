@@ -26,6 +26,7 @@ android {
     buildFeatures {
         compose = true
         aidl = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -68,6 +69,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Google Play Billing (one-time in-app purchase)
+    implementation("com.android.billingclient:billing-ktx:7.0.0")
 
     // QR Code generation
     implementation("com.google.zxing:core:3.5.2")

@@ -76,4 +76,11 @@ interface IPrivilegedService {
      * Uses am start with HOME category.
      */
     void launchHomeOnDisplay(int displayId) = 12;
+
+    /**
+     * Inject text into the focused field using ACTION_MULTIPLE KeyEvent.
+     * Supports all languages (Korean, CJK, emoji, etc.)
+     * Falls back to clipboard+paste if ACTION_MULTIPLE fails.
+     */
+    void injectText(String text, int displayId) = 13;
 }

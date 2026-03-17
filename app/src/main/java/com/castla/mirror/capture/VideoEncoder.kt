@@ -62,6 +62,8 @@ class VideoEncoder(
             setInteger(MediaFormat.KEY_LEVEL, level)
             // Low latency hints
             setInteger(MediaFormat.KEY_LATENCY, 0)
+            // Repeat last frame if no new input for 100ms — ensures output even on static screens
+            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000) // microseconds
             setInteger(MediaFormat.KEY_PRIORITY, 0) // real-time priority
             setInteger("max-bframes", 0) // Explicit B-frame disable (Samsung quirk safety)
         }
@@ -74,6 +76,8 @@ class VideoEncoder(
         Log.i(TAG, "Encoder created ($profileName): ${width}x${height} @ ${bitrate / 1000}kbps, ${fps}fps")
         return surface
     }
+
+    var onSpsPps: ((ByteArray) -> Unit)? = null
 
     fun start(onEncodedFrame: (data: ByteArray, isKeyFrame: Boolean) -> Unit) {
         val encoder = codec ?: throw IllegalStateException("Call createInputSurface() first")
@@ -93,10 +97,14 @@ class VideoEncoder(
 
                 try {
                     val buffer = codec.getOutputBuffer(index) ?: return
+                    Log.d(TAG, "Output buffer: size=${info.size} flags=0x${info.flags.toString(16)}")
 
                     if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                        // Extract SPS/PPS from codec config
+                        // Extract SPS/PPS and send as separate config message
                         extractSpsPps(buffer, info)
+                        if (sps != null && pps != null) {
+                            onSpsPps?.invoke(sps!! + pps!!)
+                        }
                         codec.releaseOutputBuffer(index, false)
                         return
                     }
@@ -108,14 +116,7 @@ class VideoEncoder(
                         buffer.get(data)
 
                         val isKeyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-
-                        if (isKeyFrame && sps != null && pps != null) {
-                            // Prepend SPS+PPS before keyframe for decoder init
-                            val fullFrame = sps!! + pps!! + data
-                            onEncodedFrame(fullFrame, true)
-                        } else {
-                            onEncodedFrame(data, isKeyFrame)
-                        }
+                        onEncodedFrame(data, isKeyFrame)
                     }
 
                     codec.releaseOutputBuffer(index, false)
@@ -193,6 +194,22 @@ class VideoEncoder(
             Log.d(TAG, "Keyframe requested")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to request keyframe", e)
+        }
+    }
+
+    /**
+     * Dynamically change bitrate without rebuilding the pipeline.
+     * Uses MediaCodec.setParameters() which is supported on most devices.
+     */
+    fun setBitrate(bps: Int) {
+        try {
+            val params = Bundle().apply {
+                putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bps)
+            }
+            codec?.setParameters(params)
+            Log.i(TAG, "Bitrate changed to ${bps / 1000}kbps")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set bitrate", e)
         }
     }
 

@@ -21,6 +21,7 @@ import com.castla.mirror.capture.ScreenCaptureManager
 import com.castla.mirror.capture.VideoEncoder
 import com.castla.mirror.capture.VirtualDisplayManager
 import com.castla.mirror.input.TouchInjector
+import com.castla.mirror.billing.LicenseManager
 import com.castla.mirror.server.MirrorServer
 import com.castla.mirror.shizuku.ShizukuSetup
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +66,7 @@ class MirrorForegroundService : Service() {
     private var shizukuSetup: ShizukuSetup? = null
     private var currentWidth: Int = 0
     private var currentHeight: Int = 0
+    private var currentEncoderSurface: android.view.Surface? = null
     private var currentBitrate: Int = 4_000_000
     private var currentFps: Int = 30
     private var mirroringMode: String = "FULL_SCREEN"
@@ -85,6 +87,10 @@ class MirrorForegroundService : Service() {
         mirrorServer?.setBrowserConnectionListener(listener)
     }
 
+    fun setPurchaseRequestListener(listener: (() -> Unit)?) {
+        mirrorServer?.setPurchaseRequestListener(listener)
+    }
+
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onCreate() {
@@ -92,6 +98,10 @@ class MirrorForegroundService : Service() {
         createNotificationChannel()
         observeAppLaunchRequests()
     }
+
+    /** Track whether current app is OTT for bitrate adjustment */
+    private var isCurrentAppVideo = false
+    private var lastBitrateChangeMs = 0L
 
     /** Collect app launch requests from DesktopActivity via in-process SharedFlow */
     private fun observeAppLaunchRequests() {
@@ -102,8 +112,23 @@ class MirrorForegroundService : Service() {
                 } else {
                     request.packageName
                 }
-                Log.i(TAG, "VD launch request: $component")
+                Log.i(TAG, "VD launch request: $component (video=${request.isVideoApp})")
                 virtualDisplayManager?.launchAppOnDisplay(component)
+
+                // OTT bitrate boost: 1.5x (cap 6Mbps), debounced 500ms
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (request.isVideoApp != isCurrentAppVideo && now - lastBitrateChangeMs > 500) {
+                    isCurrentAppVideo = request.isVideoApp
+                    lastBitrateChangeMs = now
+                    if (request.isVideoApp) {
+                        val boosted = minOf((currentBitrate * 1.5).toInt(), 6_000_000)
+                        videoEncoder?.setBitrate(boosted)
+                        Log.i(TAG, "OTT app detected — bitrate boosted to ${boosted / 1000}kbps")
+                    } else {
+                        videoEncoder?.setBitrate(currentBitrate)
+                        Log.i(TAG, "Non-OTT app — bitrate restored to ${currentBitrate / 1000}kbps")
+                    }
+                }
             }
         }
     }
@@ -176,6 +201,7 @@ class MirrorForegroundService : Service() {
             // 2. Initialize video encoder with user settings
             videoEncoder = VideoEncoder(width, height, bitrate, fps).also { encoder ->
                 val surface = encoder.createInputSurface()
+                currentEncoderSurface = surface
 
                 // 3. Initialize touch injector
                 touchInjector = TouchInjector(width, height)
@@ -187,7 +213,13 @@ class MirrorForegroundService : Service() {
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
                     server.setTextInputListener { text -> injectText(text) }
+                    server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
                     server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
+                    server.setGoHomeListener {
+                        Log.i(TAG, "Navigating to home (DesktopActivity)")
+                        virtualDisplayManager?.launchHomeOnDisplay()
+                        currentVdApp = "HOME"
+                    }
 
                     // Internal listener: when browser connects, launch target app on VD
                     server.setBrowserConnectionListener { connected ->
@@ -207,6 +239,7 @@ class MirrorForegroundService : Service() {
                 }
 
                 // 5. Start encoding — frames go to server
+                encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
                 encoder.start { frameData, isKeyFrame ->
                     mirrorServer?.broadcastFrame(frameData, isKeyFrame)
                 }
@@ -301,6 +334,24 @@ class MirrorForegroundService : Service() {
             val vdm = VirtualDisplayManager()
             virtualDisplayManager = vdm
 
+            // Handle Shizuku service reconnection after death
+            vdm.reconnectListener = {
+                val surf = currentEncoderSurface
+                if (surf != null && !vdm.hasVirtualDisplay()) {
+                    Log.i(TAG, "Shizuku reconnected — recreating VD and relaunching home")
+                    vdm.createVirtualDisplay(currentWidth, currentHeight, 160, surf)
+                    if (vdm.hasVirtualDisplay()) {
+                        touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                            vdm.injectInput(action, x, y, pointerId)
+                        }
+                        vdm.launchHomeOnDisplay()
+                        currentVdApp = "HOME"
+                    }
+                } else {
+                    Log.i(TAG, "Shizuku reconnected but VD already exists or no surface, skipping")
+                }
+            }
+
             vdm.bindShizukuService { bound ->
                 try {
                     if (bound) {
@@ -367,38 +418,37 @@ class MirrorForegroundService : Service() {
     }
 
     /**
-     * Inject text into the currently focused field on the VD via Shizuku shell.
-     * Uses `input text` which types character-by-character.
+     * Inject text into the currently focused field via Shizuku (uid 2000).
+     * Supports Korean/CJK/emoji via ACTION_MULTIPLE, clipboard+paste fallback.
      */
     private fun injectText(text: String) {
         serviceScope.launch(Dispatchers.IO) {
             try {
                 val displayId = virtualDisplayManager?.getDisplayId() ?: -1
-                // Must run via Shizuku (uid 2000) — app uid can't use `input` command
                 val service = shizukuSetup?.privilegedService
                 if (service != null) {
-                    // Escape special shell characters
-                    val escaped = text.replace("\\", "\\\\")
-                        .replace("\"", "\\\"")
-                        .replace("'", "\\'")
-                        .replace(" ", "%s") // `input text` uses %s for space
-                        .replace("&", "\\&")
-                        .replace("|", "\\|")
-                        .replace(";", "\\;")
-                        .replace("(", "\\(")
-                        .replace(")", "\\)")
-                    val cmd = if (displayId > 0) {
-                        "input -d $displayId text \"$escaped\""
-                    } else {
-                        "input text \"$escaped\""
-                    }
-                    service.execCommand(cmd)
-                    Log.i(TAG, "Text injected via Shizuku: ${text.length} chars")
+                    service.injectText(text, displayId)
                 } else {
                     Log.w(TAG, "Text injection failed: Shizuku not available")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
+            }
+        }
+    }
+
+    private fun injectKeyEvent(keyCode: Int) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val service = shizukuSetup?.privilegedService
+                if (service != null) {
+                    val cmd = if (displayId > 0) "input -d $displayId keyevent $keyCode"
+                              else "input keyevent $keyCode"
+                    service.execCommand(cmd)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Key event injection failed", e)
             }
         }
     }
@@ -423,18 +473,26 @@ class MirrorForegroundService : Service() {
      * the Tesla browser viewport.
      */
     private suspend fun rebuildPipeline(newWidth: Int, newHeight: Int) {
+        // Server-side resolution cap for free users (max 720p)
+        var cappedWidth = newWidth
+        var cappedHeight = newHeight
+        if (!LicenseManager.isPremiumNow) {
+            if (cappedWidth > 1280) cappedWidth = 1280
+            if (cappedHeight > 720) cappedHeight = 720
+        }
+
         // Guard: same size — no-op
-        if (newWidth == currentWidth && newHeight == currentHeight) return
+        if (cappedWidth == currentWidth && cappedHeight == currentHeight) return
 
         // Range check
-        if (newWidth < 320 || newWidth > 3840 || newHeight < 320 || newHeight > 3840) {
-            Log.w(TAG, "Viewport out of range: ${newWidth}x${newHeight}, ignoring")
+        if (cappedWidth < 320 || cappedWidth > 3840 || cappedHeight < 320 || cappedHeight > 3840) {
+            Log.w(TAG, "Viewport out of range: ${cappedWidth}x${cappedHeight}, ignoring")
             return
         }
 
         // Align to 16-multiple (required by H.264 encoders)
-        val width = (newWidth + 15) and 15.inv()
-        val height = (newHeight + 15) and 15.inv()
+        val width = (cappedWidth + 15) and 15.inv()
+        val height = (cappedHeight + 15) and 15.inv()
 
         // Compute DPI proportional to height
         val dpi = (height * 240 / 720).coerceIn(120, 320)
@@ -454,12 +512,14 @@ class MirrorForegroundService : Service() {
             // 2. Create new VideoEncoder at new dimensions
             val encoder = VideoEncoder(width, height, newBitrate, currentFps)
             val surface = encoder.createInputSurface()
+            currentEncoderSurface = surface
             videoEncoder = encoder
 
             // 3. Update touch injector dimensions
             touchInjector?.updateDimensions(width, height)
 
             // 4. Start encoder with broadcast callback
+            encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
             encoder.start { frameData, isKeyFrame ->
                 mirrorServer?.broadcastFrame(frameData, isKeyFrame)
             }
