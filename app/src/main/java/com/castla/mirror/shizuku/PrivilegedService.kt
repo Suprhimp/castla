@@ -258,7 +258,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         if (isAsciiOnly) {
             // Route A: ASCII → shell `input text` (fast, reliable)
             try {
-                val escaped = text.replace("'", "'\\''") // shell escape single quotes
+                val escaped = text.replace("%", "%%") // escape % first (input text interprets %s/%n/%t)
+                    .replace("'", "'\\''") // shell escape single quotes
                     .replace(" ", "%s") // `input text` space encoding
                 val cmd = if (displayId > 0) "input -d $displayId text '$escaped'"
                           else "input text '$escaped'"
@@ -309,33 +310,25 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // Step 2: Wait for clipboard sync
             Thread.sleep(50)
 
-            // Step 3: CTRL+V (physical key combo — works in virtually all apps)
+            // Step 3: CTRL+V targeting correct display
             val time = android.os.SystemClock.uptimeMillis()
+            val meta = android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
 
-            val ctrlDown = android.view.KeyEvent(
-                time, time, android.view.KeyEvent.ACTION_DOWN,
-                android.view.KeyEvent.KEYCODE_CTRL_LEFT, 0,
-                android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
-            )
-            val vDown = android.view.KeyEvent(
-                time, time, android.view.KeyEvent.ACTION_DOWN,
-                android.view.KeyEvent.KEYCODE_V, 0,
-                android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
-            )
-            val vUp = android.view.KeyEvent(
-                time, time, android.view.KeyEvent.ACTION_UP,
-                android.view.KeyEvent.KEYCODE_V, 0,
-                android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
-            )
-            val ctrlUp = android.view.KeyEvent(
-                time, time, android.view.KeyEvent.ACTION_UP,
-                android.view.KeyEvent.KEYCODE_CTRL_LEFT, 0, 0
-            )
+            fun makeKeyEvent(action: Int, keyCode: Int, metaState: Int): android.view.KeyEvent {
+                val ev = android.view.KeyEvent(time, time, action, keyCode, 0, metaState,
+                    android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0,
+                    android.view.InputDevice.SOURCE_KEYBOARD)
+                if (displayId > 0) {
+                    try { ev.javaClass.getMethod("setDisplayId", Int::class.javaPrimitiveType).invoke(ev, displayId) }
+                    catch (_: Exception) {}
+                }
+                return ev
+            }
 
-            injectMethod.invoke(im, ctrlDown, 0)
-            injectMethod.invoke(im, vDown, 0)
-            injectMethod.invoke(im, vUp, 0)
-            injectMethod.invoke(im, ctrlUp, 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_CTRL_LEFT, meta), 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_V, meta), 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_V, meta), 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_CTRL_LEFT, 0), 0)
 
             Log.i(TAG, "Text injected via clipboard+CTRL+V: ${text.length} chars")
         } catch (e: Exception) {

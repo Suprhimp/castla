@@ -376,16 +376,28 @@
         });
 
         kbInput.addEventListener('compositionupdate', (e) => {
-            const newText = e.data;
-            if (!newText || !controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+            const newText = e.data || '';
+            if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
 
+            if (newText.length === 0 && lastCompositionLength > 0) {
+                // Composition cancelled — delete remaining chars
+                controlSocket.send(JSON.stringify({
+                    type: 'compositionUpdate', backspaces: lastCompositionLength, text: ''
+                }));
+                lastCompositionLength = 0;
+                return;
+            }
+            if (!newText) return;
+
+            // Use spread to count grapheme clusters properly (handles surrogates)
+            const graphemeLen = [...newText].length;
             controlSocket.send(JSON.stringify({
                 type: 'compositionUpdate',
                 backspaces: lastCompositionLength,
                 text: newText
             }));
             console.log('[KB] Composition:', newText, '(bs:', lastCompositionLength, ')');
-            lastCompositionLength = newText.length;
+            lastCompositionLength = graphemeLen;
         });
 
         kbInput.addEventListener('compositionend', (e) => {
@@ -417,9 +429,11 @@
             }
         });
 
-        // Sync state when keyboard dismissed externally
+        // Sync state when keyboard dismissed — reset composing state
         kbInput.addEventListener('blur', () => {
             kbInput.style.pointerEvents = 'none';
+            composing = false;
+            lastCompositionLength = 0;
         });
     }
 

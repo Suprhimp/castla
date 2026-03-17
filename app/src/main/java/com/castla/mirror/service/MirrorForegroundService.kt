@@ -427,7 +427,7 @@ class MirrorForegroundService : Service() {
      * Supports Korean/CJK/emoji via ACTION_MULTIPLE, clipboard+paste fallback.
      */
     private fun injectText(text: String) {
-        serviceScope.launch(Dispatchers.IO) {
+        serviceScope.launch(compositionDispatcher) { // same dispatcher as composition to prevent interleaving
             try {
                 val displayId = virtualDisplayManager?.getDisplayId() ?: -1
                 val service = shizukuSetup?.privilegedService
@@ -670,6 +670,7 @@ class MirrorForegroundService : Service() {
         Log.i(TAG, "Stopping pipeline")
         resizeJob?.cancel()
         serviceScope.cancel()
+        compositionDispatcher.close()
         audioCapture?.stop()
         restoreMediaVolume()
         virtualDisplayManager?.release()

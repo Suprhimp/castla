@@ -78,15 +78,14 @@ interface IPrivilegedService {
     void launchHomeOnDisplay(int displayId) = 12;
 
     /**
-     * Inject text into the focused field using ACTION_MULTIPLE KeyEvent.
-     * Supports all languages (Korean, CJK, emoji, etc.)
-     * Falls back to clipboard+paste if ACTION_MULTIPLE fails.
+     * Inject text into the focused field on the specified display.
+     * ASCII: shell `input text`. Non-ASCII: clipboard + CTRL+V.
      */
     void injectText(String text, int displayId) = 13;
 
     /**
-     * Fast Korean composition: delete N chars + insert text via ACTION_MULTIPLE.
-     * No clipboard involved — sub-millisecond speed.
+     * Korean/CJK composition: delete N chars (backspace) + insert text via clipboard+CTRL+V.
+     * Called on each compositionupdate from browser. Serialized on a single thread.
      */
     void injectComposingText(int backspaces, String text, int displayId) = 14;
 }
