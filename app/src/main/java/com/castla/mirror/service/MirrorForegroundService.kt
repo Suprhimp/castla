@@ -4,21 +4,27 @@ import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.castla.mirror.widget.MirrorWidgetProvider
 import com.castla.mirror.capture.AudioCapture
 import com.castla.mirror.capture.JpegEncoder
 import com.castla.mirror.capture.ScreenCaptureManager
 import com.castla.mirror.capture.VideoEncoder
 import com.castla.mirror.capture.VirtualDisplayManager
 import com.castla.mirror.input.TouchInjector
+import com.castla.mirror.billing.LicenseManager
 import com.castla.mirror.server.MirrorServer
 import com.castla.mirror.shizuku.ShizukuSetup
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +41,7 @@ class MirrorForegroundService : Service() {
         private const val TAG = "MirrorService"
         private const val CHANNEL_ID = "castla_mirror"
         private const val NOTIFICATION_ID = 1
+        const val ACTION_STOP = "com.castla.mirror.ACTION_STOP"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
         const val EXTRA_WIDTH = "width"
@@ -63,6 +70,7 @@ class MirrorForegroundService : Service() {
     private var shizukuSetup: ShizukuSetup? = null
     private var currentWidth: Int = 0
     private var currentHeight: Int = 0
+    private var currentEncoderSurface: android.view.Surface? = null
     private var currentBitrate: Int = 4_000_000
     private var currentFps: Int = 30
     private var mirroringMode: String = "FULL_SCREEN"
@@ -73,6 +81,7 @@ class MirrorForegroundService : Service() {
     private var browserConnected = false
     private var currentVdApp: String = "com.android.settings" // what's running on VD
     private var currentCodecMode: String = "h264"
+    private var savedMediaVolume: Int = -1
 
     val isRunning: Boolean
         get() = mirrorServer != null
@@ -80,6 +89,10 @@ class MirrorForegroundService : Service() {
     fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
         browserConnectionListener = listener
         mirrorServer?.setBrowserConnectionListener(listener)
+    }
+
+    fun setPurchaseRequestListener(listener: (() -> Unit)?) {
+        mirrorServer?.setPurchaseRequestListener(listener)
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -90,6 +103,10 @@ class MirrorForegroundService : Service() {
         observeAppLaunchRequests()
     }
 
+    /** Track whether current app is OTT for bitrate adjustment */
+    private var isCurrentAppVideo = false
+    private var lastBitrateChangeMs = 0L
+
     /** Collect app launch requests from DesktopActivity via in-process SharedFlow */
     private fun observeAppLaunchRequests() {
         serviceScope.launch {
@@ -99,8 +116,23 @@ class MirrorForegroundService : Service() {
                 } else {
                     request.packageName
                 }
-                Log.i(TAG, "VD launch request: $component")
+                Log.i(TAG, "VD launch request: $component (video=${request.isVideoApp})")
                 virtualDisplayManager?.launchAppOnDisplay(component)
+
+                // OTT bitrate boost: 1.5x (cap 6Mbps), debounced 500ms
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (request.isVideoApp != isCurrentAppVideo && now - lastBitrateChangeMs > 500) {
+                    isCurrentAppVideo = request.isVideoApp
+                    lastBitrateChangeMs = now
+                    if (request.isVideoApp) {
+                        val boosted = minOf((currentBitrate * 1.5).toInt(), 6_000_000)
+                        videoEncoder?.setBitrate(boosted)
+                        Log.i(TAG, "OTT app detected — bitrate boosted to ${boosted / 1000}kbps")
+                    } else {
+                        videoEncoder?.setBitrate(currentBitrate)
+                        Log.i(TAG, "Non-OTT app — bitrate restored to ${currentBitrate / 1000}kbps")
+                    }
+                }
             }
         }
     }
@@ -173,6 +205,7 @@ class MirrorForegroundService : Service() {
             // 2. Initialize video encoder with user settings
             videoEncoder = VideoEncoder(width, height, bitrate, fps).also { encoder ->
                 val surface = encoder.createInputSurface()
+                currentEncoderSurface = surface
 
                 // 3. Initialize touch injector
                 touchInjector = TouchInjector(width, height)
@@ -180,10 +213,22 @@ class MirrorForegroundService : Service() {
                 // 4. Start the web server
                 mirrorServer = MirrorServer(this).also { server ->
                     server.setKeyframeRequester { encoder.requestKeyFrame() }
-                    server.setTouchListener { event -> touchInjector?.onTouchEvent(event) }
+                    server.setTouchListener { event ->
+                        touchInjector?.onTouchEvent(event)
+                        // Check IME state after tap (ACTION_UP)
+                        if (event.action == "up") checkImeAndNotifyBrowser()
+                    }
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { w, h -> onViewportChange(w, h) }
                     server.setTextInputListener { text -> injectText(text) }
+                    server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
+                    server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
+                    server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
+                    server.setGoHomeListener {
+                        Log.i(TAG, "Navigating to home (DesktopActivity)")
+                        virtualDisplayManager?.launchHomeOnDisplay()
+                        currentVdApp = "HOME"
+                    }
 
                     // Internal listener: when browser connects, launch target app on VD
                     server.setBrowserConnectionListener { connected ->
@@ -199,10 +244,11 @@ class MirrorForegroundService : Service() {
                     }
 
                     server.start(0) // no read timeout — WebSockets stay open indefinitely
-                    Log.i(TAG, "Server started on port 8080")
+                    Log.i(TAG, "Server started on port ${MirrorServer.DEFAULT_PORT}")
                 }
 
                 // 5. Start encoding — frames go to server
+                encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
                 encoder.start { frameData, isKeyFrame ->
                     mirrorServer?.broadcastFrame(frameData, isKeyFrame)
                 }
@@ -235,6 +281,10 @@ class MirrorForegroundService : Service() {
             if (audioEnabled && AudioCapture.isSupported()) {
                 val projection = screenCapture?.getMediaProjection()
                 if (projection != null) {
+                    // Mute device speaker — AudioPlaybackCapture still receives audio
+                    // at the mixer level, so capture is unaffected
+                    muteMediaVolume()
+
                     audioCapture = AudioCapture(projection).also { audio ->
                         audio.start { audioData ->
                             mirrorServer?.broadcastAudio(audioData)
@@ -247,6 +297,8 @@ class MirrorForegroundService : Service() {
             }
 
             Log.i(TAG, "Pipeline started: ${width}x${height}, audio=${audioEnabled}")
+            // Update widget to reflect streaming state
+            MirrorWidgetProvider.updateAllWidgets(this)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start pipeline", e)
             stopSelf()
@@ -293,6 +345,24 @@ class MirrorForegroundService : Service() {
             val vdm = VirtualDisplayManager()
             virtualDisplayManager = vdm
 
+            // Handle Shizuku service reconnection after death
+            vdm.reconnectListener = {
+                val surf = currentEncoderSurface
+                if (surf != null && !vdm.hasVirtualDisplay()) {
+                    Log.i(TAG, "Shizuku reconnected — recreating VD and relaunching home")
+                    vdm.createVirtualDisplay(currentWidth, currentHeight, 160, surf)
+                    if (vdm.hasVirtualDisplay()) {
+                        touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                            vdm.injectInput(action, x, y, pointerId)
+                        }
+                        vdm.launchHomeOnDisplay()
+                        currentVdApp = "HOME"
+                    }
+                } else {
+                    Log.i(TAG, "Shizuku reconnected but VD already exists or no surface, skipping")
+                }
+            }
+
             vdm.bindShizukuService { bound ->
                 try {
                     if (bound) {
@@ -331,6 +401,27 @@ class MirrorForegroundService : Service() {
         // No action needed — apps are launched when VD is created
     }
 
+    /**
+     * Client requested a different audio codec (e.g. "pcm" when Opus is unsupported).
+     * Restart AudioCapture in the requested mode.
+     */
+    private fun onAudioCodecRequest(codec: String) {
+        if (codec != "pcm") return
+        serviceScope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Switching audio to PCM (client doesn't support Opus)")
+            audioCapture?.stop()
+            audioCapture = null
+
+            val projection = screenCapture?.getMediaProjection() ?: return@launch
+            audioCapture = AudioCapture(projection).also { audio ->
+                audio.startPcmOnly { audioData ->
+                    mirrorServer?.broadcastAudio(audioData)
+                }
+            }
+            Log.i(TAG, "Audio restarted in PCM mode")
+        }
+    }
+
     private fun onBrowserDisconnected() {
         Log.i(TAG, "Browser disconnected — releasing VD to free resources")
         virtualDisplayManager?.releaseVirtualDisplay()
@@ -338,33 +429,83 @@ class MirrorForegroundService : Service() {
     }
 
     /**
-     * Inject text into the currently focused field on the VD via Shizuku shell.
-     * Uses `input text` which types character-by-character.
+     * Inject text into the currently focused field via Shizuku (uid 2000).
+     * Supports Korean/CJK/emoji via ACTION_MULTIPLE, clipboard+paste fallback.
      */
     private fun injectText(text: String) {
-        serviceScope.launch(Dispatchers.IO) {
+        serviceScope.launch(compositionDispatcher) { // same dispatcher as composition to prevent interleaving
             try {
-                // Escape special shell characters
-                val escaped = text.replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("'", "\\'")
-                    .replace(" ", "%s") // `input text` uses %s for space
-                    .replace("&", "\\&")
-                    .replace("|", "\\|")
-                    .replace(";", "\\;")
-                    .replace("(", "\\(")
-                    .replace(")", "\\)")
                 val displayId = virtualDisplayManager?.getDisplayId() ?: -1
-                val cmd = if (displayId > 0) {
-                    "input -d $displayId text \"$escaped\""
+                val service = shizukuSetup?.privilegedService
+                if (service != null) {
+                    service.injectText(text, displayId)
                 } else {
-                    "input text \"$escaped\""
+                    Log.w(TAG, "Text injection failed: Shizuku not available")
                 }
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                process.waitFor()
-                Log.i(TAG, "Text injected: ${text.length} chars")
             } catch (e: Exception) {
                 Log.e(TAG, "Text injection failed", e)
+            }
+        }
+    }
+
+    private var lastImeState = false
+
+    /**
+     * Check if Android IME (keyboard) is visible and notify browser.
+     * Called after touch UP events with a small delay.
+     */
+    private fun checkImeAndNotifyBrowser() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                kotlinx.coroutines.delay(300) // wait for IME animation
+                val service = shizukuSetup?.privilegedService ?: return@launch
+                val result = service.execCommand("dumpsys input_method | grep mInputShown")
+                val imeVisible = result.contains("mInputShown=true")
+
+                if (imeVisible != lastImeState) {
+                    lastImeState = imeVisible
+                    val msg = if (imeVisible) {
+                        """{"type":"showKeyboard"}"""
+                    } else {
+                        """{"type":"hideKeyboard"}"""
+                    }
+                    mirrorServer?.broadcastControlMessage(msg)
+                    Log.i(TAG, "IME state changed: visible=$imeVisible")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "IME check failed", e)
+            }
+        }
+    }
+
+    private val compositionDispatcher = kotlinx.coroutines.newSingleThreadContext("composition")
+
+    private fun injectCompositionUpdate(backspaces: Int, text: String) {
+        serviceScope.launch(compositionDispatcher) {
+            try {
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val service = shizukuSetup?.privilegedService ?: return@launch
+
+                // Use Shizuku's fast ACTION_MULTIPLE injection (no clipboard)
+                service.injectComposingText(backspaces, text, displayId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Composition update failed", e)
+            }
+        }
+    }
+
+    private fun injectKeyEvent(keyCode: Int) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val service = shizukuSetup?.privilegedService
+                if (service != null) {
+                    val cmd = if (displayId > 0) "input -d $displayId keyevent $keyCode"
+                              else "input keyevent $keyCode"
+                    service.execCommand(cmd)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Key event injection failed", e)
             }
         }
     }
@@ -389,18 +530,26 @@ class MirrorForegroundService : Service() {
      * the Tesla browser viewport.
      */
     private suspend fun rebuildPipeline(newWidth: Int, newHeight: Int) {
+        // Server-side resolution cap for free users (max 720p)
+        var cappedWidth = newWidth
+        var cappedHeight = newHeight
+        if (!LicenseManager.isPremiumNow) {
+            if (cappedWidth > 1280) cappedWidth = 1280
+            if (cappedHeight > 720) cappedHeight = 720
+        }
+
         // Guard: same size — no-op
-        if (newWidth == currentWidth && newHeight == currentHeight) return
+        if (cappedWidth == currentWidth && cappedHeight == currentHeight) return
 
         // Range check
-        if (newWidth < 320 || newWidth > 3840 || newHeight < 320 || newHeight > 3840) {
-            Log.w(TAG, "Viewport out of range: ${newWidth}x${newHeight}, ignoring")
+        if (cappedWidth < 320 || cappedWidth > 3840 || cappedHeight < 320 || cappedHeight > 3840) {
+            Log.w(TAG, "Viewport out of range: ${cappedWidth}x${cappedHeight}, ignoring")
             return
         }
 
         // Align to 16-multiple (required by H.264 encoders)
-        val width = (newWidth + 15) and 15.inv()
-        val height = (newHeight + 15) and 15.inv()
+        val width = (cappedWidth + 15) and 15.inv()
+        val height = (cappedHeight + 15) and 15.inv()
 
         // Compute DPI proportional to height
         val dpi = (height * 240 / 720).coerceIn(120, 320)
@@ -420,12 +569,14 @@ class MirrorForegroundService : Service() {
             // 2. Create new VideoEncoder at new dimensions
             val encoder = VideoEncoder(width, height, newBitrate, currentFps)
             val surface = encoder.createInputSurface()
+            currentEncoderSurface = surface
             videoEncoder = encoder
 
             // 3. Update touch injector dimensions
             touchInjector?.updateDimensions(width, height)
 
             // 4. Start encoder with broadcast callback
+            encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
             encoder.start { frameData, isKeyFrame ->
                 mirrorServer?.broadcastFrame(frameData, isKeyFrame)
             }
@@ -525,7 +676,9 @@ class MirrorForegroundService : Service() {
         Log.i(TAG, "Stopping pipeline")
         resizeJob?.cancel()
         serviceScope.cancel()
+        compositionDispatcher.close()
         audioCapture?.stop()
+        restoreMediaVolume()
         virtualDisplayManager?.release()
         shizukuSetup?.release()
         screenCapture?.release()
@@ -541,7 +694,37 @@ class MirrorForegroundService : Service() {
         jpegEncoder = null
         touchInjector = null
         mirrorServer = null
+        // Update widget to reflect stopped state
+        MirrorWidgetProvider.updateAllWidgets(this)
         super.onDestroy()
+    }
+
+    /**
+     * Mute device media volume so audio only plays through the browser.
+     * AudioPlaybackCapture taps audio at the mixer level before volume is applied,
+     * so captured data is unaffected by the device volume being zero.
+     */
+    private fun muteMediaVolume() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            savedMediaVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            Log.i(TAG, "Media volume muted (saved=$savedMediaVolume)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to mute media volume", e)
+        }
+    }
+
+    private fun restoreMediaVolume() {
+        if (savedMediaVolume < 0) return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, savedMediaVolume, 0)
+            Log.i(TAG, "Media volume restored to $savedMediaVolume")
+            savedMediaVolume = -1
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to restore media volume", e)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -551,17 +734,50 @@ class MirrorForegroundService : Service() {
             NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "Screen mirroring to Tesla"
+            setShowBadge(false)
         }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(channel)
     }
 
     private fun createNotification(): Notification {
+        // Tap notification → open MainActivity
+        val openIntent = Intent(this, com.castla.mirror.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val openPending = PendingIntent.getActivity(
+            this, 0, openIntent, PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Stop action
+        val stopIntent = Intent(ACTION_STOP).apply {
+            setPackage(packageName)
+        }
+        val stopPending = PendingIntent.getBroadcast(
+            this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Castla")
             .setContentText("Streaming to Tesla")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
+            .setContentIntent(openPending)
+            .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)
             .build()
+    }
+
+    /**
+     * BroadcastReceiver that stops the mirroring service when the notification
+     * "Stop" button is tapped.
+     */
+    class StopReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            if (intent?.action == ACTION_STOP) {
+                context.stopService(Intent(context, MirrorForegroundService::class.java))
+                // Update widget to reflect stopped state
+                MirrorWidgetProvider.updateAllWidgets(context)
+            }
+        }
     }
 }

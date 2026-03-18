@@ -31,6 +31,10 @@ class JpegEncoder(
     private var lastFrameTime = 0L
     private val frameIntervalMs = 1000L / fps
 
+    // Pre-allocated bitmap pool to avoid GC pressure at 15fps
+    private var reusableBitmap: Bitmap? = null
+    private val baos = ByteArrayOutputStream(width * height / 8)
+
     fun createInputSurface(): Surface {
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         Log.i(TAG, "JPEG encoder created: ${width}x${height} @ ${fps}fps, quality=$quality")
@@ -63,26 +67,26 @@ class JpegEncoder(
                 val pixelStride = plane.pixelStride
                 val rowStride = plane.rowStride
                 val rowPadding = rowStride - pixelStride * width
+                val bitmapWidth = width + rowPadding / pixelStride
 
-                val bitmap = Bitmap.createBitmap(
-                    width + rowPadding / pixelStride,
-                    height,
-                    Bitmap.Config.ARGB_8888
-                )
-                bitmap.copyPixelsFromBuffer(buffer)
+                // Reuse bitmap to avoid GC pressure at 15fps
+                if (reusableBitmap == null || reusableBitmap!!.width != bitmapWidth || reusableBitmap!!.height != height) {
+                    reusableBitmap?.recycle()
+                    reusableBitmap = Bitmap.createBitmap(bitmapWidth, height, Bitmap.Config.ARGB_8888)
+                }
+                buffer.rewind()
+                reusableBitmap!!.copyPixelsFromBuffer(buffer)
 
                 // Crop if there's row padding
                 val cropped = if (rowPadding > 0) {
-                    Bitmap.createBitmap(bitmap, 0, 0, width, height).also {
-                        bitmap.recycle()
-                    }
+                    Bitmap.createBitmap(reusableBitmap!!, 0, 0, width, height)
                 } else {
-                    bitmap
+                    reusableBitmap!!
                 }
 
-                val baos = ByteArrayOutputStream(width * height / 8)
+                baos.reset()
                 cropped.compress(Bitmap.CompressFormat.JPEG, quality, baos)
-                cropped.recycle()
+                if (rowPadding > 0) cropped.recycle()
 
                 val jpegData = baos.toByteArray()
                 // MJPEG: every frame is a "keyframe"
@@ -101,6 +105,8 @@ class JpegEncoder(
         isRunning = false
         imageReader?.close()
         imageReader = null
+        reusableBitmap?.recycle()
+        reusableBitmap = null
         thread?.quitSafely()
         thread = null
         handler = null

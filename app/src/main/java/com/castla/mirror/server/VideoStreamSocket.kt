@@ -14,7 +14,7 @@ class VideoStreamSocket(
 
     companion object {
         private const val TAG = "VideoStreamSocket"
-        private const val MAX_QUEUE = 2 // very small — prefer dropping over buffering
+        private const val MAX_QUEUE = 3
     }
 
     private val sendQueue = ArrayBlockingQueue<ByteArray>(MAX_QUEUE)
@@ -74,14 +74,38 @@ class VideoStreamSocket(
     }
 
     /**
-     * Enqueue a frame for async sending. If the queue is full, drop the oldest
-     * frame (delta frames are expendable — the next keyframe will resync).
+     * Smart keyframe-preserving queue:
+     * - Keyframes: clear all queued delta frames, then enqueue (keyframes are never dropped)
+     * - Delta frames: if queue is full, drop oldest delta to make room
+     * - SPS/PPS config (0x02): always enqueue immediately
+     *
+     * Frame header: [flags:u8][seqLo:u8][seqHi:u8][reserved:u8]
      */
     fun sendBinary(data: ByteArray) {
         if (closed) throw IOException("Socket closed")
-        // If queue is full, drop oldest to make room (prefer freshness over completeness)
-        while (!sendQueue.offer(data)) {
-            sendQueue.poll() // discard oldest
+
+        val isKeyFrame = data.isNotEmpty() && data[0] == 0x01.toByte()
+        val isConfig = data.isNotEmpty() && data[0] == 0x02.toByte()
+
+        if (isConfig) {
+            // Config messages bypass the queue — send directly
+            // (small enough that blocking briefly is fine)
+            while (!sendQueue.offer(data)) {
+                sendQueue.poll()
+            }
+            return
+        }
+
+        if (isKeyFrame) {
+            // Keyframe arriving: clear all queued delta frames to make room
+            // Keyframes are precious — never drop them
+            sendQueue.clear()
+            sendQueue.offer(data)
+        } else {
+            // Delta frame: if queue full, drop oldest (which is also a delta)
+            while (!sendQueue.offer(data)) {
+                sendQueue.poll()
+            }
         }
     }
 }

@@ -76,4 +76,16 @@ interface IPrivilegedService {
      * Uses am start with HOME category.
      */
     void launchHomeOnDisplay(int displayId) = 12;
+
+    /**
+     * Inject text into the focused field on the specified display.
+     * ASCII: shell `input text`. Non-ASCII: clipboard + CTRL+V.
+     */
+    void injectText(String text, int displayId) = 13;
+
+    /**
+     * Korean/CJK composition: delete N chars (backspace) + insert text via clipboard+CTRL+V.
+     * Called on each compositionupdate from browser. Serialized on a single thread.
+     */
+    void injectComposingText(int backspaces, String text, int displayId) = 14;
 }

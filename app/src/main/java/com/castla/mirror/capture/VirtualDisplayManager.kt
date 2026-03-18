@@ -28,6 +28,9 @@ class VirtualDisplayManager {
     private var serviceConnection: ServiceConnection? = null
     private var userServiceArgs: Shizuku.UserServiceArgs? = null
 
+    /** Called when Shizuku service reconnects after a death — caller should recreate VD + launch home */
+    var reconnectListener: (() -> Unit)? = null
+
     /**
      * Bind to the Shizuku privileged service.
      * Must be called before createVirtualDisplay when using Shizuku mode.
@@ -52,12 +55,20 @@ class VirtualDisplayManager {
                 .version(1)
             userServiceArgs = args
 
+            var callbackFired = false
             val connection = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                     privilegedService = IPrivilegedService.Stub.asInterface(binder)
                     isBound = true
                     Log.i(TAG, "Shizuku privileged service connected")
-                    callback(true)
+                    if (!callbackFired) {
+                        callbackFired = true
+                        callback(true)
+                    } else {
+                        // Reconnect after service death — notify listener to recreate VD
+                        Log.i(TAG, "Shizuku service reconnected (was dead), notifying listener")
+                        reconnectListener?.invoke()
+                    }
                 }
 
                 override fun onServiceDisconnected(name: ComponentName?) {
@@ -137,11 +148,19 @@ class VirtualDisplayManager {
 
     /** Inject a touch event on the virtual display. */
     fun injectInput(action: Int, x: Float, y: Float, pointerId: Int) {
-        if (displayId < 0) return
+        if (displayId < 0) {
+            Log.w(TAG, "injectInput skipped: displayId=$displayId")
+            return
+        }
+        val svc = privilegedService
+        if (svc == null) {
+            Log.w(TAG, "injectInput skipped: privilegedService is null")
+            return
+        }
         try {
-            privilegedService?.injectInput(displayId, action, x, y, pointerId)
+            svc.injectInput(displayId, action, x, y, pointerId)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to inject input on virtual display", e)
+            Log.e(TAG, "Failed to inject input on display $displayId", e)
         }
     }
 

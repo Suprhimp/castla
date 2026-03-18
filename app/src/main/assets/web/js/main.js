@@ -5,6 +5,10 @@
 (function() {
     'use strict';
 
+    // Set to false for production builds to suppress verbose console output
+    const DEBUG = false;
+    window.__CASTLA_DEBUG = DEBUG;
+
     const canvas = document.getElementById('display');
     const statusEl = document.getElementById('status');
     const statsEl = document.getElementById('stats');
@@ -12,7 +16,6 @@
 
     let videoSocket = null;
     let controlSocket = null;
-    let audioSocket = null;
     let decoder = null;
     let renderer = null;
     let touchHandler = null;
@@ -24,9 +27,16 @@
     let viewportTimer = null;
     let codecMode = 'h264'; // 'h264' (WebCodecs), 'mse' (MSE fMP4), 'mjpeg'
     let lastViewport = { width: 0, height: 0 };
+    let currentServerWidth = 1280, currentServerHeight = 720;
     let awaitingNewDecoder = false;
     let controlReady = false;
     let firstFrameReceived = false;
+    // Keyboard/composition state (shared across reconnects)
+    let composing = false;
+    let lastCompositionLength = 0;
+    let sentCompositionLength = 0;
+    let composeTimer = null;
+    let pendingCompose = null;
 
     const host = window.location.host;
 
@@ -113,7 +123,6 @@
         videoSocket.onopen = () => {
             console.log('[Main] Video connected');
             setStatus('Loading...', '');
-            if (kbBtn) kbBtn.style.display = 'block';
         };
 
         videoSocket.onmessage = async (event) => {
@@ -158,12 +167,27 @@
                 console.log('[Main] Requested MJPEG mode from server');
             }
 
-            // Send viewport dimensions to server
             sendViewport();
+            // If server is still at default resolution (1280x720), retry after 3s
+            setTimeout(() => {
+                if (currentServerWidth === 1280 && currentServerHeight === 720) {
+                    console.log('[Main] Still at default resolution, resending viewport');
+                    lastViewport = { width: 0, height: 0 };
+                    sendViewport();
+                }
+            }, 3000);
 
-            const touchTarget = codecMode === 'mse'
-                ? document.getElementById('mse-video') : canvas;
-            touchHandler = new TouchHandler(touchTarget, renderer, controlSocket);
+            if (touchHandler) {
+                // Update existing handler's socket reference (avoids duplicate event listeners)
+                touchHandler.controlSocket = controlSocket;
+                console.log('[Main] TouchHandler socket updated');
+            } else {
+                const touchTarget = codecMode === 'mse'
+                    ? document.getElementById('mse-video') : canvas;
+                touchHandler = new TouchHandler(touchTarget, renderer, controlSocket);
+                console.log('[Main] TouchHandler created on', touchTarget.id || touchTarget.tagName);
+            }
+            window._touchHandler = touchHandler; // expose for debugging
 
             // Keepalive ping every 15s to prevent idle timeout
             clearInterval(pingTimer);
@@ -178,13 +202,39 @@
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'resolutionChanged') {
-                    console.log('[Main] Server resolution changed:', msg.width, 'x', msg.height);
+                    currentServerWidth = msg.width || 1280;
+                    currentServerHeight = msg.height || 720;
+                    console.log('[Main] Server resolution changed:', currentServerWidth, 'x', currentServerHeight);
                     // Don't destroy decoder here — MSE decoder handles resolution change
                     // internally by detecting SPS change in the video stream.
                     // Just request a keyframe so the decoder gets new SPS/PPS quickly.
                     if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
                         videoSocket.send('requestKeyframe');
                     }
+                } else if (msg.type === 'showKeyboard') {
+                    console.log('[Main] Server detected IME open — focusing keyboard input');
+                    const ki = document.getElementById('keyboard-input');
+                    if (ki) {
+                        ki.style.pointerEvents = 'auto';
+                        ki.focus();
+                    }
+                } else if (msg.type === 'hideKeyboard') {
+                    console.log('[Main] Server detected IME closed');
+                    const ki = document.getElementById('keyboard-input');
+                    if (ki) {
+                        ki.blur();
+                        ki.style.pointerEvents = 'none';
+                    }
+                } else if (msg.type === 'premiumStatus') {
+                    const banner = document.getElementById('ad-banner');
+                    if (banner) {
+                        banner.style.display = msg.isPremium ? 'none' : 'block';
+                    }
+                    // Banner visibility changes canvas size — recalculate layout
+                    if (renderer && renderer.videoWidth > 0) {
+                        setTimeout(() => renderer.updateLayout(), 50);
+                    }
+                    console.log('[Main] Premium status:', msg.isPremium);
                 }
             } catch (e) {
                 // Ignore non-JSON messages
@@ -196,40 +246,30 @@
         };
     }
 
-    function connectAudio() {
-        if (!AudioPlayer.isSupported()) {
-            console.log('[Main] Web Audio not supported, skipping audio');
+    /**
+     * Set up the unmute overlay — audio starts only after user tap (autoplay policy).
+     * WebSocket connection + AudioDecoder are created inside the gesture handler.
+     */
+    function setupUnmuteOverlay() {
+        const unmuteOverlay = document.getElementById('unmute-overlay');
+        if (!unmuteOverlay || !AudioPlayer.isSupported()) {
+            if (unmuteOverlay) unmuteOverlay.classList.add('hidden');
             return;
         }
 
-        audioPlayer = new AudioPlayer();
-        if (!audioPlayer.init()) return;
-
-        const wsUrl = `ws://${host}/ws/audio`;
-        audioSocket = new WebSocket(wsUrl);
-        audioSocket.binaryType = 'arraybuffer';
-
-        audioSocket.onopen = () => {
-            console.log('[Main] Audio connected');
-            // Resume AudioContext on first user interaction (browser autoplay policy)
-            const resumeAudio = () => {
-                audioPlayer.resume();
-                document.removeEventListener('touchstart', resumeAudio);
-                document.removeEventListener('click', resumeAudio);
-            };
-            document.addEventListener('touchstart', resumeAudio, { once: true });
-            document.addEventListener('click', resumeAudio, { once: true });
-        };
-
-        audioSocket.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer && audioPlayer) {
-                audioPlayer.feed(new Uint8Array(event.data));
+        unmuteOverlay.addEventListener('click', async () => {
+            audioPlayer = new AudioPlayer();
+            const wsUrl = `ws://${host}/ws/audio`;
+            const ok = await audioPlayer.startFromUserGesture(wsUrl);
+            if (ok) {
+                unmuteOverlay.classList.add('hidden');
+                console.log('[Main] Audio started via user gesture');
+            } else {
+                console.warn('[Main] Audio init failed');
+                unmuteOverlay.classList.add('hidden');
+                audioPlayer = null;
             }
-        };
-
-        audioSocket.onclose = () => {
-            console.log('[Main] Audio disconnected');
-        };
+        }, { once: true });
     }
 
     function scheduleReconnect() {
@@ -244,25 +284,27 @@
         cleanup();
         connectVideo();
         connectControl();
-        connectAudio();
+        setupUnmuteOverlay();
     }
 
     function cleanup() {
         clearInterval(pingTimer);
         clearTimeout(viewportTimer);
+        clearTimeout(composeTimer);
         awaitingNewDecoder = false;
         controlReady = false;
         firstFrameReceived = false;
         lastViewport = { width: 0, height: 0 };
+        composing = false;
+        lastCompositionLength = 0;
+        sentCompositionLength = 0;
+        pendingCompose = null;
         if (videoSocket) {
             videoSocket.onclose = null; // prevent reconnect loop
             videoSocket.close();
         }
         if (controlSocket) {
             controlSocket.close();
-        }
-        if (audioSocket) {
-            audioSocket.close();
         }
         if (audioPlayer) {
             audioPlayer.stop();
@@ -313,38 +355,112 @@
     // Touch on canvas shows overlay briefly
     canvas.addEventListener('touchstart', () => showOverlay(), { passive: true });
 
-    // --- Tesla native keyboard integration ---
-    const kbInput = document.getElementById('keyboard-input');
-    const kbBtn = document.getElementById('keyboard-btn');
-
-    if (kbBtn && kbInput) {
-        kbBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            kbInput.style.pointerEvents = 'auto';
-            kbInput.focus();
-            // Tesla browser should pop up its native keyboard
-        });
-
-        // Capture input and send to server
-        kbInput.addEventListener('input', (e) => {
-            const text = e.target.value;
-            if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
-                controlSocket.send(JSON.stringify({ type: 'textInput', text: text }));
-                kbInput.value = ''; // clear for next input
+    // Ad banner click → request purchase on phone
+    const adBanner = document.getElementById('ad-banner');
+    if (adBanner) {
+        adBanner.addEventListener('click', () => {
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'requestPurchase' }));
+                console.log('[Main] Purchase requested via banner click');
             }
         });
+    }
 
-        // Also handle Enter key
+    // --- Home button ---
+    const homeBtn = document.getElementById('home-btn');
+    if (homeBtn) {
+        homeBtn.style.display = 'block';
+        homeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'goHome' }));
+                console.log('[Main] Home requested');
+            }
+        });
+    }
+
+    // --- Keyboard integration (auto-detected via IME state) ---
+    const kbInput = document.getElementById('keyboard-input');
+
+    if (kbInput) {
+        // Plan A: Real-time composition — backspace old chars + paste new composed text
+        kbInput.addEventListener('compositionstart', () => {
+            composing = true;
+            lastCompositionLength = 0;
+            sentCompositionLength = 0;
+        });
+
+        kbInput.addEventListener('compositionupdate', (e) => {
+            const newText = e.data || '';
+            if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+
+            // Debounce: wait 150ms for more jamo before sending
+            // This batches rapid updates (ㅇ→아→안) into fewer operations
+            const graphemeLen = [...newText].length;
+            pendingCompose = { text: newText, graphemeLen: graphemeLen };
+
+            clearTimeout(composeTimer);
+            composeTimer = setTimeout(() => {
+                if (!pendingCompose) return;
+                const { text, graphemeLen: gl } = pendingCompose;
+                pendingCompose = null;
+
+                controlSocket.send(JSON.stringify({
+                    type: 'compositionUpdate',
+                    backspaces: sentCompositionLength,
+                    text: text
+                }));
+                console.log('[KB] Composition:', text, '(bs:', sentCompositionLength, ')');
+                sentCompositionLength = gl;
+            }, 150);
+        });
+
+        kbInput.addEventListener('compositionend', (e) => {
+            // Flush any pending compose immediately
+            clearTimeout(composeTimer);
+            if (pendingCompose && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({
+                    type: 'compositionUpdate',
+                    backspaces: sentCompositionLength,
+                    text: pendingCompose.text
+                }));
+                console.log('[KB] Composition (flush):', pendingCompose.text, '(bs:', sentCompositionLength, ')');
+            }
+            pendingCompose = null;
+            composing = false;
+            lastCompositionLength = 0;
+            sentCompositionLength = 0;
+            kbInput.value = '';
+        });
+
+        // Non-IME input (English, numbers) — send immediately
+        kbInput.addEventListener('input', (e) => {
+            if (composing) return;
+            const text = e.data || e.target.value;
+            if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text: text }));
+                console.log('[KB] Sent:', text);
+            }
+            kbInput.value = '';
+        });
+
+        // Handle Enter and Backspace
         kbInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+            if (e.key === 'Enter') {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text: '\n' }));
+                e.preventDefault();
+            } else if (e.key === 'Backspace' && !composing) {
+                controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
                 e.preventDefault();
             }
         });
 
-        // Hide keyboard input pointer events when blurred
+        // Sync state when keyboard dismissed — reset composing state
         kbInput.addEventListener('blur', () => {
             kbInput.style.pointerEvents = 'none';
+            composing = false;
+            lastCompositionLength = 0;
         });
     }
 

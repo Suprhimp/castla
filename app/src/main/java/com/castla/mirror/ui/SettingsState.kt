@@ -2,6 +2,7 @@ package com.castla.mirror.ui
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.castla.mirror.billing.LicenseManager
 
 enum class MirroringMode { FULL_SCREEN, APP }
 
@@ -42,12 +43,24 @@ data class StreamSettings(
 
         fun load(context: Context): StreamSettings {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val loadedResolution = try {
+                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.HD_720.name)!!)
+            } catch (_: Exception) { Resolution.HD_720 }
+            // Clamp resolution for free users
+            val resolution = if (!LicenseManager.isPremiumNow &&
+                (loadedResolution == Resolution.FHD_1080 || loadedResolution == Resolution.AUTO)) {
+                Resolution.HD_720
+            } else {
+                loadedResolution
+            }
+            // Clamp FPS for free users
+            val loadedFps = prefs.getInt(KEY_FPS, 30)
+            val fps = if (!LicenseManager.isPremiumNow && loadedFps > 30) 30 else loadedFps
+
             return StreamSettings(
-                resolution = try {
-                    Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.HD_720.name)!!)
-                } catch (_: Exception) { Resolution.HD_720 },
+                resolution = resolution,
                 bitrate = prefs.getInt(KEY_BITRATE, 4_000_000),
-                fps = prefs.getInt(KEY_FPS, 30),
+                fps = fps,
                 audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
                 mirroringMode = try {
                     MirroringMode.valueOf(prefs.getString(KEY_MIRRORING_MODE, MirroringMode.FULL_SCREEN.name)!!)

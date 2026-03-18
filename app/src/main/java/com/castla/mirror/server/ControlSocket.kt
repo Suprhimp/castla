@@ -29,9 +29,11 @@ class ControlSocket(
         try {
             // Binary frames: 10-byte touch protocol [action:u8][id:u8][x:f32LE][y:f32LE]
             if (message.opCode == NanoWSD.WebSocketFrame.OpCode.Binary) {
+                Log.d(TAG, "Binary touch received: ${message.binaryPayload.size} bytes")
                 handleBinaryTouch(message.binaryPayload)
                 return
             }
+            Log.d(TAG, "Text message received: ${message.textPayload?.take(50)}")
 
             val json = JSONObject(message.textPayload)
             val type = json.optString("type", "")
@@ -66,6 +68,23 @@ class ControlSocket(
                         server.onTextInput(text)
                     }
                 }
+                "keyEvent" -> {
+                    val keyCode = json.optInt("keyCode", -1)
+                    if (keyCode >= 0) {
+                        server.onKeyEvent(keyCode)
+                    }
+                }
+                "compositionUpdate" -> {
+                    val backspaces = json.optInt("backspaces", 0)
+                    val text = json.optString("text", "")
+                    server.onCompositionUpdate(backspaces, text)
+                }
+                "requestPurchase" -> {
+                    server.onPurchaseRequest()
+                }
+                "goHome" -> {
+                    server.onGoHome()
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)
@@ -75,7 +94,8 @@ class ControlSocket(
     private fun handleBinaryTouch(data: ByteArray) {
         if (data.size < 10) return
         val buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        val action = when (buf.get().toInt() and 0xFF) {
+        val actionByte = buf.get().toInt() and 0xFF
+        val action = when (actionByte) {
             0 -> "down"
             1 -> "up"
             2 -> "move"
@@ -84,6 +104,7 @@ class ControlSocket(
         val id = buf.get().toInt() and 0xFF
         val x = buf.float
         val y = buf.float
+        Log.d(TAG, "Touch: $action id=$id x=${"%.3f".format(x)} y=${"%.3f".format(y)}")
         server.onTouchEvent(MirrorServer.TouchEvent(action, x, y, id))
     }
 

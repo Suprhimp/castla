@@ -2,17 +2,20 @@ package com.castla.mirror.server
 
 import android.content.Context
 import android.util.Log
+import com.castla.mirror.billing.LicenseManager
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 
 class MirrorServer(
     private val context: Context,
-    port: Int = 8080
+    port: Int = DEFAULT_PORT
 ) : NanoWSD(port) {
 
     companion object {
+        const val DEFAULT_PORT = 9090
         private const val TAG = "MirrorServer"
     }
 
@@ -23,7 +26,13 @@ class MirrorServer(
     private var keyframeRequester: (() -> Unit)? = null
     private var codecModeListener: ((String) -> Unit)? = null
     private var viewportChangeListener: ((Int, Int) -> Unit)? = null
+    private var audioCodecListener: ((String) -> Unit)? = null
     private var browserConnectionListener: ((Boolean) -> Unit)? = null
+    private var purchaseRequestListener: (() -> Unit)? = null
+    private var goHomeListener: (() -> Unit)? = null
+
+    /** Cached audio config (0x00 message) — replayed to late-joining audio clients */
+    @Volatile private var audioConfig: ByteArray? = null
 
     /** Disable Nagle algorithm on all client connections for lower latency */
     override fun createClientHandler(finalAccept: java.net.Socket, inputStream: java.io.InputStream): NanoHTTPD.ClientHandler {
@@ -65,6 +74,15 @@ class MirrorServer(
         browserConnectionListener = listener
     }
 
+    fun setAudioCodecListener(listener: (String) -> Unit) {
+        audioCodecListener = listener
+    }
+
+    fun onAudioCodecRequest(codec: String) {
+        Log.i(TAG, "Audio codec request: $codec")
+        audioCodecListener?.invoke(codec)
+    }
+
     fun setTextInputListener(listener: (String) -> Unit) {
         textInputListener = listener
     }
@@ -72,6 +90,38 @@ class MirrorServer(
     fun onTextInput(text: String) {
         Log.i(TAG, "Text input: ${text.length} chars")
         textInputListener?.invoke(text)
+    }
+
+    private var keyEventListener: ((Int) -> Unit)? = null
+    fun setKeyEventListener(listener: (Int) -> Unit) { keyEventListener = listener }
+    fun onKeyEvent(keyCode: Int) {
+        Log.i(TAG, "Key event: $keyCode")
+        keyEventListener?.invoke(keyCode)
+    }
+
+    private var compositionUpdateListener: ((Int, String) -> Unit)? = null
+    fun setCompositionUpdateListener(listener: (Int, String) -> Unit) { compositionUpdateListener = listener }
+    fun onCompositionUpdate(backspaces: Int, text: String) {
+        Log.i(TAG, "Composition update: bs=$backspaces text=$text")
+        compositionUpdateListener?.invoke(backspaces, text)
+    }
+
+    fun setPurchaseRequestListener(listener: (() -> Unit)?) {
+        purchaseRequestListener = listener
+    }
+
+    fun onPurchaseRequest() {
+        Log.i(TAG, "Purchase request from browser")
+        purchaseRequestListener?.invoke()
+    }
+
+    fun setGoHomeListener(listener: (() -> Unit)?) {
+        goHomeListener = listener
+    }
+
+    fun onGoHome() {
+        Log.i(TAG, "Go home request from browser")
+        goHomeListener?.invoke()
     }
 
     fun onViewportChange(width: Int, height: Int) {
@@ -93,8 +143,32 @@ class MirrorServer(
         codecModeListener?.invoke(mode)
     }
 
+    /**
+     * Video frame header (8 bytes, all little-endian):
+     *   [flags:u8] [seqLo:u8] [seqHi:u8] [tsMs_0:u8] [tsMs_1:u8] [tsMs_2:u8] [tsMs_3:u8] [reserved:u8]
+     * flags: 0x00=delta, 0x01=keyframe, 0x02=codec config (SPS/PPS)
+     * seqNum: u16 LE, wraps at 65535
+     * tsMs: u32 LE, milliseconds from SystemClock.elapsedRealtime()
+     */
+    private var frameSeqNum: Int = 0
+
+    /** Cached SPS/PPS — sent to new clients and on resolution change */
+    @Volatile private var cachedSpsPps: ByteArray? = null
+
+    private fun buildVideoHeader(flags: Byte, seq: Int): ByteArray {
+        val tsMs = android.os.SystemClock.elapsedRealtime().toInt()
+        val buf = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        buf.put(flags)
+        buf.putShort(seq.toShort())  // seqLo, seqHi (2 bytes LE)
+        buf.putInt(tsMs)             // tsMs_0~3 (4 bytes LE)
+        buf.put(0.toByte())          // reserved
+        return buf.array()
+    }
+
     fun broadcastFrame(data: ByteArray, isKeyFrame: Boolean) {
-        val header = if (isKeyFrame) byteArrayOf(0x01) else byteArrayOf(0x00)
+        val seq = frameSeqNum++
+        val flags: Byte = if (isKeyFrame) 0x01 else 0x00
+        val header = buildVideoHeader(flags, seq)
         val frame = header + data
 
         for (socket in videoSockets) {
@@ -107,9 +181,32 @@ class MirrorServer(
         }
     }
 
+    /**
+     * Broadcast SPS/PPS as a separate config message (flags=0x02).
+     * Also caches it for late-joining clients.
+     */
+    fun broadcastSpsPps(spsPps: ByteArray) {
+        val seq = frameSeqNum
+        val header = buildVideoHeader(0x02, seq)
+        val frame = header + spsPps
+        cachedSpsPps = frame.copyOf()
+
+        for (socket in videoSockets) {
+            try {
+                socket.sendBinary(frame)
+            } catch (e: IOException) {
+                Log.w(TAG, "Failed to send SPS/PPS", e)
+            }
+        }
+    }
+
     fun registerVideoSocket(socket: VideoStreamSocket) {
         videoSockets.add(socket)
         Log.i(TAG, "Video client connected (total: ${videoSockets.size})")
+        // Send cached SPS/PPS so decoder can initialize before first keyframe
+        cachedSpsPps?.let { config ->
+            try { socket.sendBinary(config) } catch (_: IOException) {}
+        }
         keyframeRequester?.invoke()
     }
 
@@ -121,6 +218,14 @@ class MirrorServer(
     fun registerControlSocket(socket: ControlSocket) {
         controlSockets.add(socket)
         Log.i(TAG, "Control client connected (total: ${controlSockets.size})")
+
+        // Send premium status to new client
+        val status = JSONObject().apply {
+            put("type", "premiumStatus")
+            put("isPremium", LicenseManager.isPremiumNow)
+        }
+        socket.sendMessage(status.toString())
+
         if (controlSockets.size == 1) {
             browserConnectionListener?.invoke(true)
         }
@@ -137,6 +242,15 @@ class MirrorServer(
     fun registerAudioSocket(socket: AudioStreamSocket) {
         audioSockets.add(socket)
         Log.i(TAG, "Audio client connected (total: ${audioSockets.size})")
+        // Replay cached audio config so late-joining clients know the codec
+        audioConfig?.let { config ->
+            try {
+                socket.sendBinary(config)
+                Log.i(TAG, "Replayed audio config to new client (${config.size} bytes)")
+            } catch (e: IOException) {
+                Log.w(TAG, "Failed to send audio config to new client", e)
+            }
+        }
     }
 
     fun unregisterAudioSocket(socket: AudioStreamSocket) {
@@ -145,6 +259,11 @@ class MirrorServer(
     }
 
     fun broadcastAudio(data: ByteArray) {
+        // Cache config messages (0x00 header) for late-joining clients
+        if (data.isNotEmpty() && data[0] == 0x00.toByte()) {
+            audioConfig = data.copyOf()
+        }
+
         val deadSockets = mutableListOf<AudioStreamSocket>()
         for (socket in audioSockets) {
             try {

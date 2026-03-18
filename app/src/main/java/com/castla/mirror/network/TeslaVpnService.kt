@@ -12,7 +12,7 @@ import java.io.FileInputStream
  *
  * Tesla blocks RFC1918 IPs. This VPN creates tun0 with a CGNAT IP.
  * The kernel's local routing table delivers external packets (from Tesla via swlan0)
- * directly to the TCP stack. NanoHTTPD on 0.0.0.0:8080 handles them.
+ * directly to the TCP stack. NanoHTTPD on 0.0.0.0:9090 handles them.
  *
  * A lightweight health-check server starts immediately so connectivity can be tested
  * before the full MirrorServer pipeline begins.
@@ -99,7 +99,7 @@ class TeslaVpnService : VpnService() {
             server.start()
             healthServer = server
             healthServerInstance = server
-            Log.i(TAG, "Health-check server on :8080")
+            Log.i(TAG, "Health-check server on :9090")
         } catch (e: Exception) {
             Log.w(TAG, "Health server failed: ${e.message}")
         }
@@ -146,10 +146,10 @@ class TeslaVpnService : VpnService() {
 
     /**
      * Lightweight NanoHTTPD that responds to GET / with a simple page.
-     * Proves that 100.99.9.9:8080 is reachable before MirrorServer takes over.
+     * Proves that 100.99.9.9:9090 is reachable before MirrorServer takes over.
      * MirrorServer will stop this when it starts on the same port.
      */
-    class HealthCheckServer : NanoHTTPD(8080) {
+    class HealthCheckServer : NanoHTTPD(9090) {
         override fun serve(session: IHTTPSession): Response {
             Log.i("TeslaVpn", "Health check hit: ${session.method} ${session.uri} from ${session.remoteIpAddress}")
             val html = """

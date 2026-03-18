@@ -4,6 +4,57 @@
     box-sizing: border-box;
 }
 
+/* Keyboard bar — local echo input */
+#keyboard-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 48px;
+    background: rgba(30, 30, 30, 0.95);
+    display: none;
+    align-items: center;
+    padding: 4px 8px;
+    gap: 8px;
+    z-index: 200;
+    backdrop-filter: blur(8px);
+}
+#keyboard-bar.visible {
+    display: flex;
+}
+#keyboard-bar input {
+    flex: 1;
+    height: 36px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 16px;
+    padding: 0 12px;
+    outline: none;
+}
+#keyboard-bar input:focus {
+    border-color: #4a9eff;
+}
+#keyboard-bar button {
+    height: 36px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 14px;
+}
+#keyboard-send {
+    background: #4a9eff;
+    color: #fff;
+}
+#keyboard-close {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 18px;
+    padding: 0 10px;
+}
+
 html, body {
     width: 100%;
     height: 100%;
@@ -19,6 +70,7 @@ html, body {
     width: 100%;
     height: 100%;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     position: relative;
@@ -26,14 +78,16 @@ html, body {
 
 #display {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     opacity: 0;
     transition: opacity 0.3s;
 }
 
 #mse-video {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     display: none;
     opacity: 0;
     transition: opacity 0.3s;
@@ -80,4 +134,58 @@ html, body {
     background: rgba(0, 0, 0, 0.6);
     padding: 4px 12px;
     border-radius: 4px;
+}
+
+#ad-banner {
+    width: 100%;
+    text-align: center;
+    flex-shrink: 0;
+    z-index: 10;
+    pointer-events: auto;
+    opacity: 0.92;
+    cursor: pointer;
+    background: #000;
+}
+
+#ad-banner img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+#unmute-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 50;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: opacity 0.3s;
+}
+
+#unmute-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+#unmute-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+}
+
+#unmute-text {
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 18px;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 12px 32px;
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
 }

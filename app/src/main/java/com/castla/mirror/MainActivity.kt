@@ -3,6 +3,11 @@ package com.castla.mirror
 import android.Manifest
 import android.app.Activity
 import android.app.DownloadManager
+import android.bluetooth.BluetoothDevice
+import android.companion.AssociationRequest
+import android.companion.BluetoothDeviceFilter
+import android.companion.CompanionDeviceManager
+import com.castla.mirror.BuildConfig
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -17,10 +22,16 @@ import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
+import com.castla.mirror.billing.BillingManager
+import com.castla.mirror.billing.LicenseManager
+import com.castla.mirror.server.MirrorServer
 import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import java.util.regex.Pattern
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -57,7 +68,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val TESLA_VIRTUAL_IP = "100.99.9.9"
-        private const val CGNAT_IP = "100.64.0.1"
+        private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
         private const val SHIZUKU_APK_URL = "https://github.com/RikkaApps/Shizuku/releases/download/v13.5.4/shizuku-v13.5.4.r1049.0e53409-release.apk"
         private const val SHIZUKU_APK_NAME = "shizuku.apk"
@@ -77,9 +88,14 @@ class MainActivity : ComponentActivity() {
     private var downloadId: Long = -1
     private var networkDiagLog by mutableStateOf("")
     private var downloadPollingJob: kotlinx.coroutines.Job? = null
+    private var teslaAssociated by mutableStateOf(false)
+    private var teslaAutoDetectEnabled by mutableStateOf(false)
+    /** Guard against double-handling CDM association on API 33+ */
+    private var cdmAssociationHandled = false
 
     private lateinit var networkMonitor: NetworkMonitor
     private lateinit var shizukuSetup: ShizukuSetup
+    private lateinit var billingManager: BillingManager
     private var mirrorService: MirrorForegroundService? = null
     private var serviceBound = false
     private var bindRequested = false
@@ -101,6 +117,25 @@ class MainActivity : ComponentActivity() {
                 localBinder.service.setBrowserConnectionListener { connected ->
                     if (connected) runOnUiThread { moveTaskToBack(true) }
                 }
+            }
+
+            // Handle purchase request from browser banner
+            localBinder.service.setPurchaseRequestListener {
+                // Wake screen + bring MainActivity to foreground + trigger billing
+                val intent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("start_billing", true)
+                }
+                @Suppress("DEPRECATION")
+                val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                val wl = pm.newWakeLock(
+                    android.os.PowerManager.FULL_WAKE_LOCK or
+                        android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                        android.os.PowerManager.ON_AFTER_RELEASE,
+                    "castla:purchase"
+                )
+                wl.acquire(3000)
+                startActivity(intent)
             }
             updateServerUrl()
             serviceBound = true
@@ -157,9 +192,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** CDM association result — handles both API 33+ (IntentSender) and legacy paths */
+    private val cdmAssociationLauncher: ActivityResultLauncher<IntentSenderRequest> =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                handleCdmAssociationResult(result.data!!)
+            } else {
+                Log.w(TAG, "CDM association cancelled or failed: code=${result.resultCode}")
+                Toast.makeText(this, "Tesla pairing cancelled", Toast.LENGTH_SHORT).show()
+            }
+        }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize license & billing
+        LicenseManager.init(this)
+        billingManager = BillingManager(this)
+        billingManager.init()
 
         networkMonitor = NetworkMonitor(this)
         networkMonitor.startMonitoring()
@@ -174,6 +225,9 @@ class MainActivity : ComponentActivity() {
         if (shizukuInstalled) {
             shizukuSetup.init()
         }
+
+        // Check CDM association state
+        refreshCdmState()
 
         // Request required permissions on app start
         requestStartupPermissions()
@@ -211,16 +265,26 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val isPremium by LicenseManager.isPremium.collectAsState()
+
             MaterialTheme(colorScheme = darkColorScheme()) {
                 if (showSettings) {
                     SettingsScreen(
                         settings = streamSettings,
                         isStreaming = isStreaming,
+                        isPremium = isPremium,
                         onSettingsChanged = { newSettings ->
                             streamSettings = newSettings
                             StreamSettings.save(this@MainActivity, newSettings)
                         },
-                        onBackClick = { showSettings = false }
+                        onBackClick = { showSettings = false },
+                        onDebugTogglePremium = if (BuildConfig.DEBUG) {
+                            {
+                                LicenseManager.setPremium(!isPremium, this@MainActivity)
+                                // Reload settings to apply clamps
+                                streamSettings = StreamSettings.load(this@MainActivity)
+                            }
+                        } else null
                     )
                 } else {
                     CastlaScreen(
@@ -231,18 +295,44 @@ class MainActivity : ComponentActivity() {
                         shizukuInstalled = shizukuInstalled,
                         shizukuRunning = shizukuRunning,
                         teslaIpReady = teslaIpReady,
+                        isPremium = isPremium,
                         onStartClick = { onStartMirroring() },
                         onStopClick = { stopMirrorService() },
                         onSettingsClick = { showSettings = true },
+                        onUpgradeClick = { billingManager.launchPurchaseFlow(this@MainActivity) },
                         shizukuDownloading = shizukuDownloading,
                         downloadProgress = downloadProgress,
                         downloadStatusText = downloadStatusText,
                         onInstallShizuku = { downloadAndInstallShizuku() },
                         onOpenShizuku = { openShizukuApp() },
-                        networkDiagLog = networkDiagLog
+                        networkDiagLog = networkDiagLog,
+                        teslaAutoDetectEnabled = teslaAutoDetectEnabled,
+                        onToggleAutoDetect = {
+                            if (teslaAssociated) disassociateTesla() else associateTesla()
+                        }
                     )
                 }
             }
+        }
+
+        // Handle widget start mirroring request (cold launch)
+        if (intent?.getBooleanExtra("start_mirroring", false) == true && !isStreaming) {
+            Log.i(TAG, "Start mirroring triggered from widget (cold launch)")
+            onStartMirroring()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Handle purchase request from browser banner (via ControlSocket → Intent)
+        if (intent.getBooleanExtra("start_billing", false)) {
+            Log.i(TAG, "Purchase flow triggered from browser banner")
+            billingManager.launchPurchaseFlow(this)
+        }
+        // Handle widget start mirroring request
+        if (intent.getBooleanExtra("start_mirroring", false) && !isStreaming) {
+            Log.i(TAG, "Start mirroring triggered from widget")
+            onStartMirroring()
         }
     }
 
@@ -254,6 +344,8 @@ class MainActivity : ComponentActivity() {
         if (shizukuInstalled && !wasInstalled) {
             shizukuSetup.init()
         }
+        // Re-check CDM associations
+        refreshCdmState()
 
         if (!serviceBound && !bindRequested) {
             val intent = Intent(this, MirrorForegroundService::class.java)
@@ -272,6 +364,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         try { unregisterReceiver(downloadReceiver) } catch (_: Exception) {}
+        billingManager.destroy()
         networkMonitor.stopMonitoring()
         stopTeslaVpn()
         shizukuSetup.release()
@@ -279,16 +372,50 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateServerUrl() {
-        // Use sslip.io wildcard DNS to wrap the private IP in a domain name.
-        // Tesla browser blocks direct private IP navigation but allows domain names
-        // that resolve to private IPs via DNS.
-        val ip = currentIp
-        if (ip != "0.0.0.0" && ip.isNotEmpty()) {
-            val sslipDomain = ip.replace('.', '-') + ".sslip.io"
-            serverUrl = "http://${sslipDomain}:8080"
-        } else {
-            serverUrl = "http://${ip}:8080"
+        // Tesla's internal network uses 10.0.0.0/8, causing routing conflicts
+        // when the hotspot assigns a 10.x.x.x IP. To bypass this, we use the
+        // phone's cellular IP (e.g. 100.x.x.x) instead. Tesla sends packets to
+        // the cellular IP via the gateway (phone), and Android's kernel hairpins
+        // them back to the local server without hitting the internet.
+        val cellularIp = getCellularIpv4Address()
+        val hotspotIp = currentIp
+
+        val ip = when {
+            cellularIp != null && !cellularIp.startsWith("10.") -> cellularIp
+            hotspotIp != "0.0.0.0" && hotspotIp.isNotEmpty() -> hotspotIp
+            else -> "0.0.0.0"
         }
+
+        if (ip != "0.0.0.0") {
+            val sslipDomain = ip.replace('.', '-') + ".sslip.io"
+            serverUrl = "http://${sslipDomain}:${MirrorServer.DEFAULT_PORT}"
+        } else {
+            serverUrl = "http://${ip}:${MirrorServer.DEFAULT_PORT}"
+        }
+    }
+
+    private fun getCellularIpv4Address(): String? {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (iface.isLoopback || !iface.isUp) continue
+                val name = iface.name.lowercase()
+                // Skip WiFi/hotspot interfaces — we want cellular (rmnet, ccmni, etc.)
+                if (name.contains("wlan") || name.contains("swlan") || name.contains("ap")) continue
+
+                val addrs = iface.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (!addr.isLoopbackAddress && addr.address.size == 4) {
+                        return addr.hostAddress
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get cellular IP", e)
+        }
+        return null
     }
 
     private fun tryStartTeslaVpn() {
@@ -503,6 +630,200 @@ class MainActivity : ComponentActivity() {
     }
 
 
+    // ---- CompanionDeviceManager (CDM): Tesla auto-detection ----
+
+    private fun refreshCdmState() {
+        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+        val hasAssociations: Boolean
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val assocs = cdm.myAssociations
+            hasAssociations = assocs.isNotEmpty()
+            // Re-register presence observation (may not persist across reboot)
+            if (hasAssociations) {
+                for (assoc in assocs) {
+                    val mac = assoc.deviceMacAddress?.toString()?.uppercase()
+                    if (mac != null) {
+                        try {
+                            cdm.startObservingDevicePresence(mac)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Re-observe failed for $mac", e)
+                        }
+                    }
+                }
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            val addrs = cdm.associations
+            hasAssociations = addrs.isNotEmpty()
+            for (addr in addrs) {
+                try {
+                    cdm.startObservingDevicePresence(addr)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Re-observe failed for $addr", e)
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            hasAssociations = cdm.associations.isNotEmpty()
+        }
+        teslaAssociated = hasAssociations
+        teslaAutoDetectEnabled = hasAssociations
+        Log.i(TAG, "CDM associations: teslaAssociated=$teslaAssociated")
+    }
+
+    private fun associateTesla() {
+        val deviceFilter = BluetoothDeviceFilter.Builder()
+            .setNamePattern(Pattern.compile(".*Tesla.*", Pattern.CASE_INSENSITIVE))
+            .build()
+
+        val request = AssociationRequest.Builder()
+            .addDeviceFilter(deviceFilter)
+            .setSingleDevice(false)
+            .build()
+
+        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+
+        cdmAssociationHandled = false
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // API 33+: Callback-based with IntentSender.
+            // onAssociationCreated may fire in addition to the ActivityResult,
+            // so we guard with cdmAssociationHandled to avoid double-handling.
+            cdm.associate(request, mainExecutor, object : CompanionDeviceManager.Callback() {
+                override fun onAssociationPending(intentSender: android.content.IntentSender) {
+                    cdmAssociationLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                }
+
+                override fun onAssociationCreated(associationInfo: android.companion.AssociationInfo) {
+                    if (cdmAssociationHandled) return
+                    cdmAssociationHandled = true
+                    Log.i(TAG, "CDM association created directly: id=${associationInfo.id}")
+                    onTeslaAssociated(associationInfo.id)
+                }
+
+                override fun onFailure(error: CharSequence?) {
+                    Log.e(TAG, "CDM association failed: $error")
+                    Toast.makeText(this@MainActivity, "Tesla pairing failed: $error", Toast.LENGTH_LONG).show()
+                }
+            })
+        } else {
+            // API 26-32: Legacy callback with IntentSender
+            @Suppress("DEPRECATION")
+            cdm.associate(request, object : CompanionDeviceManager.Callback() {
+                @Deprecated("Deprecated in API 33")
+                override fun onDeviceFound(chooserLauncher: android.content.IntentSender) {
+                    cdmAssociationLauncher.launch(IntentSenderRequest.Builder(chooserLauncher).build())
+                }
+
+                override fun onAssociationPending(intentSender: android.content.IntentSender) {
+                    cdmAssociationLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                }
+
+                override fun onAssociationCreated(associationInfo: android.companion.AssociationInfo) {
+                    Log.i(TAG, "CDM association created: id=${associationInfo.id}")
+                    onTeslaAssociated(associationInfo.id)
+                }
+
+                override fun onFailure(error: CharSequence?) {
+                    Log.e(TAG, "CDM association failed: $error")
+                    Toast.makeText(this@MainActivity, "Tesla pairing failed: $error", Toast.LENGTH_LONG).show()
+                }
+            }, null)
+        }
+    }
+
+    private fun handleCdmAssociationResult(data: Intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (cdmAssociationHandled) {
+                Log.i(TAG, "CDM association already handled via onAssociationCreated, skipping ActivityResult")
+                return
+            }
+            cdmAssociationHandled = true
+            val associationInfo = data.getParcelableExtra(
+                CompanionDeviceManager.EXTRA_ASSOCIATION,
+                android.companion.AssociationInfo::class.java
+            )
+            if (associationInfo != null) {
+                onTeslaAssociated(associationInfo.id)
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            val device = data.getParcelableExtra<BluetoothDevice>(CompanionDeviceManager.EXTRA_DEVICE)
+            if (device != null) {
+                try {
+                    Log.i(TAG, "CDM legacy association: ${device.name} [${device.address}]")
+                    val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        cdm.startObservingDevicePresence(device.address)
+                    }
+                    teslaAssociated = true
+                    teslaAutoDetectEnabled = true
+                    Toast.makeText(this, "Tesla paired: ${device.name}", Toast.LENGTH_SHORT).show()
+                } catch (e: SecurityException) {
+                    // API 31-32 may require BLUETOOTH_CONNECT for device.address/name
+                    Log.w(TAG, "CDM legacy association: SecurityException accessing device", e)
+                    // Fall back to refreshing state from CDM associations list
+                    refreshCdmState()
+                    if (teslaAssociated) {
+                        Toast.makeText(this, "Tesla paired!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun onTeslaAssociated(associationId: Int) {
+        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // API 33+: get MAC from AssociationInfo, observe presence
+            val assoc = cdm.myAssociations.find { it.id == associationId }
+            val macAddress = assoc?.deviceMacAddress?.toString()?.uppercase()
+            if (macAddress != null) {
+                cdm.startObservingDevicePresence(macAddress)
+                Log.i(TAG, "Observing device presence for $macAddress (assocId=$associationId)")
+            } else {
+                Log.w(TAG, "No MAC address in association $associationId")
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // API 31-32: startObservingDevicePresence with MAC from associations list
+            @Suppress("DEPRECATION")
+            val addresses = cdm.associations
+            for (addr in addresses) {
+                cdm.startObservingDevicePresence(addr)
+                Log.i(TAG, "Observing device presence for $addr")
+            }
+        }
+        teslaAssociated = true
+        teslaAutoDetectEnabled = true
+        runOnUiThread {
+            Toast.makeText(this, "Tesla paired! Auto-detect enabled.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun disassociateTesla() {
+        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                for (assoc in cdm.myAssociations) {
+                    cdm.disassociate(assoc.id)
+                    Log.i(TAG, "Disassociated CDM id=${assoc.id}")
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                for (addr in cdm.associations) {
+                    @Suppress("DEPRECATION")
+                    cdm.disassociate(addr)
+                    Log.i(TAG, "Disassociated CDM addr=$addr")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "CDM disassociate failed", e)
+        }
+        teslaAssociated = false
+        teslaAutoDetectEnabled = false
+        Toast.makeText(this, "Tesla auto-detect disabled", Toast.LENGTH_SHORT).show()
+    }
+
     private fun requestStartupPermissions() {
         val needed = mutableListOf<String>()
 
@@ -597,6 +918,8 @@ class MainActivity : ComponentActivity() {
         isStreaming = false
         sessionPin = ""
         updateServerUrl()
+        com.castla.mirror.widget.MirrorWidgetProvider.updateAllWidgets(this)
+        finishAndRemoveTask()
     }
 }
 
@@ -609,15 +932,19 @@ fun CastlaScreen(
     shizukuInstalled: Boolean,
     shizukuRunning: Boolean,
     teslaIpReady: Boolean,
+    isPremium: Boolean = false,
     shizukuDownloading: Boolean = false,
     downloadProgress: Int = 0,
     downloadStatusText: String = "",
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onUpgradeClick: () -> Unit = {},
     onInstallShizuku: () -> Unit,
     onOpenShizuku: () -> Unit,
-    networkDiagLog: String = ""
+    networkDiagLog: String = "",
+    teslaAutoDetectEnabled: Boolean = false,
+    onToggleAutoDetect: () -> Unit = {}
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -649,6 +976,98 @@ fun CastlaScreen(
 
             TextButton(onClick = onSettingsClick) {
                 Text("Settings")
+            }
+
+            // PRO upgrade card (only for free users)
+            if (!isPremium) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF1A1A2E)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Castla PRO",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFFD700)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Unlock all apps  /  1080p streaming  /  No ads",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = onUpgradeClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFFFD700)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Upgrade — One-time Purchase",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Tesla auto-detect card
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF0D1B2A)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (teslaAutoDetectEnabled) "Tesla Auto-Detect ON" else "Tesla Auto-Detect",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (teslaAutoDetectEnabled) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (teslaAutoDetectEnabled)
+                                "You'll get a notification when Tesla connects"
+                            else
+                                "Get notified when your Tesla is nearby",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = teslaAutoDetectEnabled,
+                        onCheckedChange = { onToggleAutoDetect() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF4CAF50)
+                        )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))

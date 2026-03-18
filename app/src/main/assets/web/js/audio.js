@@ -1,115 +1,233 @@
 /**
- * Castla - Audio Player
- * Receives AAC audio frames via WebSocket and plays through Web Audio API.
- * Uses AudioContext.decodeAudioData for AAC frame decoding.
+ * Castla - Audio Player (Opus via WebCodecs + raw PCM fallback)
+ *
+ * Protocol: each WebSocket binary message has a header:
+ *   0x00 + JSON = config: {"codec":"opus"|"pcm","sampleRate":48000,"channels":2}
+ *   0x01 + u32 LE timestamp(ms) + audio data = Opus or PCM Int16 LE
+ *
+ * Flow:
+ *   1. User taps unmute → AudioContext created + resumed (autoplay policy)
+ *   2. WebSocket connects → first message is JSON config (0x00)
+ *   3a. Opus: AudioDecoder.configure({codec:'opus'}) → decode → schedule playback
+ *   3b. PCM:  Int16 → Float32 → AudioBuffer → schedule playback
  */
 class AudioPlayer {
     constructor() {
-        this.context = null;
+        this.audioCtx = null;
+        this.decoder = null;
+        this.socket = null;
+        this.sampleRate = 48000;
+        this.channels = 2;
         this.nextPlayTime = 0;
-        this.isPlaying = false;
-        this.frameDuration = 1024 / 44100; // AAC-LC frame duration (~23.2ms)
-        this.bufferedFrames = 0;
-        this.BUFFER_TARGET = 3; // buffer 3 frames before starting playback
+        this.timestampUs = 0;
+        this.mode = null; // 'opus' or 'pcm'
+        // Jitter buffer: WiFi ~10ms + JS GC ~30ms + OS scheduling ~20ms + margin ~60ms
+        this.JITTER_BUFFER_SEC = 0.12;
+        this.MAX_LATENCY = 0.4;
+        this.OPUS_FRAME_DURATION_US = 20000; // 20ms
+        this.clockOffset = null; // EMA server-to-client clock offset for A/V sync
     }
 
-    init() {
+    async startFromUserGesture(wsUrl) {
         try {
-            this.context = new (window.AudioContext || window.webkitAudioContext)({
-                sampleRate: 44100,
+            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: this.sampleRate,
                 latencyHint: 'interactive'
             });
+            if (this.audioCtx.state === 'suspended') {
+                await this.audioCtx.resume();
+            }
+            console.log('[Audio] AudioContext ready, state:', this.audioCtx.state);
             this.nextPlayTime = 0;
-            this.isPlaying = false;
-            console.log('[Audio] AudioContext initialized, state:', this.context.state);
+            this.timestampUs = 0;
+            this.mode = null;
+            this._connectSocket(wsUrl);
             return true;
         } catch (e) {
-            console.error('[Audio] Failed to create AudioContext:', e);
+            console.error('[Audio] Failed to start:', e);
+            this.stop();
             return false;
         }
     }
 
-    async resume() {
-        if (this.context && this.context.state === 'suspended') {
-            await this.context.resume();
-            console.log('[Audio] AudioContext resumed');
+    _configureOpus() {
+        if (typeof AudioDecoder === 'undefined') {
+            console.warn('[Audio] WebCodecs AudioDecoder not available');
+            return false;
+        }
+        try {
+            this.decoder = new AudioDecoder({
+                output: (audioData) => this._handleDecodedAudio(audioData),
+                error: (e) => {
+                    console.error('[Audio] Opus decoder error:', e);
+                    this.decoder = null;
+                }
+            });
+            this.decoder.configure({
+                codec: 'opus',
+                sampleRate: this.sampleRate,
+                numberOfChannels: this.channels
+            });
+            this.mode = 'opus';
+            console.log('[Audio] Opus decoder configured');
+            return true;
+        } catch (e) {
+            console.error('[Audio] Opus decoder failed:', e);
+            this.decoder = null;
+            return false;
         }
     }
 
-    /**
-     * Feed raw AAC frame data received from WebSocket.
-     * Wraps in ADTS header for decodeAudioData compatibility.
-     */
-    async feed(aacData) {
-        if (!this.context || this.context.state === 'closed') return;
-
-        try {
-            // Wrap raw AAC in ADTS header so decodeAudioData can parse it
-            const adtsFrame = this._wrapADTS(aacData);
-            const audioBuffer = await this.context.decodeAudioData(adtsFrame.buffer);
-            this._scheduleBuffer(audioBuffer);
-        } catch (e) {
-            // decodeAudioData may fail on partial/corrupt frames — just skip
-            // console.warn('[Audio] Decode error (skipping frame):', e.message);
+    _handleDecodedAudio(audioData) {
+        if (!this.audioCtx || this.audioCtx.state === 'closed') {
+            audioData.close();
+            return;
         }
+        try {
+            const ch = audioData.numberOfChannels;
+            const frames = audioData.numberOfFrames;
+            const sr = audioData.sampleRate;
+            const buf = this.audioCtx.createBuffer(ch, frames, sr);
+            for (let c = 0; c < ch; c++) {
+                const cd = new Float32Array(frames);
+                audioData.copyTo(cd, { planeIndex: c });
+                buf.copyToChannel(cd, c);
+            }
+            this._scheduleBuffer(buf);
+        } catch (e) {
+            // skip
+        } finally {
+            audioData.close();
+        }
+    }
+
+    _playPCM(arrayBuffer) {
+        if (!this.audioCtx || this.audioCtx.state === 'closed') return;
+        const int16 = new Int16Array(arrayBuffer);
+        const frameCount = Math.floor(int16.length / this.channels);
+        if (frameCount === 0) return;
+        const buf = this.audioCtx.createBuffer(this.channels, frameCount, this.sampleRate);
+        for (let ch = 0; ch < this.channels; ch++) {
+            const cd = buf.getChannelData(ch);
+            for (let i = 0; i < frameCount; i++) {
+                cd[i] = int16[i * this.channels + ch] / 32768.0;
+            }
+        }
+        this._scheduleBuffer(buf);
     }
 
     _scheduleBuffer(audioBuffer) {
-        const source = this.context.createBufferSource();
+        const source = this.audioCtx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(this.context.destination);
-
-        const now = this.context.currentTime;
-
-        if (!this.isPlaying) {
-            this.bufferedFrames++;
-            if (this.bufferedFrames >= this.BUFFER_TARGET) {
-                this.nextPlayTime = now + 0.05; // 50ms initial buffer
-                this.isPlaying = true;
-            } else {
-                return; // still buffering
-            }
-        }
-
-        // If we've fallen behind, jump ahead
+        source.connect(this.audioCtx.destination);
+        const now = this.audioCtx.currentTime;
         if (this.nextPlayTime < now) {
-            this.nextPlayTime = now + 0.01;
+            this.nextPlayTime = now + this.JITTER_BUFFER_SEC;
+        } else if (this.nextPlayTime > now + this.MAX_LATENCY) {
+            this.nextPlayTime = now + this.JITTER_BUFFER_SEC;
         }
-
         source.start(this.nextPlayTime);
         this.nextPlayTime += audioBuffer.duration;
     }
 
-    /**
-     * Wrap raw AAC-LC frame in ADTS header (7 bytes).
-     * Required for decodeAudioData which expects a complete audio container.
-     */
-    _wrapADTS(rawAAC) {
-        const frameLength = rawAAC.length + 7;
-        const adts = new Uint8Array(frameLength);
+    _connectSocket(wsUrl) {
+        if (this.socket) { this.socket.onclose = null; this.socket.close(); }
+        this.socket = new WebSocket(wsUrl);
+        this.socket.binaryType = 'arraybuffer';
 
-        // ADTS fixed header
-        adts[0] = 0xFF; // sync word
-        adts[1] = 0xF1; // sync word + MPEG-4, Layer 0, no CRC
-        // Profile (AAC-LC=1, so objectType-1=1), sampling freq index (44100=4), private=0, channel config=2
-        adts[2] = ((1 << 6) | (4 << 2) | (0 << 1) | ((2 >> 2) & 0x01));
-        adts[3] = ((2 & 0x03) << 6) | ((frameLength >> 11) & 0x03);
-        adts[4] = (frameLength >> 3) & 0xFF;
-        adts[5] = ((frameLength & 0x07) << 5) | 0x1F;
-        adts[6] = 0xFC; // buffer fullness VBR + 0 AAC frames in ADTS - 1
+        this.socket.onopen = () => console.log('[Audio] WebSocket connected');
 
-        adts.set(rawAAC instanceof Uint8Array ? rawAAC : new Uint8Array(rawAAC), 7);
-        return adts;
+        this.socket.onmessage = (event) => {
+            if (!(event.data instanceof ArrayBuffer) || event.data.byteLength < 2) return;
+            const view = new Uint8Array(event.data);
+            const type = view[0];
+
+            if (type === 0x00) {
+                // JSON config
+                try {
+                    const json = new TextDecoder().decode(view.subarray(1));
+                    const config = JSON.parse(json);
+                    this.sampleRate = config.sampleRate || 48000;
+                    this.channels = config.channels || 2;
+                    console.log('[Audio] Config:', json);
+
+                    // Recreate AudioContext if sample rate changed
+                    if (this.audioCtx && this.audioCtx.sampleRate !== this.sampleRate) {
+                        this.audioCtx.close().catch(() => {});
+                        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+                            sampleRate: this.sampleRate,
+                            latencyHint: 'interactive'
+                        });
+                        this.audioCtx.resume().catch(() => {});
+                        this.nextPlayTime = 0;
+                    }
+
+                    if (config.codec === 'opus') {
+                        if (!this._configureOpus()) {
+                            // Opus not available — ask server to switch to PCM
+                            console.warn('[Audio] Opus not supported, requesting PCM fallback');
+                            if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                                this.socket.send('requestPcm');
+                            }
+                            // mode stays null until server sends new PCM config
+                            return;
+                        }
+                    } else {
+                        this.mode = 'pcm';
+                        console.log('[Audio] PCM mode');
+                    }
+                } catch (e) {
+                    console.error('[Audio] Bad config:', e);
+                }
+                return;
+            }
+
+            // type === 0x01: audio data with 5-byte header [0x01][tsMs u32 LE] + audio
+            if (event.data.byteLength < 6) return;
+            const dv = new DataView(event.data);
+            const serverTsMs = dv.getUint32(1, true); // LE timestamp
+            const audioPayload = event.data.slice(5);
+
+            // EMA clock offset for A/V sync
+            const clientNow = performance.now();
+            const currentOffset = clientNow - serverTsMs;
+            if (this.clockOffset === null) {
+                this.clockOffset = currentOffset;
+            } else {
+                this.clockOffset = this.clockOffset * 0.95 + currentOffset * 0.05;
+            }
+
+            if (this.mode === 'opus' && this.decoder && this.decoder.state === 'configured') {
+                try {
+                    const chunk = new EncodedAudioChunk({
+                        type: 'key',
+                        timestamp: this.timestampUs,
+                        data: audioPayload
+                    });
+                    this.timestampUs += this.OPUS_FRAME_DURATION_US;
+                    this.decoder.decode(chunk);
+                } catch (e) { /* skip bad frame */ }
+            } else if (this.mode === 'pcm') {
+                this._playPCM(audioPayload);
+            }
+        };
+
+        this.socket.onclose = () => console.log('[Audio] WebSocket disconnected');
     }
 
     stop() {
-        if (this.context && this.context.state !== 'closed') {
-            this.context.close().catch(() => {});
+        if (this.decoder && this.decoder.state !== 'closed') {
+            try { this.decoder.close(); } catch (_) {}
         }
-        this.context = null;
-        this.isPlaying = false;
-        this.bufferedFrames = 0;
+        this.decoder = null;
+        if (this.socket) { this.socket.onclose = null; this.socket.close(); this.socket = null; }
+        if (this.audioCtx && this.audioCtx.state !== 'closed') {
+            this.audioCtx.close().catch(() => {});
+        }
+        this.audioCtx = null;
         this.nextPlayTime = 0;
+        this.timestampUs = 0;
+        this.mode = null;
         console.log('[Audio] Stopped');
     }
 

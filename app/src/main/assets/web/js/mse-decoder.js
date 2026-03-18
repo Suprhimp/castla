@@ -73,29 +73,58 @@ class MseDecoder {
 
     /**
      * Decode a frame from the WebSocket.
-     * @param {ArrayBuffer} data - 1-byte header (0x01=key, 0x00=delta) + H.264 NAL units
+     * @param {ArrayBuffer} data - 8-byte header + H.264 NAL units
+     *   header: [flags:u8][seqLo:u8][seqHi:u8][tsMs0-3:u8][reserved:u8]
+     *   flags: 0x00=delta, 0x01=keyframe, 0x02=codec config (SPS/PPS)
      */
     decode(data) {
-        const view = new Uint8Array(data);
-        if (view.length < 2) return;
+        if (data.byteLength < 9) return;
+        const dv = new DataView(data);
 
-        const isKeyFrame = view[0] === 0x01;
-        const nalData = new Uint8Array(data, 1);
+        const flags = dv.getUint8(0);
+        const seqNum = dv.getUint16(1, true);  // LE
+        // const serverTsMs = dv.getUint32(3, true);  // available for future sync
 
-        if (isKeyFrame) {
+        // 0x02 = SPS/PPS config — cache, detect resolution change, reinit if needed
+        if (flags === 0x02) {
+            this._cachedSpsPps = new Uint8Array(data, 8);
             const oldWidth = this.width;
             const oldHeight = this.height;
-            this._extractSpsPps(nalData);
-
-            // Detect resolution change from SPS — reinit everything
+            this._extractSpsPps(this._cachedSpsPps);
             if (this.initSegmentSent && this.sps && this.pps &&
                 (this.width !== oldWidth || this.height !== oldHeight)) {
                 console.log('[MSE] Resolution changed: ' + oldWidth + 'x' + oldHeight +
                     ' -> ' + this.width + 'x' + this.height + ', reinitializing');
-                this._reinit(data);
-                return;
+                this._reinit(null);
+            }
+            return;
+        }
+
+        const isKeyFrame = flags === 0x01;
+
+        // Detect frame drops via sequence gap → request keyframe
+        if (this._lastSeqNum !== undefined) {
+            const expected = (this._lastSeqNum + 1) & 0xFFFF;
+            if (seqNum !== expected && !isKeyFrame) {
+                console.warn('[MSE] Frame gap: expected', expected, 'got', seqNum, '— requesting keyframe');
             }
         }
+        this._lastSeqNum = seqNum;
+
+        // For keyframes, prepend cached SPS/PPS so MSE can detect resolution
+        let nalData;
+        if (isKeyFrame && this._cachedSpsPps) {
+            const spsPps = this._cachedSpsPps;
+            const raw = new Uint8Array(data, 8);
+            const combined = new Uint8Array(spsPps.length + raw.length);
+            combined.set(spsPps);
+            combined.set(raw, spsPps.length);
+            nalData = combined;
+        } else {
+            nalData = new Uint8Array(data, 8);
+        }
+
+        // Resolution change is detected via 0x02 config messages, not from keyframes
 
         if (!this.mediaSource || this.mediaSource.readyState !== 'open') {
             // Queue frame if we're in the middle of reinit
@@ -160,7 +189,7 @@ class MseDecoder {
             if (this._pendingKeyframe) {
                 const kf = this._pendingKeyframe;
                 this._pendingKeyframe = null;
-                const kfNalData = new Uint8Array(kf, 1);
+                const kfNalData = new Uint8Array(kf, 8);
 
                 if (!this._createSourceBuffer()) return;
                 this._sendInitSegment();
@@ -228,15 +257,21 @@ class MseDecoder {
                 const profile = this.sps[1];
                 const compat = this.sps[2];
                 const level = this.sps[3];
-                this.codecString = 'avc1.' +
+                const newCodec = 'avc1.' +
                     profile.toString(16).padStart(2, '0') +
                     compat.toString(16).padStart(2, '0') +
                     level.toString(16).padStart(2, '0');
-                console.log('[MSE] SPS found: codec=' + this.codecString +
-                    ' size=' + this.sps.length + ' w=' + this.width + ' h=' + this.height);
+                if (newCodec !== this.codecString) {
+                    this.codecString = newCodec;
+                    console.log('[MSE] SPS found: codec=' + this.codecString +
+                        ' size=' + this.sps.length + ' w=' + this.width + ' h=' + this.height);
+                } else {
+                    this.codecString = newCodec;
+                }
             } else if (type === 8) { // PPS
+                const hadPps = this.pps;
                 this.pps = new Uint8Array(nal); // copy, not view
-                console.log('[MSE] PPS found: size=' + this.pps.length);
+                if (!hadPps) console.log('[MSE] PPS found: size=' + this.pps.length);
             }
         }
     }
@@ -594,13 +629,13 @@ class MseDecoder {
             const buf = this.sourceBuffer.buffered;
             if (buf.length > 0) {
                 const end = buf.end(buf.length - 1);
-                if (end - this.video.currentTime > 0.3) {
+                if (end - this.video.currentTime > 0.15) {
                     this.video.currentTime = end - 0.05;
                 }
                 // Remove old data to prevent memory buildup
-                if (buf.start(0) < end - 5 && !this.sourceBuffer.updating) {
+                if (buf.start(0) < end - 3 && !this.sourceBuffer.updating) {
                     try {
-                        this.sourceBuffer.remove(0, end - 3);
+                        this.sourceBuffer.remove(0, end - 2);
                     } catch (_) {}
                 }
             }
