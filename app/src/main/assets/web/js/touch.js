@@ -138,7 +138,38 @@ class TouchHandler {
         if (this.renderer && typeof this.renderer.canvasToVideo === 'function') {
             return this.renderer.canvasToVideo(clientX - rect.left, clientY - rect.top);
         }
-        // Direct element mapping (for video element / MSE mode)
+
+        // MSE mode: <video> uses object-fit:contain — account for letterboxing
+        const el = this.canvas;
+        if (el.tagName === 'VIDEO' && el.videoWidth > 0 && el.videoHeight > 0) {
+            const videoAspect = el.videoWidth / el.videoHeight;
+            const elemAspect = rect.width / rect.height;
+            let renderX, renderY, renderW, renderH;
+
+            if (videoAspect > elemAspect) {
+                // Video wider than element — black bars top/bottom
+                renderW = rect.width;
+                renderH = rect.width / videoAspect;
+                renderX = 0;
+                renderY = (rect.height - renderH) / 2;
+            } else {
+                // Video taller — black bars left/right
+                renderH = rect.height;
+                renderW = rect.height * videoAspect;
+                renderX = (rect.width - renderW) / 2;
+                renderY = 0;
+            }
+
+            const x = (clientX - rect.left - renderX) / renderW;
+            const y = (clientY - rect.top - renderY) / renderH;
+            return {
+                x: Math.max(0, Math.min(1, x)),
+                y: Math.max(0, Math.min(1, y)),
+                inBounds: x >= 0 && x <= 1 && y >= 0 && y <= 1
+            };
+        }
+
+        // Fallback: direct element mapping
         const x = (clientX - rect.left) / rect.width;
         const y = (clientY - rect.top) / rect.height;
         return {
@@ -150,7 +181,11 @@ class TouchHandler {
 
     /** Send touch event as 10-byte binary: [action:u8][id:u8][x:f32LE][y:f32LE] */
     _sendBinary(action, id, x, y) {
-        if (!this.controlSocket || this.controlSocket.readyState !== WebSocket.OPEN) return;
+        if (!this.controlSocket || this.controlSocket.readyState !== WebSocket.OPEN) {
+            if (this._logCount === undefined) this._logCount = 0;
+            if (this._logCount++ < 5) console.warn('[Touch] Socket not open, state:', this.controlSocket?.readyState);
+            return;
+        }
         this._view.setUint8(0, action);
         this._view.setUint8(1, id & 0xFF);
         this._view.setFloat32(2, x, true); // little-endian

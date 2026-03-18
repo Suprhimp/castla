@@ -23,8 +23,10 @@ import androidx.compose.ui.unit.sp
 fun SettingsScreen(
     settings: StreamSettings,
     isStreaming: Boolean,
+    isPremium: Boolean = false,
     onSettingsChanged: (StreamSettings) -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onDebugTogglePremium: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -88,13 +90,14 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StreamSettings.Resolution.entries.forEach { res ->
+                        val isResLocked = !isPremium && (res == StreamSettings.Resolution.FHD_1080 || res == StreamSettings.Resolution.AUTO)
                         FilterChip(
                             selected = settings.resolution == res,
                             onClick = {
-                                if (!isStreaming) onSettingsChanged(settings.copy(resolution = res))
+                                if (!isStreaming && !isResLocked) onSettingsChanged(settings.copy(resolution = res))
                             },
-                            label = { Text(res.label) },
-                            enabled = !isStreaming
+                            label = { Text(if (isResLocked) "${res.label} PRO" else res.label) },
+                            enabled = !isStreaming && !isResLocked
                         )
                     }
                 }
@@ -130,13 +133,14 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StreamSettings.FPS_OPTIONS.forEach { fps ->
+                        val isFpsLocked = !isPremium && fps > 30
                         FilterChip(
                             selected = settings.fps == fps,
                             onClick = {
-                                if (!isStreaming) onSettingsChanged(settings.copy(fps = fps))
+                                if (!isStreaming && !isFpsLocked) onSettingsChanged(settings.copy(fps = fps))
                             },
-                            label = { Text("${fps} fps") },
-                            enabled = !isStreaming
+                            label = { Text(if (isFpsLocked) "${fps} fps PRO" else "${fps} fps") },
+                            enabled = !isStreaming && !isFpsLocked
                         )
                     }
                 }
@@ -169,6 +173,35 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            // Debug: PRO toggle (only in debug builds)
+            if (onDebugTogglePremium != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                SettingSection(title = "Debug") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = if (isPremium) "PRO Active" else "Free",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Button(
+                            onClick = onDebugTogglePremium,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isPremium)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Text(if (isPremium) "Downgrade to Free" else "Activate PRO")
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))

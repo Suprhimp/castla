@@ -8,21 +8,29 @@
 </head>
 <body>
     <div id="container">
+        <div id="ad-banner" style="display:none;">
+            <img src="/img/promo-banner.png" width="728" height="90" alt="Upgrade to PRO">
+        </div>
         <canvas id="display"></canvas>
         <video id="mse-video" muted autoplay playsinline></video>
         <div id="overlay">
             <div id="status">Connecting...</div>
             <div id="stats"></div>
         </div>
-        <!-- Hidden input to trigger Tesla native keyboard -->
+        <!-- Unmute overlay — user must tap to satisfy browser autoplay policy -->
+        <div id="unmute-overlay">
+            <div id="unmute-icon">&#x1F50A;</div>
+            <div id="unmute-text">Tap to Unmute</div>
+        </div>
+        <!-- Hidden input for keyboard capture (invisible, auto-focused by IME detection) -->
         <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off"
                autocapitalize="off" spellcheck="false"
-               style="position:fixed;bottom:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;">
-        <button id="keyboard-btn" title="Open keyboard"
-                style="position:fixed;bottom:12px;right:12px;z-index:100;width:48px;height:48px;
-                       border-radius:50%;border:none;background:rgba(255,255,255,0.15);
-                       color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(4px);
-                       display:none;">&#x2328;</button>
+               style="position:fixed;top:-100px;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;">
+        <button id="home-btn" title="Home"
+                style="position:fixed;bottom:12px;left:12px;z-index:100;width:40px;height:40px;
+                       border-radius:50%;border:none;background:rgba(255,255,255,0.12);
+                       color:#fff;font-size:18px;cursor:pointer;backdrop-filter:blur(4px);
+                       display:none;">&#x1F3E0;</button>
     </div>
 
     <script src="js/decoder.js"></script>

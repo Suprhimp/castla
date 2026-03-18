@@ -29,10 +29,13 @@ class FallbackDecoder {
 
     /**
      * Decode a frame received from WebSocket.
-     * Expects: 1-byte header + JPEG image data
+     * Expects: 8-byte header + JPEG image data
      */
     decode(data) {
-        const payload = data.slice(1); // strip 1-byte header
+        const view = new Uint8Array(data);
+        if (view.length < 9) return;
+        if (view[0] === 0x02) return; // skip SPS/PPS config (not relevant for MJPEG)
+        const payload = data.slice(8); // strip 8-byte header
 
         const blob = new Blob([payload], { type: 'image/jpeg' });
         createImageBitmap(blob).then((bitmap) => {

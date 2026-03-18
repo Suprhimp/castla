@@ -96,11 +96,12 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
             // FLAG_PUBLIC (1): visible to other apps
             // FLAG_OWN_CONTENT_ONLY (2048): don't mirror main display
-            // SHOULD_SHOW_SYSTEM_DECORATIONS (512): Android auto-launches home + system bars
-            val VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS = 1 shl 9 // 512
+            // Note: SHOULD_SHOW_SYSTEM_DECORATIONS (512) removed — it causes system
+            // notifications to render on the VD at its DPI, producing mis-scaled
+            // notification popups in the mirrored stream. DesktopActivity provides
+            // its own launcher UI, so system decorations are not needed.
             val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
-                    VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 
             val builderCtor = builderClass.getConstructor(
                 String::class.java, Int::class.javaPrimitiveType,
@@ -194,7 +195,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         } catch (_: Exception) {}
 
         try {
-            injectMethod?.invoke(inputManagerInstance, event, 0) // INJECT_INPUT_EVENT_MODE_ASYNC
+            val result = injectMethod?.invoke(inputManagerInstance, event, 0) // INJECT_INPUT_EVENT_MODE_ASYNC
+            Log.d(TAG, "Touch injected on display $displayId: action=$action x=${"%.1f".format(x)} y=${"%.1f".format(y)} result=$result")
         } catch (e: Exception) {
             Log.e(TAG, "Input injection failed on display $displayId", e)
         } finally {
@@ -246,6 +248,113 @@ class PrivilegedService : IPrivilegedService.Stub() {
             Log.i(TAG, "Launched DesktopActivity on display $displayId: $result")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch DesktopActivity on display $displayId", e)
+        }
+    }
+
+    override fun injectText(text: String, displayId: Int) {
+        if (text.isEmpty()) return
+
+        val isAsciiOnly = text.all { it.code < 128 }
+
+        if (isAsciiOnly) {
+            // Route A: ASCII → shell `input text` (fast, reliable)
+            try {
+                val escaped = text.replace("%", "%%") // escape % first (input text interprets %s/%n/%t)
+                    .replace("'", "'\\''") // shell escape single quotes
+                    .replace(" ", "%s") // `input text` space encoding
+                val cmd = if (displayId > 0) "input -d $displayId text '$escaped'"
+                          else "input text '$escaped'"
+                execCommand(cmd)
+                Log.i(TAG, "Text injected via shell (ASCII): ${text.length} chars")
+            } catch (e: Exception) {
+                Log.e(TAG, "Shell text injection failed", e)
+            }
+            return
+        }
+
+        // Route B: Non-ASCII (Korean/CJK/emoji) → Clipboard + CTRL+V
+        try {
+            // Get InputManager for key injection
+            val imClass = Class.forName("android.hardware.input.InputManager")
+            val getInstance = imClass.getMethod("getInstance")
+            val im = getInstance.invoke(null)
+            val injectMethod = imClass.getMethod(
+                "injectInputEvent",
+                android.view.InputEvent::class.java,
+                Int::class.javaPrimitiveType
+            )
+
+            // Step 1: Write to system clipboard via IClipboard
+            val smClass = Class.forName("android.os.ServiceManager")
+            val getService = smClass.getMethod("getService", String::class.java)
+            val clipBinder = getService.invoke(null, "clipboard") as android.os.IBinder
+
+            val clipStubClass = Class.forName("android.content.IClipboard\$Stub")
+            val asInterface = clipStubClass.getMethod("asInterface", android.os.IBinder::class.java)
+            val clipService = asInterface.invoke(null, clipBinder)
+
+            val clipData = android.content.ClipData.newPlainText("castla", text)
+            val setPrimary = clipService.javaClass.methods.find { it.name == "setPrimaryClip" }
+            if (setPrimary != null) {
+                val paramCount = setPrimary.parameterTypes.size
+                Log.d(TAG, "setPrimaryClip has $paramCount params: ${setPrimary.parameterTypes.map { it.simpleName }}")
+                val args: Array<Any?> = when (paramCount) {
+                    5 -> arrayOf(clipData, "com.android.shell", "com.android.shell", 0, 0) // Samsung Android 14: (clip, pkg, attribution, userId, deviceId)
+                    4 -> arrayOf(clipData, "com.android.shell", null, 0)
+                    3 -> arrayOf(clipData, "com.android.shell", 0)
+                    2 -> arrayOf(clipData, "com.android.shell")
+                    else -> arrayOf(clipData)
+                }
+                setPrimary.invoke(clipService, *args)
+            }
+
+            // Step 2: Wait for clipboard sync
+            Thread.sleep(50)
+
+            // Step 3: CTRL+V targeting correct display
+            val time = android.os.SystemClock.uptimeMillis()
+            val meta = android.view.KeyEvent.META_CTRL_LEFT_ON or android.view.KeyEvent.META_CTRL_ON
+
+            fun makeKeyEvent(action: Int, keyCode: Int, metaState: Int): android.view.KeyEvent {
+                val ev = android.view.KeyEvent(time, time, action, keyCode, 0, metaState,
+                    android.view.KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0,
+                    android.view.InputDevice.SOURCE_KEYBOARD)
+                if (displayId > 0) {
+                    try { ev.javaClass.getMethod("setDisplayId", Int::class.javaPrimitiveType).invoke(ev, displayId) }
+                    catch (_: Exception) {}
+                }
+                return ev
+            }
+
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_CTRL_LEFT, meta), 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_V, meta), 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_V, meta), 0)
+            injectMethod.invoke(im, makeKeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_CTRL_LEFT, 0), 0)
+
+            Log.i(TAG, "Text injected via clipboard+CTRL+V: ${text.length} chars")
+        } catch (e: Exception) {
+            Log.e(TAG, "Clipboard+CTRL+V injection failed", e)
+        }
+    }
+
+    override fun injectComposingText(backspaces: Int, text: String, displayId: Int) {
+        try {
+            // Step 1: Delete previous composition via shell (serialized, reliable)
+            if (backspaces > 0) {
+                val bsKeys = (1..backspaces).joinToString(" ") { "67" }
+                val cmd = if (displayId > 0) "input -d $displayId keyevent $bsKeys"
+                          else "input keyevent $bsKeys"
+                execCommand(cmd)
+            }
+
+            // Step 2: Insert new text via clipboard+CTRL+V (handles Korean/CJK)
+            if (text.isNotEmpty()) {
+                injectText(text, displayId) // routes to clipboard+CTRL+V for non-ASCII
+            }
+
+            Log.d(TAG, "Composing: bs=$backspaces text=$text (display=$displayId)")
+        } catch (e: Exception) {
+            Log.e(TAG, "injectComposingText failed", e)
         }
     }
 
@@ -465,7 +574,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             .firstOrNull { it.contains("inet ") && !it.contains("inet6") }
             ?.trim()?.split(" ")?.getOrNull(1)?.split("/")?.firstOrNull()
             ?: "10.22.128.243"
-        val ipt1 = execCommand("iptables -t nat -A PREROUTING -d $virtualIp -p tcp --dport 8080 -j DNAT --to-destination $hotspotIp:8080 2>&1")
+        val ipt1 = execCommand("iptables -t nat -A PREROUTING -d $virtualIp -p tcp --dport 9090 -j DNAT --to-destination $hotspotIp:9090 2>&1")
         log("iptables DNAT: $ipt1")
         val ipt2 = execCommand("iptables -I INPUT -d $virtualIp -j ACCEPT 2>&1")
         log("iptables INPUT ACCEPT: $ipt2")
@@ -520,8 +629,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         log("local route: $localRoute")
 
         // Test local connectivity
-        val curlTest = execCommand("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://$virtualIp:8080/ 2>&1").trim()
-        log("curl $virtualIp:8080 from shizuku: $curlTest")
+        val curlTest = execCommand("curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://$virtualIp:9090/ 2>&1").trim()
+        log("curl $virtualIp:9090 from shizuku: $curlTest")
 
         // Final interface state
         val finalAddrs = execCommand("ip addr show dev $ifName").trim()
@@ -540,7 +649,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             log.appendLine(msg)
         }
 
-        log("=== Restart Tethering with CGNAT (uid=${android.os.Process.myUid()}) ===")
+        log("=== Restart Tethering with 192.168.43.x (uid=${android.os.Process.myUid()}) ===")
 
         // Step 1: Find the TetheringManager (system service, hidden API)
         try {
@@ -570,8 +679,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // setLocalIpv4Address(LinkAddress)
             val linkAddressClass = Class.forName("android.net.LinkAddress")
             val linkAddrCtor = linkAddressClass.getConstructor(String::class.java)
-            val cgnatAddr = linkAddrCtor.newInstance("100.64.0.1/24")
-            log("LinkAddress created: 100.64.0.1/24")
+            val cgnatAddr = linkAddrCtor.newInstance("192.168.43.1/24")
+            log("LinkAddress created: 192.168.43.1/24")
 
             // Try setLocalIpv4Address (Android 11-12)
             var setAddrSuccess = false
@@ -579,7 +688,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
                 val setLocalIpv4 = builderClass.getMethod("setLocalIpv4Address", linkAddressClass)
                 setLocalIpv4.invoke(builder, cgnatAddr)
                 setAddrSuccess = true
-                log("setLocalIpv4Address(100.64.0.1/24) set")
+                log("setLocalIpv4Address(192.168.43.1/24) set")
             } catch (e: NoSuchMethodException) {
                 log("setLocalIpv4Address not found, trying alternative...")
             }
@@ -587,14 +696,14 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // Try setStaticIpv4Addresses (Android 13+)
             if (!setAddrSuccess) {
                 try {
-                    val clientAddr = linkAddrCtor.newInstance("100.64.0.2/24")
+                    val clientAddr = linkAddrCtor.newInstance("192.168.43.2/24")
                     val setStatic = builderClass.getMethod(
                         "setStaticIpv4Addresses",
                         linkAddressClass, linkAddressClass
                     )
                     setStatic.invoke(builder, cgnatAddr, clientAddr)
                     setAddrSuccess = true
-                    log("setStaticIpv4Addresses(100.64.0.1/24, 100.64.0.2/24) set")
+                    log("setStaticIpv4Addresses(192.168.43.1/24, 192.168.43.2/24) set")
                 } catch (e: NoSuchMethodException) {
                     log("setStaticIpv4Addresses not found either")
                 }
@@ -880,8 +989,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         val iface = ifaceResult.split(":").getOrNull(1)?.trim()?.split(" ")?.firstOrNull() ?: "swlan0"
 
         // Try to add CGNAT IP as secondary address
-        val addResult = execCommand("ip addr add 100.64.0.1/24 dev $iface 2>&1").trim()
-        log("ip addr add 100.64.0.1/24 dev $iface: $addResult")
+        val addResult = execCommand("ip addr add 192.168.43.1/24 dev $iface 2>&1").trim()
+        log("ip addr add 192.168.43.1/24 dev $iface: $addResult")
 
         // Verify
         val finalAddrs = execCommand("ip addr show dev $iface 2>&1").trim()

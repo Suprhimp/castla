@@ -10,12 +10,16 @@ import kotlinx.coroutines.flow.asSharedFlow
  * No Android framework (Broadcast/Binder) needed — same process memory.
  */
 object AppLaunchBus {
-    data class LaunchRequest(val packageName: String, val className: String?)
+    data class LaunchRequest(
+        val packageName: String,
+        val className: String?,
+        val isVideoApp: Boolean = false
+    )
 
     private val _events = MutableSharedFlow<LaunchRequest>(extraBufferCapacity = 8)
     val events = _events.asSharedFlow()
 
-    fun requestLaunch(packageName: String, className: String? = null) {
-        _events.tryEmit(LaunchRequest(packageName, className))
+    fun requestLaunch(packageName: String, className: String? = null, isVideoApp: Boolean = false) {
+        _events.tryEmit(LaunchRequest(packageName, className, isVideoApp))
     }
 }

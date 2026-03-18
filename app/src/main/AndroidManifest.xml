@@ -19,6 +19,11 @@
     <!-- Shizuku -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
+    <!-- CompanionDeviceManager: Tesla auto-detection -->
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
+
     <application
         android:name=".CastlaApp"
         android:allowBackup="true"
@@ -91,6 +96,38 @@
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- CDM: Tesla auto-detection service (wakes app when Tesla BT connects) -->
+        <service
+            android:name=".service.TeslaCompanionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+            <intent-filter>
+                <action android:name="android.companion.CompanionDeviceService" />
+            </intent-filter>
+        </service>
+
+        <!-- Stop mirroring receiver (notification action) -->
+        <receiver
+            android:name=".service.MirrorForegroundService$StopReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.castla.mirror.ACTION_STOP" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Home screen widget -->
+        <receiver
+            android:name=".widget.MirrorWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.castla.mirror.WIDGET_TOGGLE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/mirror_widget_info" />
+        </receiver>
 
     </application>
 
