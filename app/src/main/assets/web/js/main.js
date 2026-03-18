@@ -5,6 +5,10 @@
 (function() {
     'use strict';
 
+    // Set to false for production builds to suppress verbose console output
+    const DEBUG = false;
+    window.__CASTLA_DEBUG = DEBUG;
+
     const canvas = document.getElementById('display');
     const statusEl = document.getElementById('status');
     const statsEl = document.getElementById('stats');
@@ -27,6 +31,12 @@
     let awaitingNewDecoder = false;
     let controlReady = false;
     let firstFrameReceived = false;
+    // Keyboard/composition state (shared across reconnects)
+    let composing = false;
+    let lastCompositionLength = 0;
+    let sentCompositionLength = 0;
+    let composeTimer = null;
+    let pendingCompose = null;
 
     const host = window.location.host;
 
@@ -113,7 +123,6 @@
         videoSocket.onopen = () => {
             console.log('[Main] Video connected');
             setStatus('Loading...', '');
-            if (kbBtn) kbBtn.style.display = 'block';
         };
 
         videoSocket.onmessage = async (event) => {
@@ -203,16 +212,19 @@
                         videoSocket.send('requestKeyframe');
                     }
                 } else if (msg.type === 'showKeyboard') {
-                    console.log('[Main] Server detected IME open — showing keyboard bar');
-                    const bar = document.getElementById('keyboard-bar');
+                    console.log('[Main] Server detected IME open — focusing keyboard input');
                     const ki = document.getElementById('keyboard-input');
-                    if (bar && ki) {
-                        bar.classList.add('visible');
+                    if (ki) {
+                        ki.style.pointerEvents = 'auto';
                         ki.focus();
                     }
                 } else if (msg.type === 'hideKeyboard') {
                     console.log('[Main] Server detected IME closed');
-                    // Don't auto-hide — user might still be typing in the bar
+                    const ki = document.getElementById('keyboard-input');
+                    if (ki) {
+                        ki.blur();
+                        ki.style.pointerEvents = 'none';
+                    }
                 } else if (msg.type === 'premiumStatus') {
                     const banner = document.getElementById('ad-banner');
                     if (banner) {
@@ -278,10 +290,15 @@
     function cleanup() {
         clearInterval(pingTimer);
         clearTimeout(viewportTimer);
+        clearTimeout(composeTimer);
         awaitingNewDecoder = false;
         controlReady = false;
         firstFrameReceived = false;
         lastViewport = { width: 0, height: 0 };
+        composing = false;
+        lastCompositionLength = 0;
+        sentCompositionLength = 0;
+        pendingCompose = null;
         if (videoSocket) {
             videoSocket.onclose = null; // prevent reconnect loop
             videoSocket.close();
@@ -367,42 +384,52 @@
 
     if (kbInput) {
         // Plan A: Real-time composition — backspace old chars + paste new composed text
-        let lastCompositionLength = 0;
-        let composing = false;
-
         kbInput.addEventListener('compositionstart', () => {
             composing = true;
             lastCompositionLength = 0;
+            sentCompositionLength = 0;
         });
 
         kbInput.addEventListener('compositionupdate', (e) => {
             const newText = e.data || '';
             if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
 
-            if (newText.length === 0 && lastCompositionLength > 0) {
-                // Composition cancelled — delete remaining chars
-                controlSocket.send(JSON.stringify({
-                    type: 'compositionUpdate', backspaces: lastCompositionLength, text: ''
-                }));
-                lastCompositionLength = 0;
-                return;
-            }
-            if (!newText) return;
-
-            // Use spread to count grapheme clusters properly (handles surrogates)
+            // Debounce: wait 150ms for more jamo before sending
+            // This batches rapid updates (ㅇ→아→안) into fewer operations
             const graphemeLen = [...newText].length;
-            controlSocket.send(JSON.stringify({
-                type: 'compositionUpdate',
-                backspaces: lastCompositionLength,
-                text: newText
-            }));
-            console.log('[KB] Composition:', newText, '(bs:', lastCompositionLength, ')');
-            lastCompositionLength = graphemeLen;
+            pendingCompose = { text: newText, graphemeLen: graphemeLen };
+
+            clearTimeout(composeTimer);
+            composeTimer = setTimeout(() => {
+                if (!pendingCompose) return;
+                const { text, graphemeLen: gl } = pendingCompose;
+                pendingCompose = null;
+
+                controlSocket.send(JSON.stringify({
+                    type: 'compositionUpdate',
+                    backspaces: sentCompositionLength,
+                    text: text
+                }));
+                console.log('[KB] Composition:', text, '(bs:', sentCompositionLength, ')');
+                sentCompositionLength = gl;
+            }, 150);
         });
 
         kbInput.addEventListener('compositionend', (e) => {
+            // Flush any pending compose immediately
+            clearTimeout(composeTimer);
+            if (pendingCompose && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({
+                    type: 'compositionUpdate',
+                    backspaces: sentCompositionLength,
+                    text: pendingCompose.text
+                }));
+                console.log('[KB] Composition (flush):', pendingCompose.text, '(bs:', sentCompositionLength, ')');
+            }
+            pendingCompose = null;
             composing = false;
             lastCompositionLength = 0;
+            sentCompositionLength = 0;
             kbInput.value = '';
         });
 

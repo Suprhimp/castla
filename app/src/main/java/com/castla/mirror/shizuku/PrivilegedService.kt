@@ -96,11 +96,12 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
             // FLAG_PUBLIC (1): visible to other apps
             // FLAG_OWN_CONTENT_ONLY (2048): don't mirror main display
-            // SHOULD_SHOW_SYSTEM_DECORATIONS (512): Android auto-launches home + system bars
-            val VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS = 1 shl 9 // 512
+            // Note: SHOULD_SHOW_SYSTEM_DECORATIONS (512) removed — it causes system
+            // notifications to render on the VD at its DPI, producing mis-scaled
+            // notification popups in the mirrored stream. DesktopActivity provides
+            // its own launcher UI, so system decorations are not needed.
             val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
-                    VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
 
             val builderCtor = builderClass.getConstructor(
                 String::class.java, Int::class.javaPrimitiveType,

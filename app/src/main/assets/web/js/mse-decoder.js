@@ -85,10 +85,18 @@ class MseDecoder {
         const seqNum = dv.getUint16(1, true);  // LE
         // const serverTsMs = dv.getUint32(3, true);  // available for future sync
 
-        // 0x02 = SPS/PPS config — cache for init segment, don't process as media
+        // 0x02 = SPS/PPS config — cache, detect resolution change, reinit if needed
         if (flags === 0x02) {
             this._cachedSpsPps = new Uint8Array(data, 8);
+            const oldWidth = this.width;
+            const oldHeight = this.height;
             this._extractSpsPps(this._cachedSpsPps);
+            if (this.initSegmentSent && this.sps && this.pps &&
+                (this.width !== oldWidth || this.height !== oldHeight)) {
+                console.log('[MSE] Resolution changed: ' + oldWidth + 'x' + oldHeight +
+                    ' -> ' + this.width + 'x' + this.height + ', reinitializing');
+                this._reinit(null);
+            }
             return;
         }
 
@@ -116,20 +124,7 @@ class MseDecoder {
             nalData = new Uint8Array(data, 8);
         }
 
-        if (isKeyFrame) {
-            const oldWidth = this.width;
-            const oldHeight = this.height;
-            this._extractSpsPps(nalData);
-
-            // Detect resolution change from SPS — reinit everything
-            if (this.initSegmentSent && this.sps && this.pps &&
-                (this.width !== oldWidth || this.height !== oldHeight)) {
-                console.log('[MSE] Resolution changed: ' + oldWidth + 'x' + oldHeight +
-                    ' -> ' + this.width + 'x' + this.height + ', reinitializing');
-                this._reinit(data);
-                return;
-            }
-        }
+        // Resolution change is detected via 0x02 config messages, not from keyframes
 
         if (!this.mediaSource || this.mediaSource.readyState !== 'open') {
             // Queue frame if we're in the middle of reinit
@@ -262,15 +257,21 @@ class MseDecoder {
                 const profile = this.sps[1];
                 const compat = this.sps[2];
                 const level = this.sps[3];
-                this.codecString = 'avc1.' +
+                const newCodec = 'avc1.' +
                     profile.toString(16).padStart(2, '0') +
                     compat.toString(16).padStart(2, '0') +
                     level.toString(16).padStart(2, '0');
-                console.log('[MSE] SPS found: codec=' + this.codecString +
-                    ' size=' + this.sps.length + ' w=' + this.width + ' h=' + this.height);
+                if (newCodec !== this.codecString) {
+                    this.codecString = newCodec;
+                    console.log('[MSE] SPS found: codec=' + this.codecString +
+                        ' size=' + this.sps.length + ' w=' + this.width + ' h=' + this.height);
+                } else {
+                    this.codecString = newCodec;
+                }
             } else if (type === 8) { // PPS
+                const hadPps = this.pps;
                 this.pps = new Uint8Array(nal); // copy, not view
-                console.log('[MSE] PPS found: size=' + this.pps.length);
+                if (!hadPps) console.log('[MSE] PPS found: size=' + this.pps.length);
             }
         }
     }

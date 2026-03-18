@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Castla</string>
+    <string name="widget_description">Castla mirroring control and Shizuku status</string>
+    <string name="tesla_detect_channel">Tesla Auto-Detect</string>
+    <string name="tesla_detected_title">Tesla detected</string>
+    <string name="tesla_detected_text">Tap to start Castla mirroring</string>
 </resources>

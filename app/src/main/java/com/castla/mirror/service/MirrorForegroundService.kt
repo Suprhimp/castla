@@ -4,7 +4,9 @@ import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -15,6 +17,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.castla.mirror.widget.MirrorWidgetProvider
 import com.castla.mirror.capture.AudioCapture
 import com.castla.mirror.capture.JpegEncoder
 import com.castla.mirror.capture.ScreenCaptureManager
@@ -38,6 +41,7 @@ class MirrorForegroundService : Service() {
         private const val TAG = "MirrorService"
         private const val CHANNEL_ID = "castla_mirror"
         private const val NOTIFICATION_ID = 1
+        const val ACTION_STOP = "com.castla.mirror.ACTION_STOP"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
         const val EXTRA_WIDTH = "width"
@@ -293,6 +297,8 @@ class MirrorForegroundService : Service() {
             }
 
             Log.i(TAG, "Pipeline started: ${width}x${height}, audio=${audioEnabled}")
+            // Update widget to reflect streaming state
+            MirrorWidgetProvider.updateAllWidgets(this)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start pipeline", e)
             stopSelf()
@@ -688,6 +694,8 @@ class MirrorForegroundService : Service() {
         jpegEncoder = null
         touchInjector = null
         mirrorServer = null
+        // Update widget to reflect stopped state
+        MirrorWidgetProvider.updateAllWidgets(this)
         super.onDestroy()
     }
 
@@ -726,17 +734,50 @@ class MirrorForegroundService : Service() {
             NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "Screen mirroring to Tesla"
+            setShowBadge(false)
         }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(channel)
     }
 
     private fun createNotification(): Notification {
+        // Tap notification → open MainActivity
+        val openIntent = Intent(this, com.castla.mirror.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val openPending = PendingIntent.getActivity(
+            this, 0, openIntent, PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Stop action
+        val stopIntent = Intent(ACTION_STOP).apply {
+            setPackage(packageName)
+        }
+        val stopPending = PendingIntent.getBroadcast(
+            this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Castla")
             .setContentText("Streaming to Tesla")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
+            .setContentIntent(openPending)
+            .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)
             .build()
+    }
+
+    /**
+     * BroadcastReceiver that stops the mirroring service when the notification
+     * "Stop" button is tapped.
+     */
+    class StopReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            if (intent?.action == ACTION_STOP) {
+                context.stopService(Intent(context, MirrorForegroundService::class.java))
+                // Update widget to reflect stopped state
+                MirrorWidgetProvider.updateAllWidgets(context)
+            }
+        }
     }
 }
