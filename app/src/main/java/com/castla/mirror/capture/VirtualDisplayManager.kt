@@ -52,7 +52,7 @@ class VirtualDisplayManager {
                 .daemon(false)
                 .processNameSuffix("privileged")
                 .debuggable(true)
-                .version(1)
+                .version(2)
             userServiceArgs = args
 
             var callbackFired = false
@@ -183,6 +183,19 @@ class VirtualDisplayManager {
         return try {
             privilegedService?.launchAppOnDisplay(displayId, packageName)
             Log.i(TAG, "Launched $packageName on virtual display $displayId")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch $packageName on virtual display", e)
+            false
+        }
+    }
+    
+    /** Launch an app on the virtual display with string intent extra. */
+    fun launchAppWithExtraOnDisplay(packageName: String, extraKey: String, extraValue: String): Boolean {
+        if (displayId < 0 || packageName.isEmpty()) return false
+        return try {
+            privilegedService?.launchAppWithExtraOnDisplay(displayId, packageName, extraKey, extraValue)
+            Log.i(TAG, "Launched $packageName with extra on virtual display $displayId")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on virtual display", e)

@@ -15,7 +15,8 @@ object LicenseManager {
     private const val PREFS_NAME = "castla_license"
     private const val KEY_IS_PREMIUM = "is_premium"
 
-    private val _isPremium = MutableStateFlow(false)
+    // Temporarily default to true
+    private val _isPremium = MutableStateFlow(true)
     val isPremium: StateFlow<Boolean> = _isPremium.asStateFlow()
 
     /** Non-reactive read for non-Compose code (DesktopActivity, MirrorServer, etc.) */
@@ -23,14 +24,16 @@ object LicenseManager {
 
     fun init(context: Context) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        _isPremium.value = prefs.getBoolean(KEY_IS_PREMIUM, false)
+        // Temporarily default to true
+        _isPremium.value = prefs.getBoolean(KEY_IS_PREMIUM, true)
     }
 
     fun setPremium(value: Boolean, context: Context) {
-        _isPremium.value = value
+        // Temporarily force true
+        _isPremium.value = true
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putBoolean(KEY_IS_PREMIUM, value)
+            .putBoolean(KEY_IS_PREMIUM, true)
             .apply()
     }
 }

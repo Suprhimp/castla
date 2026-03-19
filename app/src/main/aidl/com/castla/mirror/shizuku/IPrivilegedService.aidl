@@ -72,6 +72,12 @@ interface IPrivilegedService {
     void launchAppOnDisplay(int displayId, String packageName) = 11;
 
     /**
+     * Launch an app on a specific virtual display with string intent extras.
+     * Uses am start --display to place the app on the given display.
+     */
+    void launchAppWithExtraOnDisplay(int displayId, String packageName, String extraKey, String extraValue) = 15;
+
+    /**
      * Launch the home screen on a specific virtual display.
      * Uses am start with HOME category.
      */

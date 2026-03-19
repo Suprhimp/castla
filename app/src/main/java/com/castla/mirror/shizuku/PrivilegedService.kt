@@ -223,7 +223,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         try {
             val cmd = if (packageName.contains("/")) {
                 // Component name format: "com.pkg/com.pkg.Activity"
-                "am start --display $displayId -n $packageName -f 0x18000000"
+                "am start --display $displayId -n $packageName -f 0x18000000 " +
+                    "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
             } else {
                 // Package name only: try LAUNCHER category
                 "am start --display $displayId -f 0x18000000 " +
@@ -237,15 +238,34 @@ class PrivilegedService : IPrivilegedService.Stub() {
         }
     }
 
+    override fun launchAppWithExtraOnDisplay(displayId: Int, packageName: String, extraKey: String, extraValue: String) {
+        try {
+            val cmd = if (packageName.contains("/")) {
+                // -f 0x18000000 is FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK
+                "am start --display $displayId -n $packageName -f 0x18000000 " +
+                    "--es $extraKey '$extraValue'"
+            } else {
+                "am start --display $displayId -f 0x18000000 " +
+                    "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
+                    "--es $extraKey '$extraValue' " +
+                    packageName
+            }
+            val result = execCommand(cmd)
+            Log.i(TAG, "Launched $packageName with extra on display $displayId: $result")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
+        }
+    }
+
     override fun launchHomeOnDisplay(displayId: Int) {
         try {
-            // Launch Castla's DesktopActivity on the VD.
-            // -f 0x18000000 = FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK
+            // WebBrowserActivity 등 현재 떠 있는 모든 화면을 지우고 
+            // 런처(DesktopActivity)만 남기기 위해 FLAG_ACTIVITY_CLEAR_TOP 추가
             val cmd = "am start --display $displayId " +
                 "-n com.castla.mirror/.ui.DesktopActivity " +
-                "-f 0x18000000"
+                "-f 0x14000000" // 0x10000000 (NEW_TASK) | 0x04000000 (CLEAR_TOP)
             val result = execCommand(cmd)
-            Log.i(TAG, "Launched DesktopActivity on display $displayId: $result")
+            Log.i(TAG, "Launched DesktopActivity on display $displayId with CLEAR_TOP: $result")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch DesktopActivity on display $displayId", e)
         }

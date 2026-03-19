@@ -47,7 +47,18 @@
         <activity
             android:name=".ui.DesktopActivity"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.castla.mirror.desktop"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+
+        <!-- Web Browser Activity for DRM-restricted OTTs like YouTube and Netflix -->
+        <!-- Needs exact same taskAffinity and singleTop/standard launch mode so it stays on Virtual Display -->
+        <activity
+            android:name=".ui.WebBrowserActivity"
+            android:exported="true"
             android:launchMode="standard"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:hardwareAccelerated="true"
             android:taskAffinity="com.castla.mirror.desktop"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
 

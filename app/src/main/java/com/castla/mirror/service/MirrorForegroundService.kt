@@ -117,7 +117,12 @@ class MirrorForegroundService : Service() {
                     request.packageName
                 }
                 Log.i(TAG, "VD launch request: $component (video=${request.isVideoApp})")
-                virtualDisplayManager?.launchAppOnDisplay(component)
+                
+                if (request.intentExtra != null) {
+                    virtualDisplayManager?.launchAppWithExtraOnDisplay(component, "url", request.intentExtra)
+                } else {
+                    virtualDisplayManager?.launchAppOnDisplay(component)
+                }
 
                 // OTT bitrate boost: 1.5x (cap 6Mbps), debounced 500ms
                 val now = android.os.SystemClock.elapsedRealtime()

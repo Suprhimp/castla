@@ -13,13 +13,14 @@ object AppLaunchBus {
     data class LaunchRequest(
         val packageName: String,
         val className: String?,
-        val isVideoApp: Boolean = false
+        val isVideoApp: Boolean = false,
+        val intentExtra: String? = null
     )
 
     private val _events = MutableSharedFlow<LaunchRequest>(extraBufferCapacity = 8)
     val events = _events.asSharedFlow()
 
-    fun requestLaunch(packageName: String, className: String? = null, isVideoApp: Boolean = false) {
-        _events.tryEmit(LaunchRequest(packageName, className, isVideoApp))
+    fun requestLaunch(packageName: String, className: String? = null, isVideoApp: Boolean = false, intentExtra: String? = null) {
+        _events.tryEmit(LaunchRequest(packageName, className, isVideoApp, intentExtra))
     }
 }
