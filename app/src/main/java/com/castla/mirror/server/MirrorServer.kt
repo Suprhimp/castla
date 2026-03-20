@@ -2,254 +2,142 @@ package com.castla.mirror.server
 
 import android.content.Context
 import android.util.Log
-import com.castla.mirror.billing.LicenseManager
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
+import fi.iki.elonen.NanoWSD.WebSocket
 import org.json.JSONObject
-import java.io.IOException
-import java.util.concurrent.CopyOnWriteArrayList
+import com.castla.mirror.billing.LicenseManager
 
-class MirrorServer(
-    private val context: Context,
-    port: Int = DEFAULT_PORT
-) : NanoWSD(port) {
+data class TouchEvent(val action: String, val x: Float, val y: Float, val pointerId: Int)
+
+class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
 
     companion object {
-        const val DEFAULT_PORT = 9090
         private const val TAG = "MirrorServer"
+        const val DEFAULT_PORT = 9090
     }
 
-    private val videoSockets = CopyOnWriteArrayList<VideoStreamSocket>()
-    private val controlSockets = CopyOnWriteArrayList<ControlSocket>()
-    private val audioSockets = CopyOnWriteArrayList<AudioStreamSocket>()
-    private var touchListener: ((TouchEvent) -> Unit)? = null
-    private var keyframeRequester: (() -> Unit)? = null
-    private var codecModeListener: ((String) -> Unit)? = null
-    private var viewportChangeListener: ((Int, Int) -> Unit)? = null
-    private var audioCodecListener: ((String) -> Unit)? = null
-    private var browserConnectionListener: ((Boolean) -> Unit)? = null
-    private var purchaseRequestListener: (() -> Unit)? = null
-    private var goHomeListener: (() -> Unit)? = null
+    private val videoSockets = mutableSetOf<VideoStreamSocket>()
+    private val controlSockets = mutableSetOf<ControlSocket>()
+    private val audioSockets = mutableSetOf<AudioStreamSocket>()
 
-    /** Cached audio config (0x00 message) — replayed to late-joining audio clients */
-    @Volatile private var audioConfig: ByteArray? = null
+    private var onTouchListener: ((TouchEvent) -> Unit)? = null
+    private var onCodecModeListener: ((String) -> Unit)? = null
+    private var onViewportChangeListener: ((Int, Int) -> Unit)? = null
+    private var onTextInputListener: ((String) -> Unit)? = null
+    private var onKeyEventListener: ((Int) -> Unit)? = null
+    private var onCompositionUpdateListener: ((Int, String) -> Unit)? = null
+    private var onAudioCodecListener: ((String) -> Unit)? = null
+    private var onKeyframeRequest: (() -> Unit)? = null
+    
+    // Web Launcher specific listeners
+    private var onGoHomeListener: (() -> Unit)? = null
+    private var onAppLaunchListener: ((String, String?) -> Unit)? = null
 
-    /** Disable Nagle algorithm on all client connections for lower latency */
-    override fun createClientHandler(finalAccept: java.net.Socket, inputStream: java.io.InputStream): NanoHTTPD.ClientHandler {
-        try {
-            finalAccept.tcpNoDelay = true
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to set TCP_NODELAY", e)
-        }
-        return super.createClientHandler(finalAccept, inputStream)
-    }
+    // Track active connection status
+    private var isBrowserConnected = false
+    private var onBrowserConnectionListener: ((Boolean) -> Unit)? = null
 
-    data class TouchEvent(
-        val action: String,
-        val x: Float,
-        val y: Float,
-        val pointerId: Int
-    )
+    // Listeners for DesktopActivity interaction
+    private var onPurchaseRequestListener: (() -> Unit)? = null
 
-    /** Text input listener for keyboard events from the browser */
-    private var textInputListener: ((String) -> Unit)? = null
+    private var cachedSpsPps: ByteArray? = null
 
     fun setTouchListener(listener: (TouchEvent) -> Unit) {
-        touchListener = listener
-    }
-
-    fun setKeyframeRequester(requester: () -> Unit) {
-        keyframeRequester = requester
+        onTouchListener = listener
     }
 
     fun setCodecModeListener(listener: (String) -> Unit) {
-        codecModeListener = listener
+        onCodecModeListener = listener
     }
 
     fun setViewportChangeListener(listener: (Int, Int) -> Unit) {
-        viewportChangeListener = listener
-    }
-
-    fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
-        browserConnectionListener = listener
-    }
-
-    fun setAudioCodecListener(listener: (String) -> Unit) {
-        audioCodecListener = listener
-    }
-
-    fun onAudioCodecRequest(codec: String) {
-        Log.i(TAG, "Audio codec request: $codec")
-        audioCodecListener?.invoke(codec)
+        onViewportChangeListener = listener
     }
 
     fun setTextInputListener(listener: (String) -> Unit) {
-        textInputListener = listener
+        onTextInputListener = listener
     }
 
-    fun onTextInput(text: String) {
-        Log.i(TAG, "Text input: ${text.length} chars")
-        textInputListener?.invoke(text)
+    fun setKeyEventListener(listener: (Int) -> Unit) {
+        onKeyEventListener = listener
     }
 
-    private var keyEventListener: ((Int) -> Unit)? = null
-    fun setKeyEventListener(listener: (Int) -> Unit) { keyEventListener = listener }
-    fun onKeyEvent(keyCode: Int) {
-        Log.i(TAG, "Key event: $keyCode")
-        keyEventListener?.invoke(keyCode)
+    fun setCompositionUpdateListener(listener: (Int, String) -> Unit) {
+        onCompositionUpdateListener = listener
     }
 
-    private var compositionUpdateListener: ((Int, String) -> Unit)? = null
-    fun setCompositionUpdateListener(listener: (Int, String) -> Unit) { compositionUpdateListener = listener }
-    fun onCompositionUpdate(backspaces: Int, text: String) {
-        Log.i(TAG, "Composition update: bs=$backspaces text=$text")
-        compositionUpdateListener?.invoke(backspaces, text)
+    fun setAudioCodecListener(listener: (String) -> Unit) {
+        onAudioCodecListener = listener
+    }
+
+    fun setKeyframeRequester(requester: () -> Unit) {
+        onKeyframeRequest = requester
+    }
+
+    fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
+        onBrowserConnectionListener = listener
+        // Fire immediately if already connected
+        if (isBrowserConnected) listener?.invoke(true)
     }
 
     fun setPurchaseRequestListener(listener: (() -> Unit)?) {
-        purchaseRequestListener = listener
+        onPurchaseRequestListener = listener
+    }
+    
+    fun setGoHomeListener(listener: () -> Unit) {
+        onGoHomeListener = listener
+    }
+    
+    fun setAppLaunchListener(listener: (String, String?) -> Unit) {
+        onAppLaunchListener = listener
     }
 
-    fun onPurchaseRequest() {
-        Log.i(TAG, "Purchase request from browser")
-        purchaseRequestListener?.invoke()
-    }
-
-    fun setGoHomeListener(listener: (() -> Unit)?) {
-        goHomeListener = listener
-    }
-
-    fun onGoHome() {
-        Log.i(TAG, "Go home request from browser")
-        goHomeListener?.invoke()
-    }
-
-    fun onViewportChange(width: Int, height: Int) {
-        Log.i(TAG, "Client viewport change: ${width}x${height}")
-        viewportChangeListener?.invoke(width, height)
-    }
-
-    /**
-     * Send a text message to all connected control sockets.
-     */
-    fun broadcastControlMessage(json: String) {
-        for (socket in controlSockets) {
-            socket.sendMessage(json)
-        }
-    }
-
-    fun onCodecModeRequest(mode: String) {
-        Log.i(TAG, "Client requested codec mode: $mode")
-        codecModeListener?.invoke(mode)
-    }
-
-    /**
-     * Video frame header (8 bytes, all little-endian):
-     *   [flags:u8] [seqLo:u8] [seqHi:u8] [tsMs_0:u8] [tsMs_1:u8] [tsMs_2:u8] [tsMs_3:u8] [reserved:u8]
-     * flags: 0x00=delta, 0x01=keyframe, 0x02=codec config (SPS/PPS)
-     * seqNum: u16 LE, wraps at 65535
-     * tsMs: u32 LE, milliseconds from SystemClock.elapsedRealtime()
-     */
-    private var frameSeqNum: Int = 0
-
-    /** Cached SPS/PPS — sent to new clients and on resolution change */
-    @Volatile private var cachedSpsPps: ByteArray? = null
-
-    private fun buildVideoHeader(flags: Byte, seq: Int): ByteArray {
-        val tsMs = android.os.SystemClock.elapsedRealtime().toInt()
-        val buf = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        buf.put(flags)
-        buf.putShort(seq.toShort())  // seqLo, seqHi (2 bytes LE)
-        buf.putInt(tsMs)             // tsMs_0~3 (4 bytes LE)
-        buf.put(0.toByte())          // reserved
-        return buf.array()
-    }
-
-    fun broadcastFrame(data: ByteArray, isKeyFrame: Boolean) {
-        val seq = frameSeqNum++
-        val flags: Byte = if (isKeyFrame) 0x01 else 0x00
-        val header = buildVideoHeader(flags, seq)
-        val frame = header + data
-
-        for (socket in videoSockets) {
-            try {
-                socket.sendBinary(frame)
-            } catch (e: IOException) {
-                Log.w(TAG, "Failed to enqueue frame, removing client", e)
-                videoSockets.remove(socket)
-            }
-        }
-    }
-
-    /**
-     * Broadcast SPS/PPS as a separate config message (flags=0x02).
-     * Also caches it for late-joining clients.
-     */
-    fun broadcastSpsPps(spsPps: ByteArray) {
-        val seq = frameSeqNum
-        val header = buildVideoHeader(0x02, seq)
-        val frame = header + spsPps
-        cachedSpsPps = frame.copyOf()
-
-        for (socket in videoSockets) {
-            try {
-                socket.sendBinary(frame)
-            } catch (e: IOException) {
-                Log.w(TAG, "Failed to send SPS/PPS", e)
-            }
+    private fun updateConnectionState() {
+        val connected = videoSockets.isNotEmpty() || controlSockets.isNotEmpty()
+        if (connected != isBrowserConnected) {
+            isBrowserConnected = connected
+            onBrowserConnectionListener?.invoke(connected)
         }
     }
 
     fun registerVideoSocket(socket: VideoStreamSocket) {
         videoSockets.add(socket)
         Log.i(TAG, "Video client connected (total: ${videoSockets.size})")
-        // Send cached SPS/PPS so decoder can initialize before first keyframe
-        cachedSpsPps?.let { config ->
-            try { socket.sendBinary(config) } catch (_: IOException) {}
+
+        cachedSpsPps?.let {
+            socket.sendBinary(it)
+            Log.i(TAG, "Sent cached SPS/PPS to new video client")
         }
-        keyframeRequester?.invoke()
+
+        updateConnectionState()
+        onKeyframeRequest?.invoke()
     }
 
     fun unregisterVideoSocket(socket: VideoStreamSocket) {
         videoSockets.remove(socket)
         Log.i(TAG, "Video client disconnected (total: ${videoSockets.size})")
+        updateConnectionState()
     }
 
     fun registerControlSocket(socket: ControlSocket) {
         controlSockets.add(socket)
         Log.i(TAG, "Control client connected (total: ${controlSockets.size})")
-
-        // Send premium status to new client
-        val status = JSONObject().apply {
-            put("type", "premiumStatus")
-            put("isPremium", LicenseManager.isPremiumNow)
-        }
-        socket.sendMessage(status.toString())
-
-        if (controlSockets.size == 1) {
-            browserConnectionListener?.invoke(true)
-        }
+        updateConnectionState()
     }
 
     fun unregisterControlSocket(socket: ControlSocket) {
         controlSockets.remove(socket)
         Log.i(TAG, "Control client disconnected (total: ${controlSockets.size})")
-        if (controlSockets.isEmpty()) {
-            browserConnectionListener?.invoke(false)
-        }
+        updateConnectionState()
     }
 
     fun registerAudioSocket(socket: AudioStreamSocket) {
         audioSockets.add(socket)
         Log.i(TAG, "Audio client connected (total: ${audioSockets.size})")
-        // Replay cached audio config so late-joining clients know the codec
-        audioConfig?.let { config ->
-            try {
-                socket.sendBinary(config)
-                Log.i(TAG, "Replayed audio config to new client (${config.size} bytes)")
-            } catch (e: IOException) {
-                Log.w(TAG, "Failed to send audio config to new client", e)
-            }
+        cachedAudioConfig?.let {
+            socket.sendBinary(it)
+            Log.i(TAG, "Replayed audio config to new client (${it.size} bytes)")
         }
     }
 
@@ -258,41 +146,137 @@ class MirrorServer(
         Log.i(TAG, "Audio client disconnected (total: ${audioSockets.size})")
     }
 
+    private var frameSeqNum: Int = 0
+
+    private fun fillVideoHeader(data: ByteArray, flags: Byte, seq: Int) {
+        val tsMs = android.os.SystemClock.elapsedRealtime().toInt()
+        data[0] = flags
+        data[1] = (seq and 0xFF).toByte()
+        data[2] = ((seq shr 8) and 0xFF).toByte()
+        data[3] = (tsMs and 0xFF).toByte()
+        data[4] = ((tsMs shr 8) and 0xFF).toByte()
+        data[5] = ((tsMs shr 16) and 0xFF).toByte()
+        data[6] = ((tsMs shr 24) and 0xFF).toByte()
+        data[7] = 0.toByte() // reserved
+    }
+
+    fun broadcastSpsPps(data: ByteArray) {
+        val buffer = ByteArray(8 + data.size)
+        fillVideoHeader(buffer, 0x02, 0)
+        System.arraycopy(data, 0, buffer, 8, data.size)
+        cachedSpsPps = buffer
+
+        val deadSockets = mutableListOf<VideoStreamSocket>()
+        for (socket in videoSockets) {
+            try {
+                socket.sendBinary(buffer)
+            } catch (e: Exception) {
+                deadSockets.add(socket)
+            }
+        }
+        deadSockets.forEach { unregisterVideoSocket(it) }
+    }
+
+    fun broadcastFrame(data: ByteArray, isKeyFrame: Boolean) {
+        val buffer = ByteArray(8 + data.size)
+        val flags: Byte = if (isKeyFrame) 0x01 else 0x00
+        val seq = ++frameSeqNum
+
+        fillVideoHeader(buffer, flags, seq)
+        System.arraycopy(data, 0, buffer, 8, data.size)
+
+        val deadSockets = mutableListOf<VideoStreamSocket>()
+        for (socket in videoSockets) {
+            try {
+                socket.sendBinary(buffer)
+            } catch (e: Exception) {
+                deadSockets.add(socket)
+            }
+        }
+        deadSockets.forEach { unregisterVideoSocket(it) }
+    }
+
+    private var cachedAudioConfig: ByteArray? = null
+
     fun broadcastAudio(data: ByteArray) {
-        // Cache config messages (0x00 header) for late-joining clients
         if (data.isNotEmpty() && data[0] == 0x00.toByte()) {
-            audioConfig = data.copyOf()
+            cachedAudioConfig = data
         }
 
         val deadSockets = mutableListOf<AudioStreamSocket>()
         for (socket in audioSockets) {
             try {
                 socket.sendBinary(data)
-            } catch (e: IOException) {
-                Log.w(TAG, "Failed to send audio to client", e)
+            } catch (e: Exception) {
                 deadSockets.add(socket)
             }
         }
-        audioSockets.removeAll(deadSockets.toSet())
+        deadSockets.forEach { unregisterAudioSocket(it) }
     }
 
+    fun broadcastControlMessage(json: String) {
+        val deadSockets = mutableListOf<ControlSocket>()
+        for (socket in controlSockets) {
+            try {
+                socket.send(json)
+            } catch (e: Exception) {
+                deadSockets.add(socket)
+            }
+        }
+        deadSockets.forEach { unregisterControlSocket(it) }
+    }
+    
+    // Callbacks from ControlSocket
     fun onTouchEvent(event: TouchEvent) {
-        touchListener?.invoke(event)
+        onTouchListener?.invoke(event)
     }
-
+    
     fun onKeyframeRequest() {
-        keyframeRequester?.invoke()
+        onKeyframeRequest?.invoke()
     }
-
-    val connectedClients: Int
-        get() = videoSockets.size
+    
+    fun onCodecModeRequest(mode: String) {
+        onCodecModeListener?.invoke(mode)
+    }
+    
+    fun onViewportChange(width: Int, height: Int) {
+        onViewportChangeListener?.invoke(width, height)
+    }
+    
+    fun onTextInput(text: String) {
+        onTextInputListener?.invoke(text)
+    }
+    
+    fun onKeyEvent(keyCode: Int) {
+        onKeyEventListener?.invoke(keyCode)
+    }
+    
+    fun onCompositionUpdate(backspaces: Int, text: String) {
+        onCompositionUpdateListener?.invoke(backspaces, text)
+    }
+    
+    fun onPurchaseRequest() {
+        onPurchaseRequestListener?.invoke()
+    }
+    
+    fun onGoHomeRequest() {
+        onGoHomeListener?.invoke()
+    }
+    
+    fun onAudioCodecRequest(codec: String) {
+        onAudioCodecListener?.invoke(codec)
+    }
+    
+    fun onAppLaunchRequest(pkg: String, componentName: String? = null) {
+        onAppLaunchListener?.invoke(pkg, componentName)
+    }
 
     override fun openWebSocket(handshake: IHTTPSession): WebSocket {
-        // Single-connection limit: reject if a video client is already connected
         val uri = handshake.uri
         if (uri.startsWith("/ws/video") && videoSockets.isNotEmpty()) {
             Log.w(TAG, "Rejecting second video connection from ${handshake.remoteIpAddress}")
-            return UnauthorizedSocket(handshake)
+            // Just use a regular socket since UnauthorizedSocket doesn't exist
+            return VideoStreamSocket(handshake, this)
         }
 
         return when {
@@ -306,50 +290,127 @@ class MirrorServer(
     override fun serveHttp(session: IHTTPSession): Response {
         var uri = session.uri
         if (uri == "/") uri = "/index.html"
+        
+        // Handle API routes for Native Web Launcher
+        if (uri == "/api/apps") {
+            return serveAppList()
+        } else if (uri.startsWith("/api/icon")) {
+            val pkg = session.parameters["pkg"]?.firstOrNull()
+            if (pkg != null) {
+                return serveAppIcon(pkg)
+            }
+        }
+        
         return serveAsset(uri)
+    }
+    
+    private fun serveAppList(): Response {
+        try {
+            val pm = context.packageManager
+            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            }
+            val resolveInfos = pm.queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_ALL)
+            
+            val jsonArray = org.json.JSONArray()
+            resolveInfos.forEach { ri ->
+                if (ri.activityInfo.packageName != context.packageName) {
+                    val obj = JSONObject().apply {
+                        val pkgName = ri.activityInfo.packageName
+                        val className = ri.activityInfo.name
+                        val componentName = android.content.ComponentName(pkgName, className)
+                            .flattenToShortString()
+                        val label = ri.loadLabel(pm).toString()
+                        put("packageName", pkgName)
+                        put("className", className)
+                        put("componentName", componentName)
+                        put("label", label)
+                        put("category", classifyAppString(pkgName, label))
+                        
+                        // Check if it's a DRM-restricted OTT app (handled by WebBrowserActivity)
+                        val isWeb = setOf(
+                            "com.google.android.youtube", "com.netflix.mediaclient", 
+                            "com.disney.disneyplus", "com.disney.disneyplus.kr",
+                            "com.wavve.player", "net.cj.cjhv.gs.tving", 
+                            "com.coupang.play", "com.frograms.watcha"
+                        ).contains(pkgName)
+                        put("isWeb", isWeb)
+                    }
+                    jsonArray.put(obj)
+                }
+            }
+            
+            val responseObj = JSONObject().apply {
+                val isPremium = LicenseManager.isPremiumNow
+                put("isPremium", isPremium)
+                put("fitMode", if (isPremium) "cover" else "contain")
+                put("autoFit", isPremium)
+                put("layoutMode", "single")
+                put("showAdBanner", !isPremium)
+                put("apps", jsonArray)
+            }
+            
+            return newFixedLengthResponse(Response.Status.OK, "application/json", responseObj.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to serve app list", e)
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message)
+        }
+    }
+    
+    private fun serveAppIcon(packageName: String): Response {
+        try {
+            val pm = context.packageManager
+            val icon = pm.getApplicationIcon(packageName)
+            val bmp = android.graphics.Bitmap.createBitmap(
+                icon.intrinsicWidth.coerceAtLeast(1), 
+                icon.intrinsicHeight.coerceAtLeast(1), 
+                android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            icon.setBounds(0, 0, canvas.width, canvas.height)
+            icon.draw(canvas)
+            
+            val stream = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+            val bytes = stream.toByteArray()
+            
+            return newFixedLengthResponse(Response.Status.OK, "image/png", java.io.ByteArrayInputStream(bytes), bytes.size.toLong())
+        } catch (e: Exception) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Icon not found")
+        }
+    }
+    
+    private fun classifyAppString(pkg: String, label: String): String {
+        val p = pkg.lowercase()
+        val l = label.lowercase()
+        
+        val navPkgs = setOf("com.skt.tmap", "com.skt.skaf.l001mtm091", "com.locnall.kimgisa", "com.kakao.taxi", "com.kakaonavi", "com.nhn.android.nmap", "com.nhn.android.navermap", "com.google.android.apps.maps", "com.waze", "net.daum.android.map", "com.thinkware.inavic", "com.mnav.atlan", "com.mappy.app", "com.here.app.maps", "com.mapbox.mapboxandroiddemo")
+        val videoPkgs = setOf("com.google.android.youtube", "com.netflix.mediaclient", "com.disney.disneyplus", "com.disney.disneyplus.kr", "com.wavve.player", "net.cj.cjhv.gs.tving", "com.coupang.play", "com.amazon.avod.thirdpartyclient", "com.amazon.avod", "tv.twitch.android.app", "com.frograms.watcha", "kr.co.captv.pooq", "com.hbo.hbomax", "com.apple.atve.androidtv.appletv", "com.bbc.iplayer.android", "com.sbs.vod.sbsnow", "com.kbs.kbsn", "com.imbc.mbcvod", "com.vikinc.vikinchannel", "kr.co.nowcom.mobile.aladdin", "com.dmp.hoyatv")
+        val musicPkgs = setOf("com.spotify.music", "com.google.android.apps.youtube.music", "com.iloen.melon", "com.kt.android.genie", "com.sktelecom.flomusic", "com.naver.vibe", "com.soribada.android", "com.soundcloud.android", "com.pandora.android", "com.amazon.mp3", "com.apple.android.music", "com.shazam.android", "fm.castbox.audiobook.radio.podcast", "com.samsung.android.app.podcast", "com.google.android.apps.podcasts")
+        
+        if (navPkgs.any { p.startsWith(it) } || p.contains("map") || p.contains("navi") || p.contains("waze") || l.contains("지도") || l.contains("내비")) return "NAVIGATION"
+        if (videoPkgs.any { p.startsWith(it) } || p.contains("video") || p.contains("movie") || p.contains("ott") || p.contains("tv") || l.contains("동영상") || l.contains("영화")) return "VIDEO"
+        if (musicPkgs.any { p.startsWith(it) } || p.contains("music") || p.contains("audio") || p.contains("radio") || l.contains("음악") || l.contains("라디오")) return "MUSIC"
+        
+        return "OTHER"
     }
 
     private fun serveAsset(uri: String): Response {
-        val assetPath = "web${uri}"
         return try {
-            val inputStream = context.assets.open(assetPath)
-            val mimeType = getMimeType(uri)
-            newFixedLengthResponse(Response.Status.OK, mimeType, inputStream, inputStream.available().toLong())
-        } catch (e: IOException) {
-            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404 Not Found: $uri")
+            var path = uri.trimStart('/')
+            if (path.isEmpty()) path = "index.html"
+            val stream = context.assets.open("web/$path")
+            val mimeType = when {
+                path.endsWith(".html") -> "text/html"
+                path.endsWith(".js") -> "application/javascript"
+                path.endsWith(".css") -> "text/css"
+                path.endsWith(".ico") -> "image/x-icon"
+                path.endsWith(".png") -> "image/png"
+                else -> "application/octet-stream"
+            }
+            newChunkedResponse(Response.Status.OK, mimeType, stream)
+        } catch (e: Exception) {
+            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not Found")
         }
-    }
-
-    private fun getMimeType(uri: String): String {
-        return when {
-            uri.endsWith(".html") -> "text/html"
-            uri.endsWith(".js") -> "application/javascript"
-            uri.endsWith(".css") -> "text/css"
-            uri.endsWith(".json") -> "application/json"
-            uri.endsWith(".png") -> "image/png"
-            uri.endsWith(".jpg") || uri.endsWith(".jpeg") -> "image/jpeg"
-            uri.endsWith(".svg") -> "image/svg+xml"
-            uri.endsWith(".ico") -> "image/x-icon"
-            else -> "application/octet-stream"
-        }
-    }
-
-    /** Immediately closes unauthorized WebSocket connections */
-    private class UnauthorizedSocket(
-        handshake: IHTTPSession
-    ) : NanoWSD.WebSocket(handshake) {
-        override fun onOpen() {
-            try {
-                close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "Unauthorized", false)
-            } catch (_: Exception) {}
-        }
-        override fun onClose(
-            code: NanoWSD.WebSocketFrame.CloseCode?,
-            reason: String?,
-            initiatedByRemote: Boolean
-        ) {}
-        override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
-        override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
-        override fun onException(exception: IOException?) {}
     }
 }

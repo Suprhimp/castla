@@ -1,5 +1,8 @@
 package com.castla.mirror.shizuku
 
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.SystemClock
@@ -219,18 +222,60 @@ class PrivilegedService : IPrivilegedService.Stub() {
         }
     }
 
+    private fun escapeShellArg(value: String): String {
+        return "'" + value.replace("'", "'\\''") + "'"
+    }
+
+    private fun resolveLaunchComponent(packageOrComponent: String): String? {
+        if (packageOrComponent.contains('/')) return packageOrComponent
+
+        val ctx = shellContext ?: return null
+        return try {
+            val pm = ctx.packageManager
+            val launchIntent = pm.getLaunchIntentForPackage(packageOrComponent)
+            val component = launchIntent?.component ?: run {
+                val intent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    `package` = packageOrComponent
+                }
+                pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+                    .firstOrNull()
+                    ?.activityInfo
+                    ?.let { ComponentName(it.packageName, it.name) }
+            }
+            component?.flattenToShortString()?.also {
+                Log.i(TAG, "Resolved launcher component for $packageOrComponent -> $it")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to resolve launcher component for $packageOrComponent", e)
+            null
+        }
+    }
+
+    private fun buildLaunchCommand(
+        displayId: Int,
+        packageOrComponent: String,
+        extraKey: String? = null,
+        extraValue: String? = null
+    ): String {
+        val resolvedComponent = resolveLaunchComponent(packageOrComponent)
+        return buildString {
+            append("am start -W --display $displayId -f 0x18000000 ")
+            if (resolvedComponent != null) {
+                append("-n ${escapeShellArg(resolvedComponent)} ")
+            } else {
+                append("-a android.intent.action.MAIN -c android.intent.category.LAUNCHER ")
+                append("-p ${escapeShellArg(packageOrComponent)} ")
+            }
+            if (!extraKey.isNullOrEmpty() && extraValue != null) {
+                append("--es $extraKey ${escapeShellArg(extraValue)} ")
+            }
+        }.trim()
+    }
+
     override fun launchAppOnDisplay(displayId: Int, packageName: String) {
         try {
-            val cmd = if (packageName.contains("/")) {
-                // Component name format: "com.pkg/com.pkg.Activity"
-                "am start --display $displayId -n $packageName -f 0x18000000 " +
-                    "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
-            } else {
-                // Package name only: try LAUNCHER category
-                "am start --display $displayId -f 0x18000000 " +
-                    "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
-                    packageName
-            }
+            val cmd = buildLaunchCommand(displayId, packageName)
             val result = execCommand(cmd)
             Log.i(TAG, "Launched $packageName on display $displayId: $result")
         } catch (e: Exception) {
@@ -240,16 +285,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun launchAppWithExtraOnDisplay(displayId: Int, packageName: String, extraKey: String, extraValue: String) {
         try {
-            val cmd = if (packageName.contains("/")) {
-                // -f 0x18000000 is FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_MULTIPLE_TASK
-                "am start --display $displayId -n $packageName -f 0x18000000 " +
-                    "--es $extraKey '$extraValue'"
-            } else {
-                "am start --display $displayId -f 0x18000000 " +
-                    "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
-                    "--es $extraKey '$extraValue' " +
-                    packageName
-            }
+            val cmd = buildLaunchCommand(displayId, packageName, extraKey, extraValue)
             val result = execCommand(cmd)
             Log.i(TAG, "Launched $packageName with extra on display $displayId: $result")
         } catch (e: Exception) {

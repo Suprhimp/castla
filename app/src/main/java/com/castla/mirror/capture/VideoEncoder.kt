@@ -3,6 +3,7 @@ package com.castla.mirror.capture
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
@@ -62,6 +63,12 @@ class VideoEncoder(
             setInteger(MediaFormat.KEY_LEVEL, level)
             // Low latency hints
             setInteger(MediaFormat.KEY_LATENCY, 0)
+            
+            // Push hardware encoder to max operating rate for absolute minimum encoding delay
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                setInteger(MediaFormat.KEY_OPERATING_RATE, 120)
+            }
+            
             // Repeat last frame if no new input for 100ms — ensures output even on static screens
             setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000) // microseconds
             setInteger(MediaFormat.KEY_PRIORITY, 0) // real-time priority
@@ -110,10 +117,13 @@ class VideoEncoder(
                     }
 
                     if (info.size > 0) {
-                        val data = ByteArray(info.size)
+                        // ZERO-COPY OPTIMIZATION: 
+                        // Pre-allocate 8 bytes at the front of the array for the network header.
+                        // This prevents creating a second ByteArray during socket transmission.
+                        val data = ByteArray(info.size + 8)
                         buffer.position(info.offset)
                         buffer.limit(info.offset + info.size)
-                        buffer.get(data)
+                        buffer.get(data, 8, info.size) // Write video data starting at index 8
 
                         val isKeyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
                         onEncodedFrame(data, isKeyFrame)

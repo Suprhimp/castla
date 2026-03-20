@@ -230,9 +230,17 @@ class MirrorForegroundService : Service() {
                     server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
                     server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
                     server.setGoHomeListener {
-                        Log.i(TAG, "Navigating to home (DesktopActivity)")
-                        virtualDisplayManager?.launchHomeOnDisplay()
+                        Log.i(TAG, "Navigating to home (DesktopActivity) requested by Web Launcher")
+                        // Web Launcher 기반에서는 홈 화면이 웹(테슬라 브라우저)이므로 
+                        // 안드로이드 쪽에서는 아무 앱도 안 띄우거나 그냥 대기하면 됨.
+                        // 이전에 열어둔 앱들을 죽여서 자원을 정리
+                        virtualDisplayManager?.launchHomeOnDisplay() 
                         currentVdApp = "HOME"
+                    }
+                    server.setAppLaunchListener { pkgName, componentName ->
+                        // 웹 런처에서 앱 실행 요청이 들어오면 기존 DesktopActivity 내장 로직과 
+                        // 동일하게 OTT는 WebBrowserActivity로, 나머지는 일반 앱으로 실행
+                        launchAppFromWebLauncher(pkgName, componentName)
                     }
 
                     // Internal listener: when browser connects, launch target app on VD
@@ -265,9 +273,9 @@ class MirrorForegroundService : Service() {
                 // If Shizuku unavailable: fall back to MediaProjection (FULL_SCREEN only).
                 trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
                     if (shizukuActive) {
-                        // Always launch DesktopActivity first — it provides a visible
-                        // app grid so the encoder starts producing frames immediately.
-                        // User picks apps from the browser via touch.
+                        // Web Launcher 방식에서는 처음엔 앱을 띄우지 않아도 됨.
+                        // 백그라운드를 검은색(DesktopActivity)으로 둬서 
+                        // 미러링 화면으로 넘어갔을 때 깔끔하게 보이게 함.
                         virtualDisplayManager?.launchHomeOnDisplay()
                         currentVdApp = "HOME"
                     } else {
@@ -307,6 +315,59 @@ class MirrorForegroundService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start pipeline", e)
             stopSelf()
+        }
+    }
+    
+    private val OTT_WEB_URLS = mapOf(
+        "com.google.android.youtube" to "https://m.youtube.com",
+        "com.netflix.mediaclient" to "https://www.netflix.com",
+        "com.disney.disneyplus" to "https://www.disneyplus.com",
+        "com.disney.disneyplus.kr" to "https://www.disneyplus.com",
+        "com.wavve.player" to "https://m.wavve.com",
+        "net.cj.cjhv.gs.tving" to "https://www.tving.com",
+        "com.coupang.play" to "https://www.coupangplay.com",
+        "com.frograms.watcha" to "https://watcha.com"
+    )
+
+    private fun launchAppFromWebLauncher(pkgName: String, componentName: String? = null) {
+        val webUrl = OTT_WEB_URLS[pkgName]
+        if (webUrl != null) {
+            Log.i(TAG, "Web Launcher: Launching DRM-restricted OTT app via WebBrowserActivity: $pkgName -> $webUrl")
+            val webComponentName = "com.castla.mirror/com.castla.mirror.ui.WebBrowserActivity"
+            
+            // WebBrowserActivity를 가상 디스플레이에 띄웁니다.
+            virtualDisplayManager?.launchAppWithExtraOnDisplay(webComponentName, "url", webUrl)
+            
+            // Boost bitrate
+            val boosted = minOf((currentBitrate * 1.5).toInt(), 6_000_000)
+            videoEncoder?.setBitrate(boosted)
+            isCurrentAppVideo = true
+            currentVdApp = webComponentName
+        } else {
+            val launchTarget = componentName ?: pkgName
+            Log.i(TAG, "Web Launcher: Launching standard app: $pkgName (target=$launchTarget)")
+            
+            // 웹 런처는 componentName 을 알고 있으므로 가능한 한 명시적 컴포넌트로 실행한다.
+            // 패키지명-only launch 는 일부 셸/펌웨어에서 Intent resolve 실패가 날 수 있다.
+            virtualDisplayManager?.launchAppOnDisplay(launchTarget)
+            
+            // Restore bitrate
+            videoEncoder?.setBitrate(currentBitrate)
+            isCurrentAppVideo = false
+            currentVdApp = launchTarget
+        }
+        
+        // 중요: MJPEG 모드일 때 화면 갱신을 위해 프레임 전송을 자극
+        if (currentCodecMode == "mjpeg") {
+            Log.i(TAG, "Web Launcher: Triggering screen capture for MJPEG mode")
+            // 가상 디스플레이에 입력 이벤트를 주거나, 화면을 강제로 한 번 갱신하도록 하면
+            // 멈춰있던 JpegEncoder가 화면 변화를 감지하고 스트리밍을 재개합니다.
+            // 안드로이드 14+ 에서는 화면 변화가 없으면 ImageReader가 프레임을 주지 않습니다.
+            touchInjector?.onTouchEvent(com.castla.mirror.server.TouchEvent("down", 0.5f, 0.5f, 99))
+            kotlinx.coroutines.GlobalScope.launch {
+                kotlinx.coroutines.delay(50)
+                touchInjector?.onTouchEvent(com.castla.mirror.server.TouchEvent("up", 0.5f, 0.5f, 99))
+            }
         }
     }
 
@@ -353,18 +414,17 @@ class MirrorForegroundService : Service() {
             // Handle Shizuku service reconnection after death
             vdm.reconnectListener = {
                 val surf = currentEncoderSurface
-                if (surf != null && !vdm.hasVirtualDisplay()) {
-                    Log.i(TAG, "Shizuku reconnected — recreating VD and relaunching home")
+                if (surf != null) {
+                    Log.i(TAG, "Shizuku reconnected — recreating VD and restoring current content")
                     vdm.createVirtualDisplay(currentWidth, currentHeight, 160, surf)
                     if (vdm.hasVirtualDisplay()) {
                         touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                             vdm.injectInput(action, x, y, pointerId)
                         }
-                        vdm.launchHomeOnDisplay()
-                        currentVdApp = "HOME"
+                        restoreCurrentVdContent()
                     }
                 } else {
-                    Log.i(TAG, "Shizuku reconnected but VD already exists or no surface, skipping")
+                    Log.i(TAG, "Shizuku reconnected but no surface is available yet, skipping")
                 }
             }
 
@@ -404,6 +464,19 @@ class MirrorForegroundService : Service() {
     private fun onBrowserConnected() {
         Log.i(TAG, "Browser connected — mode=$mirroringMode, currentVdApp=$currentVdApp")
         // No action needed — apps are launched when VD is created
+    }
+
+    private fun restoreCurrentVdContent() {
+        val vdm = virtualDisplayManager ?: return
+        when (currentVdApp) {
+            "HOME", "", "com.android.settings" -> {
+                vdm.launchHomeOnDisplay()
+                currentVdApp = "HOME"
+            }
+            else -> {
+                vdm.launchAppOnDisplay(currentVdApp)
+            }
+        }
     }
 
     /**
@@ -522,8 +595,8 @@ class MirrorForegroundService : Service() {
     private fun onViewportChange(width: Int, height: Int) {
         resizeJob?.cancel()
         resizeJob = serviceScope.launch {
-            if (currentCodecMode == "mjpeg") {
-                // MJPEG mode: skip viewport rebuild (JPEG doesn't benefit from resize)
+            if (currentCodecMode == "mjpeg" && !LicenseManager.isPremiumNow) {
+                // Free tier MJPEG keeps a fixed capture size and uses client-side contain layout.
                 return@launch
             }
             rebuildPipeline(width, height)
@@ -567,27 +640,44 @@ class MirrorForegroundService : Service() {
             "bitrate=${newBitrate / 1000}kbps, dpi=$dpi")
 
         try {
-            // 1. Release old video encoder
-            videoEncoder?.release()
-            videoEncoder = null
+            val surface = if (currentCodecMode == "mjpeg") {
+                videoEncoder?.release()
+                videoEncoder = null
+                jpegEncoder?.release()
+                jpegEncoder = null
 
-            // 2. Create new VideoEncoder at new dimensions
-            val encoder = VideoEncoder(width, height, newBitrate, currentFps)
-            val surface = encoder.createInputSurface()
-            currentEncoderSurface = surface
-            videoEncoder = encoder
+                val jpeg = JpegEncoder(width, height, fps = 15, quality = 65)
+                val jpegSurface = jpeg.createInputSurface()
+                currentEncoderSurface = jpegSurface
+                jpeg.start { frameData, isKeyFrame ->
+                    mirrorServer?.broadcastFrame(frameData, isKeyFrame)
+                }
+                jpegEncoder = jpeg
+                jpegSurface
+            } else {
+                // 1. Release old video encoder
+                videoEncoder?.release()
+                videoEncoder = null
+
+                // 2. Create new VideoEncoder at new dimensions
+                val encoder = VideoEncoder(width, height, newBitrate, currentFps)
+                val encoderSurface = encoder.createInputSurface()
+                currentEncoderSurface = encoderSurface
+                videoEncoder = encoder
+
+                // 4. Start encoder with broadcast callback
+                encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
+                encoder.start { frameData, isKeyFrame ->
+                    mirrorServer?.broadcastFrame(frameData, isKeyFrame)
+                }
+
+                // 5. Wire up keyframe requester to new encoder
+                mirrorServer?.setKeyframeRequester { encoder.requestKeyFrame() }
+                encoderSurface
+            }
 
             // 3. Update touch injector dimensions
             touchInjector?.updateDimensions(width, height)
-
-            // 4. Start encoder with broadcast callback
-            encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
-            encoder.start { frameData, isKeyFrame ->
-                mirrorServer?.broadcastFrame(frameData, isKeyFrame)
-            }
-
-            // 5. Wire up keyframe requester to new encoder
-            mirrorServer?.setKeyframeRequester { encoder.requestKeyFrame() }
 
             // 6. Reconnect capture to new encoder surface
             if (virtualDisplayManager?.isBound() == true) {
@@ -598,9 +688,7 @@ class MirrorForegroundService : Service() {
                     touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                         virtualDisplayManager?.injectInput(action, x, y, pointerId)
                     }
-                    // Re-launch DesktopActivity on VD to ensure content renders
-                    virtualDisplayManager?.launchHomeOnDisplay()
-                    currentVdApp = "HOME"
+                    restoreCurrentVdContent()
                     Log.i(TAG, "Virtual display recreated at ${width}x${height}")
                 } else {
                     screenCapture?.reconfigure(surface, width, height)
@@ -646,6 +734,7 @@ class MirrorForegroundService : Service() {
             // Create JPEG encoder with lower FPS to save bandwidth
             val jpeg = JpegEncoder(currentWidth, currentHeight, fps = 15, quality = 65)
             val surface = jpeg.createInputSurface()
+            currentEncoderSurface = surface
 
             // Stop H.264 encoder
             videoEncoder?.release()
@@ -660,17 +749,33 @@ class MirrorForegroundService : Service() {
             // Re-capture screen to the new JPEG surface
             // Try Shizuku VD first, then MediaProjection fallback
             if (virtualDisplayManager?.hasVirtualDisplay() == true) {
-                // VD already active — just change its surface
-                // Note: VD surface change may not be supported, fall through to MediaProjection
-                Log.i(TAG, "VD active, cannot switch surface easily — using MediaProjection")
-            }
-
-            // Use MediaProjection to capture to JPEG surface
-            try {
-                screenCapture?.startCapture(surface, currentWidth, currentHeight)
-                Log.i(TAG, "MJPEG capture started via MediaProjection at ${currentWidth}x${currentHeight}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start MJPEG capture", e)
+                // Recreate the VD instead of only swapping surfaces. This survives the case where
+                // the Shizuku service was restarted and lost its internal display map.
+                Log.i(TAG, "VD active, recreating virtual display for MJPEG surface")
+                virtualDisplayManager?.releaseVirtualDisplay()
+                virtualDisplayManager?.createVirtualDisplay(currentWidth, currentHeight, 160, surface)
+                if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                    touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                        virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                    }
+                    restoreCurrentVdContent()
+                } else {
+                    Log.w(TAG, "MJPEG VD recreate failed, falling back to MediaProjection")
+                    try {
+                        screenCapture?.startCapture(surface, currentWidth, currentHeight)
+                        Log.i(TAG, "MJPEG capture started via MediaProjection at ${currentWidth}x${currentHeight}")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start MJPEG capture", e)
+                    }
+                }
+            } else {
+                // Use MediaProjection to capture to JPEG surface
+                try {
+                    screenCapture?.startCapture(surface, currentWidth, currentHeight)
+                    Log.i(TAG, "MJPEG capture started via MediaProjection at ${currentWidth}x${currentHeight}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start MJPEG capture", e)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to switch to MJPEG", e)

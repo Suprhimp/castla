@@ -65,7 +65,10 @@ class VirtualDisplayManager {
                         callbackFired = true
                         callback(true)
                     } else {
-                        // Reconnect after service death — notify listener to recreate VD
+                        // Reconnect after service death — any previous displayId is now stale because
+                        // PrivilegedService keeps the VirtualDisplay map in-process.
+                        virtualDisplay = null
+                        displayId = -1
                         Log.i(TAG, "Shizuku service reconnected (was dead), notifying listener")
                         reconnectListener?.invoke()
                     }
@@ -134,6 +137,17 @@ class VirtualDisplayManager {
             Log.e(TAG, "Failed to create virtual display via Shizuku", e)
             displayId = -1
             null
+        }
+    }
+    
+    fun setSurface(surface: Surface) {
+        if (displayId >= 0 && privilegedService != null) {
+            try {
+                privilegedService?.setSurface(displayId, surface)
+                Log.i(TAG, "Surface updated on Virtual Display $displayId")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update surface on VD", e)
+            }
         }
     }
 

@@ -40,7 +40,7 @@ class ControlSocket(
 
             when (type) {
                 "touch" -> {
-                    val event = MirrorServer.TouchEvent(
+                    val event = TouchEvent(
                         action = json.getString("action"),
                         x = json.getDouble("x").toFloat(),
                         y = json.getDouble("y").toFloat(),
@@ -83,7 +83,19 @@ class ControlSocket(
                     server.onPurchaseRequest()
                 }
                 "goHome" -> {
-                    server.onGoHome()
+                    server.onGoHomeRequest()
+                }
+                "audioCodec" -> {
+                    val codec = json.optString("codec", "")
+                    server.onAudioCodecRequest(codec)
+                }
+                "launchApp" -> {
+                    val pkg = json.optString("pkg", "")
+                    val componentName = json.optString("componentName", "")
+                        .takeIf { it.isNotEmpty() }
+                    if (pkg.isNotEmpty()) {
+                        server.onAppLaunchRequest(pkg, componentName)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -105,18 +117,7 @@ class ControlSocket(
         val x = buf.float
         val y = buf.float
         Log.d(TAG, "Touch: $action id=$id x=${"%.3f".format(x)} y=${"%.3f".format(y)}")
-        server.onTouchEvent(MirrorServer.TouchEvent(action, x, y, id))
-    }
-
-    /**
-     * Send a text message to this control socket client.
-     */
-    fun sendMessage(text: String) {
-        try {
-            send(text)
-        } catch (e: IOException) {
-            Log.w(TAG, "Failed to send control message", e)
-        }
+        server.onTouchEvent(TouchEvent(action, x, y, id))
     }
 
     override fun onPong(pong: NanoWSD.WebSocketFrame?) {}

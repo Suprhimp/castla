@@ -103,8 +103,13 @@ class VideoStreamSocket(
             sendQueue.offer(data)
         } else {
             // Delta frame: if queue full, drop oldest (which is also a delta)
-            while (!sendQueue.offer(data)) {
-                sendQueue.poll()
+            if (!sendQueue.offer(data)) {
+                // The queue is full (network bottleneck).
+                // Do NOT just drop a P-frame, because it will cause smearing/ghosting
+                // until the next I-frame. Instead, clear the queue to stop sending
+                // useless deltas, and immediately request a fresh I-frame from the encoder.
+                sendQueue.clear()
+                server.onKeyframeRequest()
             }
         }
     }

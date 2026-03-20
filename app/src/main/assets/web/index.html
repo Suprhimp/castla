@@ -5,9 +5,159 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Castla</title>
     <link rel="stylesheet" href="css/player.css">
+    <style>
+        /* Web Native Launcher Styles */
+        #web-launcher {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #0F0F1A;
+            z-index: 200; /* Above the video player */
+            overflow-y: auto;
+            display: flex; /* Flexbox for full centering if needed, but we use block with padding */
+            flex-direction: column;
+            padding: 30px;
+            color: #fff;
+            font-family: sans-serif;
+            transition: opacity 0.3s ease;
+        }
+
+        #web-launcher.hidden {
+            display: none !important;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .category-section {
+            margin-bottom: 24px;
+        }
+
+        .category-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .category-bar {
+            width: 6px;
+            height: 24px;
+            border-radius: 3px;
+            margin-right: 12px;
+        }
+
+        .category-title {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .app-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 16px;
+        }
+
+        .app-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            cursor: pointer;
+            padding: 12px 8px;
+            border-radius: 12px;
+            transition: background 0.2s ease;
+        }
+
+        .app-cell:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .app-icon {
+            width: 72px;
+            height: 72px;
+            object-fit: contain;
+            margin-bottom: 8px;
+            filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.5));
+            transition: transform 0.1s ease;
+        }
+
+        .app-cell:active .app-icon {
+            transform: scale(0.95);
+        }
+
+        .app-label {
+            font-size: 13px;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            color: #ddd;
+        }
+
+        #launcher-loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #888;
+        }
+
+        /* Unmute overlay z-index was low, move it above web launcher */
+        #unmute-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000; /* Much higher to ensure it sits on top of everything */
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            transition: opacity 0.3s;
+        }
+
+        #unmute-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+            display: none !important;
+        }
+
+        #unmute-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        #unmute-text {
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 18px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 12px 32px;
+            border-radius: 8px;
+            backdrop-filter: blur(4px);
+        }
+    </style>
 </head>
 <body>
     <div id="container">
+
+        <!-- Unmute overlay — user must tap to satisfy browser autoplay policy -->
+        <div id="unmute-overlay">
+            <div id="unmute-icon">&#x1F50A;</div>
+            <div id="unmute-text">Tap to Unmute</div>
+        </div>
+
+        <!-- Web Native Launcher UI -->
+        <div id="web-launcher" class="hidden">
+            <div id="launcher-loading">Loading apps...</div>
+            <div id="launcher-content" style="display:none;"></div>
+        </div>
+
+        <!-- Existing Video Player UI -->
         <div id="ad-banner" style="display:none;">
             <img src="/img/promo-banner.png" width="728" height="90" alt="Upgrade to PRO">
         </div>
@@ -17,22 +167,21 @@
             <div id="status">Connecting...</div>
             <div id="stats"></div>
         </div>
-        <!-- Unmute overlay — user must tap to satisfy browser autoplay policy -->
-        <div id="unmute-overlay">
-            <div id="unmute-icon">&#x1F50A;</div>
-            <div id="unmute-text">Tap to Unmute</div>
-        </div>
+
         <!-- Hidden input for keyboard capture (invisible, auto-focused by IME detection) -->
         <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off"
                autocapitalize="off" spellcheck="false"
                style="position:fixed;top:-100px;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;">
         <button id="home-btn" title="Home"
-                style="position:fixed;bottom:12px;left:12px;z-index:100;width:40px;height:40px;
-                       border-radius:50%;border:none;background:rgba(255,255,255,0.12);
-                       color:#fff;font-size:18px;cursor:pointer;backdrop-filter:blur(4px);
-                       display:none;">&#x1F3E0;</button>
+                style="position:fixed;bottom:12px;left:12px;z-index:201;width:48px;height:48px;
+                       border-radius:50%;border:none;background:rgba(0,0,0,0.6);
+                       color:#fff;font-size:24px;cursor:pointer;backdrop-filter:blur(4px);
+                       display:none;box-shadow:0 4px 6px rgba(0,0,0,0.3);">
+                &#x1F3E0;
+        </button>
     </div>
 
+    <!-- Ensure external libs like jMuxer are imported if you want to use MSE with raw H.264 later -->
     <script src="js/decoder.js"></script>
     <script src="js/mse-decoder.js"></script>
     <script src="js/renderer.js"></script>

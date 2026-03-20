@@ -672,9 +672,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun associateTesla() {
-        val deviceFilter = BluetoothDeviceFilter.Builder()
-            .setNamePattern(Pattern.compile(".*Tesla.*", Pattern.CASE_INSENSITIVE))
-            .build()
+        // Fix: Removed the strict "Tesla" name filter because many users rename 
+        // their vehicles in the Tesla app, which changes the Bluetooth broadcast name.
+        // Leaving it empty allows the user to select ANY paired Bluetooth device.
+        val deviceFilter = BluetoothDeviceFilter.Builder().build()
 
         val request = AssociationRequest.Builder()
             .addDeviceFilter(deviceFilter)
@@ -783,6 +784,9 @@ class MainActivity : ComponentActivity() {
                 Log.i(TAG, "Observing device presence for $macAddress (assocId=$associationId)")
             } else {
                 Log.w(TAG, "No MAC address in association $associationId")
+                runOnUiThread {
+                    Toast.makeText(this, "Bluetooth permission missing. Auto-detect may not work.", Toast.LENGTH_LONG).show()
+                }
             }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // API 31-32: startObservingDevicePresence with MAC from associations list
@@ -835,6 +839,17 @@ class MainActivity : ComponentActivity() {
 
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             needed.add(Manifest.permission.RECORD_AUDIO)
+        }
+
+        // Bluetooth permissions are required for CompanionDeviceManager to obtain the MAC address
+        // and observe device presence on Android 12+ (API 31+). Without this, startObservingDevicePresence fails.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.BLUETOOTH_SCAN)
+            }
         }
 
         if (needed.isNotEmpty()) {

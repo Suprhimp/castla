@@ -6,6 +6,7 @@ class CanvasRenderer {
     constructor(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
+        this.fitMode = 'contain';
         this.videoWidth = 0;
         this.videoHeight = 0;
         this.renderX = 0;
@@ -17,19 +18,35 @@ class CanvasRenderer {
         this.currentFps = 0;
     }
 
+    setFitMode(mode) {
+        const nextMode = mode === 'cover' ? 'cover' : 'contain';
+        if (this.fitMode === nextMode) return;
+        this.fitMode = nextMode;
+        if (this.videoWidth > 0 && this.videoHeight > 0) {
+            this.updateLayout();
+        }
+    }
+
     /**
      * Render a VideoFrame to the canvas
      * @param {VideoFrame} frame
      */
     render(frame) {
-        if (frame.displayWidth !== this.videoWidth || frame.displayHeight !== this.videoHeight) {
-            this.videoWidth = frame.displayWidth;
-            this.videoHeight = frame.displayHeight;
+        const sourceWidth = frame.displayWidth || frame.width;
+        const sourceHeight = frame.displayHeight || frame.height;
+
+        if (sourceWidth !== this.videoWidth || sourceHeight !== this.videoHeight) {
+            this.videoWidth = sourceWidth;
+            this.videoHeight = sourceHeight;
+            this.updateLayout();
+        } else if (this.canvas.width !== this.canvas.clientWidth || this.canvas.height !== this.canvas.clientHeight) {
             this.updateLayout();
         }
 
         this.ctx.drawImage(frame, this.renderX, this.renderY, this.renderWidth, this.renderHeight);
-        frame.close(); // CRITICAL: release GPU memory
+        if (typeof frame.close === 'function') {
+            frame.close();
+        }
 
         this.frameCount++;
         this.updateFps();
@@ -49,14 +66,26 @@ class CanvasRenderer {
         const videoAspect = this.videoWidth / this.videoHeight;
         const canvasAspect = canvasWidth / canvasHeight;
 
-        if (videoAspect > canvasAspect) {
-            // Video is wider — pillarbox (black bars top/bottom)
+        if (this.fitMode === 'cover') {
+            if (videoAspect > canvasAspect) {
+                this.renderHeight = canvasHeight;
+                this.renderWidth = canvasHeight * videoAspect;
+                this.renderX = (canvasWidth - this.renderWidth) / 2;
+                this.renderY = 0;
+            } else {
+                this.renderWidth = canvasWidth;
+                this.renderHeight = canvasWidth / videoAspect;
+                this.renderX = 0;
+                this.renderY = (canvasHeight - this.renderHeight) / 2;
+            }
+        } else if (videoAspect > canvasAspect) {
+            // Video is wider — letterbox (black bars top/bottom)
             this.renderWidth = canvasWidth;
             this.renderHeight = canvasWidth / videoAspect;
             this.renderX = 0;
             this.renderY = (canvasHeight - this.renderHeight) / 2;
         } else {
-            // Video is taller — letterbox (black bars left/right)
+            // Video is taller — pillarbox (black bars left/right)
             this.renderHeight = canvasHeight;
             this.renderWidth = canvasHeight * videoAspect;
             this.renderX = (canvasWidth - this.renderWidth) / 2;

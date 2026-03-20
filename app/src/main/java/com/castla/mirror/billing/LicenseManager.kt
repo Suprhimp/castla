@@ -29,11 +29,10 @@ object LicenseManager {
     }
 
     fun setPremium(value: Boolean, context: Context) {
-        // Temporarily force true
-        _isPremium.value = true
+        _isPremium.value = value
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putBoolean(KEY_IS_PREMIUM, true)
+            .putBoolean(KEY_IS_PREMIUM, value)
             .apply()
     }
 }
