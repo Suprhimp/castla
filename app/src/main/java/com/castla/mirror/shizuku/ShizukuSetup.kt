@@ -142,8 +142,12 @@ class ShizukuSetup {
         }
         return try {
             val output = service.execCommand(command)
-            Log.i(TAG, "exec '$command' → '${output.take(200)}'")
             output
+        } catch (e: android.os.DeadObjectException) {
+            Log.w(TAG, "Privileged service dead during exec, marking null")
+            privilegedService = null
+            _serviceConnected.value = false
+            null
         } catch (e: Exception) {
             Log.e(TAG, "exec failed: $command", e)
             null

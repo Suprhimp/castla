@@ -31,6 +31,9 @@ class VirtualDisplayManager {
     /** Called when Shizuku service reconnects after a death — caller should recreate VD + launch home */
     var reconnectListener: (() -> Unit)? = null
 
+    /** Expose the privileged service for IME checks (avoids separate binder connection) */
+    fun getPrivilegedService(): IPrivilegedService? = privilegedService
+
     /**
      * Bind to the Shizuku privileged service.
      * Must be called before createVirtualDisplay when using Shizuku mode.

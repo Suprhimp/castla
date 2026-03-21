@@ -86,6 +86,15 @@ class PrivilegedService : IPrivilegedService.Stub() {
     }
 
     override fun createVirtualDisplay(width: Int, height: Int, dpi: Int, name: String): Int {
+        // Release all existing VDs before creating a new one (prevents orphaned displays)
+        if (virtualDisplays.isNotEmpty()) {
+            Log.i(TAG, "Releasing ${virtualDisplays.size} existing VD(s) before creating new one")
+            virtualDisplays.values.forEach { vd ->
+                try { vd.release() } catch (_: Exception) {}
+            }
+            virtualDisplays.clear()
+        }
+
         return try {
             val ctx = shellContext
             if (ctx == null) {
@@ -295,15 +304,11 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun launchHomeOnDisplay(displayId: Int) {
         try {
-            // WebBrowserActivity 등 현재 떠 있는 모든 화면을 지우고 
-            // 런처(DesktopActivity)만 남기기 위해 FLAG_ACTIVITY_CLEAR_TOP 추가
-            val cmd = "am start --display $displayId " +
-                "-n com.castla.mirror/.ui.DesktopActivity " +
-                "-f 0x14000000" // 0x10000000 (NEW_TASK) | 0x04000000 (CLEAR_TOP)
-            val result = execCommand(cmd)
-            Log.i(TAG, "Launched DesktopActivity on display $displayId with CLEAR_TOP: $result")
+            // VD에 HOME 키 전송 → 현재 앱이 백그라운드로 가고 VD는 빈 화면이 됨
+            execCommand("input -d $displayId keyevent 3") // KEYCODE_HOME
+            Log.i(TAG, "Sent HOME key to display $displayId")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch DesktopActivity on display $displayId", e)
+            Log.e(TAG, "Failed to send HOME key to display $displayId", e)
         }
     }
 

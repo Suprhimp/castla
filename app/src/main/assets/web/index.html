@@ -94,6 +94,30 @@
             color: #ddd;
         }
 
+        /* Locked app cells for free users */
+        .app-cell.locked .app-icon {
+            opacity: 0.35;
+            filter: grayscale(100%) drop-shadow(0px 4px 6px rgba(0,0,0,0.5));
+        }
+        .app-cell.locked .app-label {
+            color: #666;
+        }
+        .app-cell.locked {
+            position: relative;
+        }
+        .app-cell.locked::after {
+            content: 'PRO';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0,0,0,0.75);
+            color: #FFD700;
+            font-size: 9px;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
         #launcher-loading {
             position: absolute;
             top: 50%; left: 50%;
@@ -101,6 +125,79 @@
             font-size: 18px;
             color: #888;
         }
+
+        /* ── Bubble Composer ── */
+        #input-bubble {
+            position: fixed;
+            z-index: 9999;
+            display: none;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-radius: 20px;
+            background: rgba(30, 30, 40, 0.95);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 90vw;
+        }
+        #input-bubble.visible {
+            display: flex !important;
+        }
+        #input-bubble::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-top: 8px solid rgba(30, 30, 40, 0.92);
+        }
+        #bubble-text {
+            flex: 1;
+            min-width: 160px;
+            max-width: 50vw;
+            height: 36px;
+            padding: 0 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 12px;
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+            caret-color: #64B5F6;
+        }
+        #bubble-text::placeholder { color: rgba(255,255,255,0.35); }
+        #bubble-text:focus { border-color: #64B5F6; }
+        .bubble-btn {
+            height: 36px;
+            padding: 0 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #bubble-submit {
+            background: #64B5F6;
+            color: #111;
+        }
+        #bubble-submit:active { background: #42A5F5; }
+        #bubble-cancel {
+            background: rgba(255,255,255,0.12);
+            color: #ccc;
+        }
+        #bubble-cancel:active { background: rgba(255,255,255,0.2); }
+        #bubble-backspace {
+            background: rgba(255,80,80,0.2);
+            color: #ff8080;
+            padding: 0 12px;
+            font-size: 18px;
+        }
+        #bubble-backspace:active { background: rgba(255,80,80,0.35); }
 
         /* Unmute overlay z-index was low, move it above web launcher */
         #unmute-overlay {
@@ -172,6 +269,15 @@
         <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off"
                autocapitalize="off" spellcheck="false"
                style="position:fixed;top:-100px;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;">
+        <!-- Bubble Composer — local IME input, commit-only to Android -->
+        <div id="input-bubble">
+            <input id="bubble-text" type="text" placeholder="입력..." autocomplete="off" autocorrect="off"
+                   autocapitalize="off" spellcheck="false">
+            <button id="bubble-submit" class="bubble-btn">입력</button>
+            <button id="bubble-backspace" class="bubble-btn">&#x232B;</button>
+            <button id="bubble-cancel" class="bubble-btn">취소</button>
+        </div>
+
         <button id="home-btn" title="Home"
                 style="position:fixed;bottom:12px;left:12px;z-index:201;width:48px;height:48px;
                        border-radius:50%;border:none;background:rgba(0,0,0,0.6);

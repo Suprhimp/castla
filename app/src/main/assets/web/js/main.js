@@ -75,8 +75,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         showLauncherNotice('Premium feature — upgrade to unlock.');
     }
 
+    function focusKeyboardProxy() {
+        const kbInput = document.getElementById('keyboard-input');
+        if (!kbInput) return;
+
+        kbInput.style.pointerEvents = 'auto';
+        kbInput.focus({ preventScroll: true });
+        if (typeof kbInput.setSelectionRange === 'function') {
+            const len = kbInput.value.length;
+            kbInput.setSelectionRange(len, len);
+        }
+    }
+
+    function blurKeyboardProxy() {
+        const kbInput = document.getElementById('keyboard-input');
+        if (!kbInput) return;
+
+        kbInput.blur();
+        kbInput.style.pointerEvents = 'none';
+        kbInput.value = '';
+    }
+
     let firstFrameReceived = false;
     let launchTimeout = null;
+    let composing = false;
+    let skipNextInput = false;
+
+    // ── Bubble Composer state ──
+    const useBubbleInput = true;
+    let bubbleVisible = false;
+    const inputBubble = document.getElementById('input-bubble');
+    const bubbleText = document.getElementById('bubble-text');
+    const bubbleSubmit = document.getElementById('bubble-submit');
+    const bubbleBackspace = document.getElementById('bubble-backspace');
+    const bubbleCancel = document.getElementById('bubble-cancel');
+
+    // Prevent bubble touch/pointer events from propagating to canvas (touch handler)
+    if (inputBubble) {
+        for (const evt of ['pointerdown', 'pointerup', 'pointermove', 'touchstart', 'touchend', 'touchmove', 'mousedown', 'mouseup']) {
+            inputBubble.addEventListener(evt, (e) => e.stopPropagation());
+        }
+    }
 
     function clearLaunchTimeout() {
         if (launchTimeout) {
@@ -94,6 +133,102 @@ document.addEventListener('DOMContentLoaded', async () => {
     function hideLauncherNotice() {
         if (!launcherLoading) return;
         launcherLoading.style.display = 'none';
+    }
+
+    // ── Bubble Composer functions ──
+    function positionInputBubble(anchor) {
+        if (!inputBubble) return;
+        const bh = 56;  // approximate bubble height
+        const margin = 12;
+        // Measure actual bubble width for centering (no CSS transform needed)
+        const bw = inputBubble.offsetWidth || 360;
+
+        let cx, top;
+        if (anchor) {
+            cx = anchor.clientX;
+            top = anchor.clientY - bh - margin;
+            if (top < margin) top = anchor.clientY + margin;
+        } else {
+            cx = window.innerWidth / 2;
+            top = window.innerHeight - bh - 60;
+        }
+
+        // Center horizontally around cx
+        let left = cx - bw / 2;
+        if (left < margin) left = margin;
+        if (left + bw > window.innerWidth - margin) left = window.innerWidth - margin - bw;
+        // Clamp vertical
+        if (top < margin) top = margin;
+        if (top + bh > window.innerHeight - margin) top = window.innerHeight - margin - bh;
+
+        inputBubble.style.left = `${left}px`;
+        inputBubble.style.top = `${top}px`;
+    }
+
+    function openInputBubble(anchor) {
+        if (!inputBubble || bubbleVisible) return;
+        bubbleVisible = true;
+        positionInputBubble(anchor);
+        inputBubble.classList.add('visible');
+        bubbleText.value = '';
+        setTimeout(() => bubbleText.focus({ preventScroll: true }), 80);
+        const cs = window.getComputedStyle(inputBubble);
+        console.log('[Bubble] Opened at', inputBubble.style.left, inputBubble.style.top,
+            'display:', cs.display, 'visibility:', cs.visibility, 'opacity:', cs.opacity,
+            'size:', inputBubble.offsetWidth, 'x', inputBubble.offsetHeight);
+    }
+
+    function closeInputBubble(clear = true) {
+        if (!inputBubble) return;
+        bubbleVisible = false;
+        inputBubble.classList.remove('visible');
+        if (clear && bubbleText) bubbleText.value = '';
+        bubbleText?.blur();
+        console.log('[Bubble] Closed');
+    }
+
+    function submitBubbleInput() {
+        if (!bubbleText) return;
+        const text = bubbleText.value;
+        if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            if (text) {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text }));
+                console.log('[Bubble] Submitted:', text);
+            }
+            // Send Enter key to Android — confirms input and dismisses IME naturally
+            controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 66 }));
+        }
+        bubbleText.value = '';
+    }
+
+    if (bubbleSubmit) {
+        bubbleSubmit.addEventListener('click', (e) => {
+            e.preventDefault();
+            submitBubbleInput();
+        });
+    }
+    if (bubbleBackspace) {
+        bubbleBackspace.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
+            }
+            bubbleText?.focus({ preventScroll: true });
+        });
+    }
+    if (bubbleCancel) {
+        bubbleCancel.addEventListener('click', (e) => {
+            e.preventDefault();
+            closeInputBubble(true);
+        });
+    }
+    if (bubbleText) {
+        bubbleText.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitBubbleInput();
+            }
+        });
     }
 
     hideOverlay();
@@ -276,10 +411,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         controlSocket.onopen = () => {
             console.log('[Main] Control connected');
+            closeInputBubble(true);
 
             // Re-instantiate touchHandler with correct socket to prevent 'Socket not open' error
             if (touchHandler) {
-                touchHandler.unbindEvents();
+                touchHandler.destroy();
             }
             const renderer = (decoder && decoder.renderer) ? decoder.renderer : null;
             touchHandler = new TouchHandler(canvas, renderer, controlSocket);
@@ -307,9 +443,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                     console.log(`[Main] Server resolution changed to ${msg.width}x${msg.height}`);
                     // FallbackDecoder handles size changes internally during render
                 } else if (msg.type === 'showKeyboard') {
-                    // Could dim UI or show visual indicator
+                    if (useBubbleInput) {
+                        console.log('[Main] Server detected IME open — opening bubble');
+                        const anchor = touchHandler?.lastTap || null;
+                        openInputBubble(anchor);
+                    } else {
+                        console.log('[Main] Server detected IME open — focusing keyboard input');
+                        focusKeyboardProxy();
+                    }
                 } else if (msg.type === 'hideKeyboard') {
-                    // Hide visual indicator
+                    if (useBubbleInput) {
+                        console.log('[Main] Server detected IME closed — closing bubble');
+                        closeInputBubble(true);
+                    } else {
+                        console.log('[Main] Server detected IME closed');
+                        blurKeyboardProxy();
+                    }
                 }
             } catch (e) {
                 console.error('[Main] Control message parsing failed:', e);
@@ -443,6 +592,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         webLauncher.classList.add('hidden');
         homeBtn.style.display = 'block';
 
+
         // RESET firstFrameReceived so the "Loading..." overlay can be hidden upon the next frame.
         firstFrameReceived = false;
         clearLaunchTimeout();
@@ -474,9 +624,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (firstFrameReceived) return;
 
                     console.warn(`[Launcher] Timed out waiting for first frame after launching ${pkgName}`);
+                    closeInputBubble(true);
                     isLauncherMode = true;
                     webLauncher.classList.remove('hidden');
                     homeBtn.style.display = 'none';
+
                     hideOverlay();
                     showLauncherNotice('Launch timed out. Try again.');
                 }, 5000);
@@ -485,6 +637,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 isLauncherMode = true;
                 webLauncher.classList.remove('hidden');
                 homeBtn.style.display = 'none';
+        
                 showLauncherNotice('Connection lost. Try again.');
             }
         }, 50);
@@ -494,8 +647,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('[Main] Going home to launcher');
         isLauncherMode = true;
         clearLaunchTimeout();
+        closeInputBubble(true);
+        blurKeyboardProxy();
         webLauncher.classList.remove('hidden');
         homeBtn.style.display = 'none';
+
         hideOverlay();
         firstFrameReceived = false; // Reset frame state
 
@@ -508,8 +664,86 @@ document.addEventListener('DOMContentLoaded', async () => {
         goHome();
     });
 
+    if (canvas) {
+        const maybeFocusKeyboard = () => {
+            if (!isLauncherMode && !useBubbleInput) {
+                focusKeyboardProxy();
+            }
+        };
+
+        canvas.addEventListener('pointerup', maybeFocusKeyboard);
+        canvas.addEventListener('mouseup', maybeFocusKeyboard);
+        canvas.addEventListener('touchend', maybeFocusKeyboard, { passive: true });
+    }
+
     if (adBanner) {
         adBanner.addEventListener('click', () => requestPurchase('banner'));
+    }
+
+    const kbInput = document.getElementById('keyboard-input');
+    if (kbInput) {
+        kbInput.addEventListener('compositionstart', () => {
+            if (useBubbleInput) return; // bubble handles its own IME
+            composing = true;
+            skipNextInput = false;
+        });
+
+        kbInput.addEventListener('compositionupdate', (e) => {
+            if (useBubbleInput) return;
+            console.log('[KB] Composition preview:', e.data || '');
+        });
+
+        kbInput.addEventListener('compositionend', (e) => {
+            if (useBubbleInput) return;
+            const finalText = e.data || kbInput.value || '';
+            if (finalText && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text: finalText }));
+                console.log('[KB] Composition commit:', finalText);
+            }
+
+            composing = false;
+            skipNextInput = true;
+            kbInput.value = '';
+        });
+
+        kbInput.addEventListener('input', (e) => {
+            if (useBubbleInput) return;
+            if (composing) return;
+
+            if (skipNextInput) {
+                skipNextInput = false;
+                kbInput.value = '';
+                return;
+            }
+
+            const text = e.data || e.target.value;
+            if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text }));
+                console.log('[KB] Sent:', text);
+            }
+            kbInput.value = '';
+        });
+
+        kbInput.addEventListener('keydown', (e) => {
+            if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+            // Allow backspace even in bubble mode
+            if (e.key === 'Backspace' && !composing) {
+                controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
+                e.preventDefault();
+                return;
+            }
+            if (useBubbleInput) return;
+            if (e.key === 'Enter') {
+                controlSocket.send(JSON.stringify({ type: 'textInput', text: '\n' }));
+                e.preventDefault();
+            }
+        });
+
+        kbInput.addEventListener('blur', () => {
+            kbInput.style.pointerEvents = 'none';
+            composing = false;
+            skipNextInput = false;
+        });
     }
 
     // Handle resize events to update Android's virtual display resolution

@@ -17,6 +17,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.castla.mirror.R
 import com.castla.mirror.widget.MirrorWidgetProvider
 import com.castla.mirror.capture.AudioCapture
 import com.castla.mirror.capture.JpegEncoder
@@ -273,10 +274,8 @@ class MirrorForegroundService : Service() {
                 // If Shizuku unavailable: fall back to MediaProjection (FULL_SCREEN only).
                 trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
                     if (shizukuActive) {
-                        // Web Launcher 방식에서는 처음엔 앱을 띄우지 않아도 됨.
-                        // 백그라운드를 검은색(DesktopActivity)으로 둬서 
-                        // 미러링 화면으로 넘어갔을 때 깔끔하게 보이게 함.
-                        virtualDisplayManager?.launchHomeOnDisplay()
+                        // Web Launcher 방식: VD는 검정 화면으로 시작,
+                        // 브라우저에서 앱 선택 시 launchApp으로 직접 실행
                         currentVdApp = "HOME"
                     } else {
                         // Shizuku unavailable: fall back to MediaProjection screen mirror
@@ -470,7 +469,7 @@ class MirrorForegroundService : Service() {
         val vdm = virtualDisplayManager ?: return
         when (currentVdApp) {
             "HOME", "", "com.android.settings" -> {
-                vdm.launchHomeOnDisplay()
+                // VD 재생성 후 빈 화면 유지 — 브라우저에서 앱 선택 시 실행됨
                 currentVdApp = "HOME"
             }
             else -> {
@@ -527,18 +526,108 @@ class MirrorForegroundService : Service() {
     }
 
     private var lastImeState = false
+    private var lastImeCheckTime = 0L
+    private var imeCheckSuspendUntil = 0L
+
+    private fun parseImeVisible(dumpsys: String): Boolean {
+        if (dumpsys.contains("mInputShown=true")) return true
+
+        val imeWindowVis = Regex("""mImeWindowVis=(\d+)""")
+            .find(dumpsys)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+        if (imeWindowVis != null && imeWindowVis != 0) return true
+
+        val decorVisible = dumpsys.contains("mDecorViewVisible=true")
+        val windowVisible = dumpsys.contains("mWindowVisible=true")
+        if (decorVisible && windowVisible) return true
+
+        return false
+    }
+
+    /**
+     * Check if an editable field is focused on a specific display by
+     * looking for InputMethod windows in `dumpsys window`.
+     */
+    private fun parseImeVisibleForDisplay(windowDump: String, displayId: Int): Boolean {
+        // Look for the display section first
+        val displayTag = "Display: $displayId"
+        val displayIdx = windowDump.indexOf(displayTag)
+        // If display section exists, only search within it
+        val searchArea = if (displayIdx >= 0) {
+            val nextDisplay = windowDump.indexOf("Display: ", displayIdx + displayTag.length)
+            if (nextDisplay >= 0) windowDump.substring(displayIdx, nextDisplay)
+            else windowDump.substring(displayIdx)
+        } else {
+            windowDump
+        }
+
+        // Check for InputMethod window on this display
+        if (searchArea.contains("InputMethod") && searchArea.contains("isVisible=true")) return true
+        // Some Android versions use different format
+        if (searchArea.contains("InputMethod") && searchArea.contains("mHasSurface=true")) return true
+
+        return false
+    }
+
+    /**
+     * Check if a focused view is editable by looking for ServedInputConnection
+     * in the InputMethodManager state. This works even on virtual displays where
+     * the IME window may not show up in the traditional mInputShown check.
+     */
+    private fun parseHasServedInput(dumpsys: String): Boolean {
+        // mServedView is non-null when an editable field has focus
+        if (dumpsys.contains("mServedView=") && !dumpsys.contains("mServedView=null")) return true
+        // Active client indicates an InputConnection is live
+        if (dumpsys.contains("mCurClient=") && !dumpsys.contains("mCurClient=null")) {
+            if (dumpsys.contains("mInputShown=true") || dumpsys.contains("mShowRequested=true")) return true
+        }
+        return false
+    }
 
     /**
      * Check if Android IME (keyboard) is visible and notify browser.
      * Called after touch UP events with a small delay.
+     * Uses multiple detection strategies for virtual display compatibility.
      */
     private fun checkImeAndNotifyBrowser() {
+        val now = System.currentTimeMillis()
+        // Debounce: skip if checked within last 500ms
+        if (now - lastImeCheckTime < 500) return
+        // Suspend after failure to avoid crash loop
+        if (now < imeCheckSuspendUntil) return
+        lastImeCheckTime = now
+
         serviceScope.launch(Dispatchers.IO) {
             try {
                 kotlinx.coroutines.delay(300) // wait for IME animation
-                val service = shizukuSetup?.privilegedService ?: return@launch
-                val result = service.execCommand("dumpsys input_method | grep mInputShown")
-                val imeVisible = result.contains("mInputShown=true")
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                // Use VDM's own privileged service to avoid ShizukuSetup binder conflict
+                val service = virtualDisplayManager?.getPrivilegedService()
+                if (service == null) {
+                    Log.d(TAG, "IME check: VDM service unavailable")
+                    return@launch
+                }
+
+                // Use grep to minimize binder data transfer
+                val result = try {
+                    service.execCommand(
+                        "dumpsys input_method | grep -E 'mInputShown|mImeWindowVis|mDecorViewVisible|mWindowVisible|mServedView|mShowRequested|mCurClient'"
+                    )
+                } catch (e: android.os.DeadObjectException) {
+                    Log.w(TAG, "IME check: binder dead, suspending for 10s")
+                    imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
+                    return@launch
+                }
+                if (result == null) return@launch
+
+                var imeVisible = parseImeVisible(result)
+
+                // Fallback: check if input is being served (editable focused on VD)
+                if (!imeVisible && displayId > 0) {
+                    imeVisible = parseHasServedInput(result)
+                }
 
                 if (imeVisible != lastImeState) {
                     lastImeState = imeVisible
@@ -548,10 +637,11 @@ class MirrorForegroundService : Service() {
                         """{"type":"hideKeyboard"}"""
                     }
                     mirrorServer?.broadcastControlMessage(msg)
-                    Log.i(TAG, "IME state changed: visible=$imeVisible")
+                    Log.i(TAG, "IME state changed: visible=$imeVisible (display=$displayId)")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "IME check failed", e)
+                imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
             }
         }
     }
@@ -873,7 +963,9 @@ class MirrorForegroundService : Service() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setContentIntent(openPending)
-            .addAction(android.R.drawable.ic_media_pause, "Stop", stopPending)
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("Streaming to Tesla\nTap 'Stop' to end mirroring"))
+            .addAction(android.R.drawable.ic_media_pause, "■ Stop Mirroring", stopPending)
             .build()
     }
 

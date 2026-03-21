@@ -49,11 +49,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Launcher for Virtual Display — shows app grid, launched on VD -->
+        <!-- Launcher for Virtual Display — no longer used (browser handles app list) -->
         <activity
             android:name=".ui.DesktopActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:excludeFromRecents="true"
             android:taskAffinity="com.castla.mirror.desktop"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
 

@@ -112,8 +112,10 @@ class MainActivity : ComponentActivity() {
             if (!isStreaming) {
                 isStreaming = localBinder.service.isRunning
             }
-            // Auto-minimize in FULL_SCREEN mode when browser connects
-            if (streamSettings.mirroringMode == MirroringMode.FULL_SCREEN) {
+            // Auto-minimize in FULL_SCREEN mode when browser first connects.
+            // Skip if service was already running (user manually reopened the app).
+            val serviceWasAlreadyRunning = localBinder.service.isRunning
+            if (streamSettings.mirroringMode == MirroringMode.FULL_SCREEN && !serviceWasAlreadyRunning) {
                 localBinder.service.setBrowserConnectionListener { connected ->
                     if (connected) runOnUiThread { moveTaskToBack(true) }
                 }

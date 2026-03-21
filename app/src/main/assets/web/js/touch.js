@@ -16,6 +16,9 @@ class TouchHandler {
         this.rafId = null;
         this.mouseDown = false;
 
+        // Last tap position (viewport coords) — used by Bubble Composer
+        this.lastTap = null;
+
         // Pre-allocate binary buffer for touch events (reused)
         this._buf = new ArrayBuffer(10);
         this._view = new DataView(this._buf);
@@ -85,6 +88,10 @@ class TouchHandler {
         const rect = this.canvas.getBoundingClientRect();
         const coords = this._toNormalized(event.clientX, event.clientY, rect);
 
+        if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
+            this.lastTap = { clientX: event.clientX, clientY: event.clientY, ts: Date.now() };
+        }
+
         if (actionCode === TouchHandler.ACTION_MOVE) {
             // Coalesce: only store latest position per pointer, sent on next rAF
             if (coords.inBounds) {
@@ -108,6 +115,10 @@ class TouchHandler {
             const touch = event.changedTouches[i];
             const coords = this._toNormalized(touch.clientX, touch.clientY, rect);
 
+            if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
+                this.lastTap = { clientX: touch.clientX, clientY: touch.clientY, ts: Date.now() };
+            }
+
             if (actionCode === TouchHandler.ACTION_MOVE) {
                 if (coords.inBounds) {
                     this.pendingMoves.set(touch.identifier, {
@@ -123,6 +134,10 @@ class TouchHandler {
     _sendMouse(event, actionCode) {
         const rect = this.canvas.getBoundingClientRect();
         const coords = this._toNormalized(event.clientX, event.clientY, rect);
+
+        if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
+            this.lastTap = { clientX: event.clientX, clientY: event.clientY, ts: Date.now() };
+        }
 
         if (actionCode === TouchHandler.ACTION_MOVE) {
             if (coords.inBounds) {
