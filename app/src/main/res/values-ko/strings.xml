@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Castla</string>
+    <string name="widget_description">Castla 미러링 제어 및 Shizuku 상태</string>
+    <string name="tesla_detect_channel">테슬라 자동 감지</string>
+    <string name="tesla_detected_title">테슬라 감지됨</string>
+    <string name="tesla_detected_text">여기를 눌러 Castla 미러링을 시작하세요</string>
+
+    <string name="toast_screen_capture_granted">화면 캡처가 허용되었습니다!</string>
+    <string name="toast_screen_capture_denied">화면 캡처가 거부되었습니다 (코드=%d)</string>
+    <string name="toast_vpn_permission_required">테슬라 연결을 위해 VPN 권한이 필요합니다</string>
+    <string name="toast_tesla_pairing_cancelled">테슬라 페어링이 취소되었습니다</string>
+    <string name="toast_could_not_open_browser">브라우저를 열 수 없습니다. Shizuku를 수동으로 설치해주세요.</string>
+    <string name="toast_tesla_pairing_failed">테슬라 페어링 실패: %s</string>
+    <string name="toast_tesla_paired_device">테슬라 페어링됨: %s</string>
+    <string name="toast_tesla_paired">테슬라가 페어링되었습니다!</string>
+    <string name="toast_bluetooth_permission_missing">블루투스 권한이 없어 자동 감지가 작동하지 않을 수 있습니다.</string>
+    <string name="toast_tesla_paired_auto_detect">테슬라 페어링됨! 자동 감지가 켜졌습니다.</string>
+    <string name="toast_tesla_auto_detect_disabled">테슬라 자동 감지가 꺼졌습니다</string>
+    <string name="toast_requesting_screen_capture">화면 캡처를 요청하는 중...</string>
+    <string name="toast_error">오류: %s</string>
+
+    <string name="subtitle_tesla_screen_mirroring">테슬라 화면 미러링</string>
+    <string name="btn_settings">설정</string>
+    <string name="title_castla_pro">Castla PRO</string>
+    <string name="desc_castla_pro_features">모든 앱 잠금 해제  /  1080p 스트리밍  /  광고 없음</string>
+    <string name="btn_upgrade_pro">업그레이드 — 평생 이용권</string>
+    <string name="title_tesla_auto_detect_on">테슬라 자동 감지 ON</string>
+    <string name="title_tesla_auto_detect">테슬라 자동 감지</string>
+    <string name="desc_tesla_auto_detect_on">테슬라가 연결되면 알림을 받습니다</string>
+    <string name="desc_tesla_auto_detect_off">테슬라가 근처에 있을 때 알림을 받습니다</string>
+    <string name="status_streaming_active">스트리밍 중</string>
+    <string name="status_ready_to_stream">스트리밍 준비 완료</string>
+    <string name="title_open_tesla_browser">테슬라 브라우저 열기</string>
+    <string name="label_enter_pin">PIN 입력</string>
+    <string name="title_tesla_setup_required">테슬라 설정 필요</string>
+    <string name="desc_shizuku_install_required">테슬라 브라우저에 연결하려면 Shizuku가 필요합니다.\n설치 방법을 보려면 아래를 탭하세요.</string>
+    <string name="btn_how_to_install_shizuku">Shizuku 설치 방법</string>
+    <string name="title_shizuku_setup_steps">Shizuku 설정 단계:</string>
+    <string name="desc_shizuku_setup_steps">1. 설정 &gt; 휴대전화 정보 &gt; 소프트웨어 정보\n   &gt; 빌드 번호를 7번 탭하세요\n2. 설정 &gt; 개발자 옵션\n   &gt; 무선 디버깅 &gt; 켜기\n3. Shizuku 열기 &gt; \"무선 디버깅으로 시작\"</string>
+    <string name="btn_open_shizuku">Shizuku 열기</string>
+    <string name="status_shizuku_running_setup">Shizuku 실행 중. 테슬라 연결을 설정하는 중입니다...</string>
+    <string name="btn_stop_mirroring">미러링 중지</string>
+    <string name="btn_start_mirroring">미러링 시작</string>
+    <string name="title_how_to_use">사용 방법</string>
+    <string name="desc_how_to_use">1. 전화와 테슬라를 같은 WiFi에 연결하세요\n2. 위 \"미러링 시작\"을 탭하세요\n3. 테슬라 브라우저에서 위 URL을 여세요\n4. 4자리 PIN을 입력하세요\n5. 테슬라 화면에 전화 화면이 나타납니다</string>
+    <string name="title_network_setup_log">네트워크 설정 로그</string>
+    <string name="btn_copy">복사</string>
+</resources>

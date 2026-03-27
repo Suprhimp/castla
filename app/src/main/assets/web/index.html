@@ -27,6 +27,35 @@
             pointer-events: none;
         }
 
+        #launcher-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+        }
+
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(255, 255, 255, 0.15);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 16px;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: sans-serif;
+        }
+
         .category-section {
             margin-bottom: 24px;
         }
@@ -118,12 +147,96 @@
             border-radius: 6px;
         }
 
-        #launcher-loading {
+        /* ── Split Launcher Drawer (Dual App) ── */
+        #split-drawer {
             position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
+            top: 0; bottom: 0; right: -300px;
+            width: 300px;
+            background: rgba(20, 20, 30, 0.95);
+            backdrop-filter: blur(10px);
+            z-index: 260;
+            transition: right 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            box-shadow: -4px 0 15px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            color: white;
+            font-family: sans-serif;
+            display: none; /* hidden during launcher mode */
+        }
+        #split-drawer.open {
+            right: 0;
+        }
+
+        #split-handle {
+            position: absolute;
+            left: -28px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 80px;
+            background: rgba(20, 20, 30, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 14px 0 0 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-right: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .handle-dots {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-right: 2px;
+        }
+
+        .handle-dot {
+            width: 4px;
+            height: 4px;
+            background-color: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+        }
+
+        .split-drawer-header {
+            padding: 20px;
             font-size: 18px;
-            color: #888;
+            font-weight: bold;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+        }
+        .close-drawer {
+            cursor: pointer;
+            font-size: 20px;
+        }
+        .split-app-list {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .split-app-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: rgba(255,255,255,0.05);
+        }
+        .split-app-item:hover {
+            background: rgba(255,255,255,0.15);
+        }
+        .split-app-icon {
+            width: 40px; height: 40px;
+            margin-right: 12px;
+            object-fit: contain;
         }
 
         /* ── Bubble Composer ── */
@@ -199,80 +312,372 @@
         }
         #bubble-backspace:active { background: rgba(255,80,80,0.35); }
 
-        /* Unmute overlay z-index was low, move it above web launcher */
-        #unmute-overlay {
+        #splash-screen {
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: #0a0a12;
+            z-index: 1000;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            opacity: 1;
+            transition: opacity 0.5s ease;
+        }
+        #splash-screen.hidden {
+            opacity: 0; pointer-events: none;
+        }
+        #splash-screen.removed {
+            display: none !important;
+        }
+        #splash-logo {
+            width: 80px;
+            height: auto;
+            margin-bottom: 40px;
+            opacity: 0.85;
+        }
+        #splash-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        #splash-loading.hidden {
+            opacity: 0; pointer-events: none;
+        }
+        .splash-spinner {
+            width: 28px;
+            height: 28px;
+            border: 2.5px solid rgba(255, 255, 255, 0.1);
+            border-top-color: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .splash-loading-text {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 15px;
+            font-weight: 300;
+            color: rgba(255, 255, 255, 0.35);
+            letter-spacing: 0.5px;
+        }
+        #splash-unmute {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+        }
+        #splash-unmute.visible {
+            display: flex;
+            opacity: 1;
+        }
+        .splash-tap-text {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 28px;
+            font-weight: 200;
+            color: rgba(255, 255, 255, 0.75);
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        #player-shell {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: stretch;
+            justify-content: stretch;
+            --split-left-width: 42%;
+        }
+        #stream-pane {
+            position: relative;
+            width: 100%;
+            min-width: 0;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            transition: width 0.2s ease;
+            background: #000;
+        }
+        #player-shell.browser-split #stream-pane {
+            width: var(--split-left-width);
+        }
+        #browser-split-pane {
+            position: relative;
+            display: none;
+            width: calc(100% - var(--split-left-width));
+            min-width: 280px;
+            height: 100%;
+            background: #05070d;
+            border-left: 1px solid rgba(255,255,255,0.08);
+            overflow: hidden;
+        }
+        #player-shell.browser-split #browser-split-pane {
+            display: block;
+        }
+        #display,
+        #mse-video,
+        #display-secondary {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        #display-secondary {
+            background: #111;
+            display: none; /* hidden in browser-only split */
+        }
+
+        /* ── Browser-Only Split Pane ── */
+        .browser-pane-ui {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+            background: #0a0c14;
+        }
+        .browser-pane-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 10px;
+            background: rgba(20, 22, 35, 0.95);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            flex-shrink: 0;
+        }
+        .browser-url-input {
+            flex: 1;
+            height: 34px;
+            padding: 0 12px;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.06);
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            min-width: 0;
+        }
+        .browser-url-input:focus { border-color: #64B5F6; }
+        .browser-url-input::placeholder { color: rgba(255,255,255,0.3); }
+        .browser-toolbar-btn {
+            height: 34px;
+            padding: 0 12px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.1);
+            color: #ccc;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .browser-toolbar-btn:active { background: rgba(255,255,255,0.2); }
+        .browser-toolbar-btn.go-btn { background: #64B5F6; color: #111; font-weight: 600; }
+        .browser-toolbar-btn.go-btn:active { background: #42A5F5; }
+        .browser-presets {
+            display: flex;
+            gap: 6px;
+            padding: 8px 10px;
+            overflow-x: auto;
+            flex-shrink: 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .browser-preset-btn {
+            padding: 6px 14px;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 20px;
+            background: rgba(255,255,255,0.05);
+            color: #ddd;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .browser-preset-btn:hover { background: rgba(255,255,255,0.12); }
+        .browser-preset-btn.active { background: rgba(100,181,246,0.2); border-color: #64B5F6; color: #64B5F6; }
+        .browser-iframe-wrap {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            min-height: 0;
+        }
+        .browser-iframe-wrap iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #000;
+        }
+        .browser-loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(10,12,20,0.9);
+            z-index: 2;
+        }
+        .browser-loading.hidden { display: none; }
+        .browser-error {
+            position: absolute;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+            z-index: 3;
+            text-align: center;
+            padding: 20px;
+        }
+        .browser-error.visible { display: flex; }
+        .browser-home-state {
+            position: absolute;
+            inset: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            background: rgba(0, 0, 0, 0.85);
-            z-index: 1000; /* Much higher to ensure it sits on top of everything */
-            cursor: pointer;
-            -webkit-tap-highlight-color: transparent;
-            transition: opacity 0.3s;
+            gap: 16px;
+            color: rgba(255,255,255,0.4);
+            font-size: 15px;
         }
-
-        #unmute-overlay.hidden {
-            opacity: 0;
-            pointer-events: none;
-            display: none !important;
+        .browser-home-state.hidden { display: none; }
+        #split-divider {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: calc(var(--split-left-width) - 10px);
+            width: 20px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 230;
+            cursor: col-resize;
+            touch-action: none;
         }
-
-        #unmute-icon {
-            font-size: 64px;
-            margin-bottom: 16px;
+        #player-shell.browser-split #split-divider {
+            display: flex;
         }
-
-        #unmute-text {
+        #split-divider::before {
+            content: '';
+            width: 4px;
+            height: 72px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.35);
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
+        }
+        #split-pane-toolbar {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 231;
+            display: none;
+            gap: 8px;
+        }
+        #player-shell.browser-split #split-pane-toolbar {
+            display: flex;
+        }
+        .split-pane-btn {
+            border: none;
+            border-radius: 999px;
+            padding: 10px 14px;
+            background: rgba(0,0,0,0.65);
             color: #fff;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            font-size: 18px;
-            background: rgba(255, 255, 255, 0.15);
-            padding: 12px 32px;
-            border-radius: 8px;
-            backdrop-filter: blur(4px);
+            font-size: 13px;
+            backdrop-filter: blur(6px);
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
     <div id="container">
 
-        <!-- Unmute overlay — user must tap to satisfy browser autoplay policy -->
-        <div id="unmute-overlay">
-            <div id="unmute-icon">&#x1F50A;</div>
-            <div id="unmute-text">Tap to Unmute</div>
+        <div id="splash-screen">
+            <img id="splash-logo" src="img/logo.svg" alt="Castla">
+            <div id="splash-loading">
+                <div class="splash-spinner"></div>
+                <span class="splash-loading-text">Loading...</span>
+            </div>
+            <div id="splash-unmute">
+                <span class="splash-tap-text">Tap to Start</span>
+            </div>
         </div>
 
         <!-- Web Native Launcher UI -->
-        <div id="web-launcher" class="hidden">
-            <div id="launcher-loading">Loading apps...</div>
+        <div id="web-launcher">
+            <div id="launcher-loading">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">Loading apps...</div>
+            </div>
             <div id="launcher-content" style="display:none;"></div>
         </div>
 
-        <!-- Existing Video Player UI -->
+        <!-- Split Drawer triggers & UI -->
+        <div id="split-drawer">
+            <div id="split-handle">
+                <div class="handle-dots">
+                    <div class="handle-dot"></div>
+                    <div class="handle-dot"></div>
+                    <div class="handle-dot"></div>
+                </div>
+            </div>
+            <div class="split-drawer-header">
+                <span>Split Screen Apps</span>
+                <span class="close-drawer" onclick="document.getElementById('split-drawer').classList.remove('open')">&times;</span>
+            </div>
+            <div class="split-app-list" id="split-app-list"></div>
+        </div>
+
         <div id="ad-banner" style="display:none;">
             <img src="/img/promo-banner.png" width="728" height="90" alt="Upgrade to PRO">
         </div>
-        <canvas id="display"></canvas>
-        <video id="mse-video" muted autoplay playsinline></video>
+        <div id="player-shell">
+            <div id="stream-pane">
+                <canvas id="display"></canvas>
+                <video id="mse-video" muted autoplay playsinline></video>
+            </div>
+            <div id="split-divider" aria-hidden="true"></div>
+            <div id="browser-split-pane">
+                <canvas id="display-secondary"></canvas>
+                <div class="browser-pane-ui" id="browser-pane-ui">
+                    <div class="browser-pane-toolbar">
+                        <input id="browser-url-input" class="browser-url-input" type="url" placeholder="URL..." autocomplete="off" autocorrect="off" spellcheck="false">
+                        <button id="browser-go-btn" class="browser-toolbar-btn go-btn">Go</button>
+                        <button id="browser-refresh-btn" class="browser-toolbar-btn">&#x21BB;</button>
+                    </div>
+                    <div class="browser-presets" id="browser-presets"></div>
+                    <div class="browser-iframe-wrap" id="browser-iframe-wrap">
+                        <div class="browser-home-state" id="browser-home-state">
+                            <span>Select a site or enter a URL</span>
+                        </div>
+                        <iframe id="browser-iframe" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                        <div class="browser-loading hidden" id="browser-loading">
+                            <div class="loading-spinner"></div>
+                        </div>
+                        <div class="browser-error" id="browser-error">
+                            <span>This site cannot be embedded.</span>
+                            <button class="browser-toolbar-btn" id="browser-error-close">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="split-pane-toolbar">
+                <button id="split-reset-btn" class="split-pane-btn">비율 초기화</button>
+                <button id="split-close-btn" class="split-pane-btn">분할 닫기</button>
+            </div>
+        </div>
         <div id="overlay">
             <div id="status">Connecting...</div>
             <div id="stats"></div>
         </div>
 
-        <!-- Hidden input for keyboard capture (invisible, auto-focused by IME detection) -->
         <input id="keyboard-input" type="text" autocomplete="off" autocorrect="off"
                autocapitalize="off" spellcheck="false"
                style="position:fixed;top:-100px;left:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;">
-        <!-- Bubble Composer — local IME input, commit-only to Android -->
         <div id="input-bubble">
-            <input id="bubble-text" type="text" placeholder="입력..." autocomplete="off" autocorrect="off"
-                   autocapitalize="off" spellcheck="false">
+            <input id="bubble-text" type="text" placeholder="입력..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             <button id="bubble-submit" class="bubble-btn">입력</button>
             <button id="bubble-backspace" class="bubble-btn">&#x232B;</button>
             <button id="bubble-cancel" class="bubble-btn">취소</button>
@@ -287,7 +692,6 @@
         </button>
     </div>
 
-    <!-- Ensure external libs like jMuxer are imported if you want to use MSE with raw H.264 later -->
     <script src="js/decoder.js"></script>
     <script src="js/mse-decoder.js"></script>
     <script src="js/renderer.js"></script>

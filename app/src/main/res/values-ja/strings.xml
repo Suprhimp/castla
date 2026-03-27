@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Castla</string>
+    <string name="widget_description">Castlaミラーリング制御とShizukuのステータス</string>
+    <string name="tesla_detect_channel">Tesla自動検出</string>
+    <string name="tesla_detected_title">Teslaを検出しました</string>
+    <string name="tesla_detected_text">タップしてCastlaミラーリングを開始</string>
+
+    <string name="toast_screen_capture_granted">画面キャプチャが許可されました！</string>
+    <string name="toast_screen_capture_denied">画面キャプチャが拒否されました (コード=%d)</string>
+    <string name="toast_vpn_permission_required">Tesla接続にはVPN権限が必要です</string>
+    <string name="toast_tesla_pairing_cancelled">Teslaのペアリングがキャンセルされました</string>
+    <string name="toast_could_not_open_browser">ブラウザを開けませんでした。Shizukuを手動でインストールしてください。</string>
+    <string name="toast_tesla_pairing_failed">Teslaのペアリングに失敗しました: %s</string>
+    <string name="toast_tesla_paired_device">Teslaがペアリングされました: %s</string>
+    <string name="toast_tesla_paired">Teslaがペアリングされました！</string>
+    <string name="toast_bluetooth_permission_missing">Bluetooth権限がありません。自動検出が機能しない可能性があります。</string>
+    <string name="toast_tesla_paired_auto_detect">Teslaがペアリングされました！自動検出が有効です。</string>
+    <string name="toast_tesla_auto_detect_disabled">Tesla自動検出が無効化されました</string>
+    <string name="toast_requesting_screen_capture">画面キャプチャを要求しています...</string>
+    <string name="toast_error">エラー: %s</string>
+
+    <string name="subtitle_tesla_screen_mirroring">Tesla画面ミラーリング</string>
+    <string name="btn_settings">設定</string>
+    <string name="title_castla_pro">Castla PRO</string>
+    <string name="desc_castla_pro_features">すべてのアプリをロック解除 / 1080pストリーミング / 広告なし</string>
+    <string name="btn_upgrade_pro">アップグレード — 買い切り型</string>
+    <string name="title_tesla_auto_detect_on">Tesla自動検出オン</string>
+    <string name="title_tesla_auto_detect">Tesla自動検出</string>
+    <string name="desc_tesla_auto_detect_on">Tesla接続時に通知を受け取ります</string>
+    <string name="desc_tesla_auto_detect_off">Teslaが近くにあるときに通知を受け取ります</string>
+    <string name="status_streaming_active">ストリーミング中</string>
+    <string name="status_ready_to_stream">ストリーミング準備完了</string>
+    <string name="title_open_tesla_browser">Teslaブラウザを開く</string>
+    <string name="label_enter_pin">PINを入力</string>
+    <string name="title_tesla_setup_required">Teslaの設定が必要です</string>
+    <string name="desc_shizuku_install_required">Teslaブラウザとの接続にはShizukuが必要です。\nインストール方法は下をタップしてください。</string>
+    <string name="btn_how_to_install_shizuku">Shizukuのインストール方法</string>
+    <string name="title_shizuku_setup_steps">Shizukuセットアップ手順:</string>
+    <string name="desc_shizuku_setup_steps">1. 設定 &gt; 端末情報 &gt; ソフトウェア情報\n   &gt; ビルド番号を7回タップ\n2. 設定 &gt; 開発者向けオプション\n   &gt; ワイヤレスデバッグ &gt; オン\n3. Shizukuを開く &gt; \"ワイヤレスデバッグで起動\"</string>
+    <string name="btn_open_shizuku">Shizukuを開く</string>
+    <string name="status_shizuku_running_setup">Shizukuが実行中です。Teslaとの接続をセットアップしています...</string>
+    <string name="btn_stop_mirroring">ミラーリングを停止</string>
+    <string name="btn_start_mirroring">ミラーリングを開始</string>
+    <string name="title_how_to_use">使い方</string>
+    <string name="desc_how_to_use">1. スマートフォンとTeslaを同じWiFiに接続します\n2. 上の「ミラーリングを開始」をタップします\n3. TeslaのブラウザでURLを開きます\n4. 4桁のPINを入力します\n5. スマートフォンの画面がTeslaに表示されます</string>
+    <string name="title_network_setup_log">ネットワーク設定ログ</string>
+    <string name="btn_copy">コピー</string>
+</resources>

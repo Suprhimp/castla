@@ -4,8 +4,14 @@ let videoSocket = null;
 let controlSocket = null;
 let audioPlayer = null;
 let touchHandler = null;
+let secondaryVideoSocket = null;
+let secondaryTouchHandler = null;
+let secondaryDecoder = null;
+
+const BROWSER_ONLY_SPLIT = true;
 
 let decoder = null;
+let currentPrimaryApp = null;
 let isLauncherMode = true; // start in launcher mode
 let codecMode = 'h264'; // Default to h264, switch to mjpeg if needed
 let streamPolicy = {
@@ -27,6 +33,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     const launcherContent = document.getElementById('launcher-content');
     const canvas = document.getElementById('display');
     const adBanner = document.getElementById('ad-banner');
+    const playerShell = document.getElementById('player-shell');
+    const streamPane = document.getElementById('stream-pane');
+    const browserSplitPane = document.getElementById('browser-split-pane');
+    const secondaryCanvas = document.getElementById('display-secondary');
+    const splitDivider = document.getElementById('split-divider');
+    const splitResetBtn = document.getElementById('split-reset-btn');
+    const splitCloseBtn = document.getElementById('split-close-btn');
+
+    // Split drawer
+    const splitDrawer = document.getElementById('split-drawer');
+    const splitHandle = document.getElementById('split-handle');
+    const splitAppList = document.getElementById('split-app-list');
+
+    const DEFAULT_BROWSER_SPLIT_RATIO = 0.42;
+    let browserSplitState = {
+        active: false,
+        app: null,
+        url: null,
+        ratio: DEFAULT_BROWSER_SPLIT_RATIO,
+        resizing: false,
+        fitMode: 'cover',
+        lockedPrimaryViewport: null,
+        lockedSecondaryViewport: null,
+        preset: null
+    };
+
+    const BROWSER_PRESETS = [
+        { label: 'YouTube', url: 'https://m.youtube.com' },
+        { label: 'Netflix', url: 'https://www.netflix.com' },
+        { label: 'Disney+', url: 'https://www.disneyplus.com' },
+        { label: 'Wavve', url: 'https://m.wavve.com' },
+        { label: 'TVING', url: 'https://www.tving.com' },
+        { label: 'Coupang Play', url: 'https://www.coupangplay.com' },
+        { label: 'Google', url: 'https://www.google.com' }
+    ];
 
     function setStatus(message, type = '') {
         if (!statusText) return;
@@ -48,22 +89,369 @@ document.addEventListener('DOMContentLoaded', async () => {
         return decoder && decoder.renderer ? decoder.renderer : null;
     }
 
+    function getActiveSecondaryRenderer() {
+        return secondaryDecoder && secondaryDecoder.renderer ? secondaryDecoder.renderer : null;
+    }
+
+    function getEffectivePrimaryFitMode() {
+        return browserSplitState.active ? 'contain' : streamPolicy.fitMode;
+    }
+
+    function getEffectiveSecondaryFitMode() {
+        return browserSplitState.active ? browserSplitState.fitMode : streamPolicy.fitMode;
+    }
+
+    function alignDimension(value) {
+        return Math.max(320, (Math.round(value) + 15) & ~15);
+    }
+
+    function buildLockedViewport(width, height, aspectRatio = null) {
+        let nextWidth = Math.max(1, Math.round(width));
+        let nextHeight = Math.max(1, Math.round(height));
+        if (aspectRatio && Number.isFinite(aspectRatio) && aspectRatio > 0) {
+            nextWidth = Math.max(nextWidth, Math.round(nextHeight * aspectRatio));
+        }
+        return {
+            width: alignDimension(nextWidth),
+            height: alignDimension(nextHeight)
+        };
+    }
+
+    function getAppLayoutHints(app) {
+        const packageName = app?.packageName || '';
+        const category = app?.category || '';
+        const label = (app?.label || '').toLowerCase();
+        const isMapApp =
+            category === 'NAVIGATION' ||
+            packageName.includes('map') ||
+            packageName.includes('nmap') ||
+            packageName.includes('waze') ||
+            label.includes('지도') ||
+            label.includes('map');
+        const isVideoApp =
+            category === 'VIDEO' ||
+            packageName.includes('youtube') ||
+            packageName.includes('netflix') ||
+            packageName.includes('tving') ||
+            packageName.includes('wavve') ||
+            packageName.includes('disney') ||
+            label.includes('youtube') ||
+            label.includes('netflix');
+        const isMailOrFeed =
+            packageName.includes('gmail') ||
+            packageName.includes('mail') ||
+            packageName.includes('outlook') ||
+            packageName.includes('news') ||
+            packageName.includes('reddit') ||
+            packageName.includes('x.com') ||
+            label.includes('gmail') ||
+            label.includes('mail');
+
+        return { isMapApp, isVideoApp, isMailOrFeed };
+    }
+
+    function getAppPreferredAspectRatio(app, role = 'secondary') {
+        const { isMapApp, isVideoApp, isMailOrFeed } = getAppLayoutHints(app);
+
+        if (isMapApp) return 9 / 16;
+        if (isVideoApp) return role === 'secondary' ? 0.62 : 0.58;
+        if (isMailOrFeed) return 0.56;
+        return role === 'primary' ? 9 / 16 : 0.58;
+    }
+
+    function computePrimaryPaneRatio(primaryAspectRatio) {
+        const shellWidth = Math.round(playerShell?.clientWidth || window.innerWidth || 0);
+        const shellHeight = Math.round(playerShell?.clientHeight || window.innerHeight || 0);
+        if (shellWidth <= 0 || shellHeight <= 0 || !Number.isFinite(primaryAspectRatio) || primaryAspectRatio <= 0) {
+            return DEFAULT_BROWSER_SPLIT_RATIO;
+        }
+
+        const desiredPrimaryWidth = Math.round(shellHeight * primaryAspectRatio);
+        const minPrimaryWidth = Math.round(shellWidth * 0.25);
+        const maxPrimaryWidth = Math.max(minPrimaryWidth, shellWidth - 320);
+        const clampedPrimaryWidth = Math.max(minPrimaryWidth, Math.min(maxPrimaryWidth, desiredPrimaryWidth));
+        return clampedPrimaryWidth / shellWidth;
+    }
+
+    function resolveSplitPreset(primaryApp, secondaryApp) {
+        const primaryAspectRatio = getAppPreferredAspectRatio(primaryApp, 'primary');
+        const secondaryAspectRatio = getAppPreferredAspectRatio(secondaryApp, 'secondary');
+        const primaryHints = getAppLayoutHints(primaryApp);
+        const secondaryHints = getAppLayoutHints(secondaryApp);
+
+        let ratio = computePrimaryPaneRatio(primaryAspectRatio);
+        if (primaryHints.isMapApp && secondaryHints.isVideoApp) {
+            ratio = 0.31;
+        } else if (primaryHints.isMapApp) {
+            ratio = 0.33;
+        }
+
+        return {
+            ratio: Math.max(0.25, Math.min(0.75, ratio)),
+            secondaryAspectRatio,
+            primaryAspectRatio,
+            secondaryAspectRatio
+        };
+    }
+
+    function lockBrowserSplitViewports(app = browserSplitState.app) {
+        if (!browserSplitState.active) return;
+        const preset = resolveSplitPreset(currentPrimaryApp, app);
+        browserSplitState.preset = preset;
+
+        // Use current ratio (may have been changed by divider drag), not preset ratio
+        const activeRatio = browserSplitState.ratio;
+        const { primaryWidth, secondaryWidth, shellHeight } = getDesiredSplitWidths(activeRatio);
+        const primaryHeight = Math.round(streamPane?.clientHeight || canvas?.clientHeight || shellHeight || window.innerHeight || 0);
+
+        if (primaryWidth <= 0 || primaryHeight <= 0) {
+            return;
+        }
+
+        browserSplitState.lockedPrimaryViewport = buildLockedViewport(
+            primaryWidth,
+            primaryHeight
+        );
+
+        if (!BROWSER_ONLY_SPLIT) {
+            const secondaryHeight = Math.round(browserSplitPane?.clientHeight || shellHeight || 0);
+            if (secondaryWidth > 0 && secondaryHeight > 0) {
+                browserSplitState.lockedSecondaryViewport = buildLockedViewport(
+                    secondaryWidth,
+                    secondaryHeight,
+                    preset.secondaryAspectRatio
+                );
+            }
+        }
+    }
+
+    function updateSplitFitButton() {
+        // No-op: fit button removed in browser-only split
+    }
+
+    function applyActiveFitModes() {
+        const primaryFitMode = getEffectivePrimaryFitMode();
+        const secondaryFitMode = getEffectiveSecondaryFitMode();
+        document.body.dataset.fitMode = browserSplitState.active ? secondaryFitMode : primaryFitMode;
+        getActiveRenderer()?.setFitMode?.(primaryFitMode);
+        getActiveSecondaryRenderer()?.setFitMode?.(secondaryFitMode);
+        updateSplitFitButton();
+    }
+
+    function getSplitShellSize() {
+        const shellWidth = Math.round(playerShell?.clientWidth || window.innerWidth || 0);
+        const shellHeight = Math.round(playerShell?.clientHeight || window.innerHeight || 0);
+        return { shellWidth, shellHeight };
+    }
+
+    function getDesiredSplitWidths(ratio = browserSplitState.ratio) {
+        const { shellWidth, shellHeight } = getSplitShellSize();
+        if (shellWidth <= 0 || shellHeight <= 0) {
+            return { primaryWidth: 0, secondaryWidth: 0, shellWidth, shellHeight };
+        }
+        const minPrimaryWidth = 320;
+        const minSecondaryWidth = 320;
+        const desiredPrimaryWidth = Math.round(shellWidth * ratio);
+        const maxPrimaryWidth = Math.max(minPrimaryWidth, shellWidth - minSecondaryWidth);
+        const primaryWidth = Math.max(minPrimaryWidth, Math.min(maxPrimaryWidth, desiredPrimaryWidth));
+        const secondaryWidth = Math.max(minSecondaryWidth, shellWidth - primaryWidth);
+        return { primaryWidth, secondaryWidth, shellWidth, shellHeight };
+    }
+
+    function setBrowserSplitRatio(nextRatio) {
+        const ratio = Math.max(0.25, Math.min(0.75, nextRatio));
+        browserSplitState.ratio = ratio;
+        const { primaryWidth, shellWidth } = getDesiredSplitWidths(ratio);
+        if (primaryWidth > 0 && shellWidth > 0) {
+            playerShell?.style.setProperty('--split-left-width', `${primaryWidth}px`);
+        } else {
+            playerShell?.style.setProperty('--split-left-width', `${Math.round(ratio * 1000) / 10}%`);
+        }
+    }
+
+    function isDualStreamCapable(app) {
+        return !!app;
+    }
+
+    function destroySecondaryTransport() {
+        if (secondaryTouchHandler) {
+            secondaryTouchHandler.destroy();
+            secondaryTouchHandler = null;
+        }
+        if (secondaryVideoSocket) {
+            try { secondaryVideoSocket.close(); } catch (_) {}
+            secondaryVideoSocket = null;
+        }
+        if (secondaryDecoder) {
+            secondaryDecoder.destroy?.();
+            secondaryDecoder = null;
+        }
+        if (secondaryCanvas) {
+            const ctx = secondaryCanvas.getContext('2d');
+            ctx?.clearRect(0, 0, secondaryCanvas.width || secondaryCanvas.clientWidth || 0, secondaryCanvas.height || secondaryCanvas.clientHeight || 0);
+        }
+    }
+
+    async function initSecondaryDecoder() {
+        if (!secondaryCanvas) return null;
+        if (secondaryDecoder) {
+            secondaryDecoder.destroy?.();
+            secondaryDecoder = null;
+        }
+
+        if (typeof WebCodecs !== 'undefined' || window.VideoDecoder) {
+            const renderer = new CanvasRenderer(secondaryCanvas);
+            renderer.setFitMode(getEffectiveSecondaryFitMode());
+            secondaryDecoder = new H264Decoder(
+                (frame) => renderer.render(frame),
+                (error) => console.error('[Main] Secondary decoder error:', error)
+            );
+            secondaryDecoder.renderer = renderer;
+            await secondaryDecoder.init(secondaryCanvas);
+        } else if (typeof createImageBitmap !== 'undefined') {
+            secondaryDecoder = new FallbackDecoder(
+                () => {},
+                (error) => console.error('[Main] Secondary fallback error:', error)
+            );
+            await secondaryDecoder.init(secondaryCanvas);
+            secondaryDecoder.renderer?.setFitMode?.(getEffectiveSecondaryFitMode());
+        }
+        return secondaryDecoder;
+    }
+
+    function connectSecondaryVideo() {
+        if (!browserSplitState.active) return;
+        if (secondaryVideoSocket) {
+            try { secondaryVideoSocket.close(); } catch (_) {}
+        }
+        const wsUrl = `ws://${host}/ws/video?channel=secondary`;
+        secondaryVideoSocket = new WebSocket(wsUrl);
+        secondaryVideoSocket.binaryType = 'arraybuffer';
+        secondaryVideoSocket.onmessage = async (event) => {
+            if (event.data instanceof ArrayBuffer && secondaryDecoder) {
+                secondaryDecoder.decode(event.data);
+            }
+        };
+        secondaryVideoSocket.onclose = () => {
+            if (browserSplitState.active) scheduleReconnect();
+        };
+        secondaryVideoSocket.onerror = (error) => console.error('[Main] Secondary video WebSocket error:', error);
+    }
+
+    function sendSecondaryLaunchRequest() {
+        if (!browserSplitState.active || !browserSplitState.app) return;
+        if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+
+        const app = browserSplitState.app;
+        const message = {
+            type: 'launchApp',
+            pkg: app.packageName,
+            splitMode: true,
+            pane: 'secondary'
+        };
+        if (app.componentName) message.componentName = app.componentName;
+        controlSocket.send(JSON.stringify(message));
+    }
+
+    async function enableBrowserSplit(app) {
+        if (!app) return;
+
+        if (BROWSER_ONLY_SPLIT) {
+            browserSplitState.active = true;
+            browserSplitState.app = app;
+            browserSplitState.fitMode = 'contain';
+            browserSplitState.lockedPrimaryViewport = null;
+            browserSplitState.lockedSecondaryViewport = null;
+            browserSplitState.preset = resolveSplitPreset(currentPrimaryApp, app);
+            streamPolicy.layoutMode = 'browser_only_split';
+            document.body.dataset.layoutMode = streamPolicy.layoutMode;
+            console.log(`[Main] Browser-only split primary=${currentPrimaryApp?.packageName || 'unknown'} app=${app?.packageName || 'unknown'} ratio=${browserSplitState.preset.ratio}`);
+            setBrowserSplitRatio(browserSplitState.preset.ratio || browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
+            playerShell?.classList.add('browser-split');
+            applyActiveFitModes();
+            await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+            lockBrowserSplitViewports(app);
+
+            // Determine URL for browser pane
+            const url = app.webUrl || getPresetUrlForApp(app) || '';
+            if (url) {
+                loadBrowserUrl(url);
+            } else {
+                showBrowserHome();
+            }
+
+            requestAnimationFrame(() => sendViewportSize());
+            return;
+        }
+
+        // Legacy dual-stream path
+        destroySecondaryTransport();
+        browserSplitState.active = true;
+        browserSplitState.app = app;
+        browserSplitState.fitMode = 'contain';
+        browserSplitState.lockedPrimaryViewport = null;
+        browserSplitState.lockedSecondaryViewport = null;
+        browserSplitState.preset = resolveSplitPreset(currentPrimaryApp, app);
+        streamPolicy.layoutMode = 'browser_split';
+        document.body.dataset.layoutMode = streamPolicy.layoutMode;
+        console.log(`[Main] Split preset primary=${currentPrimaryApp?.packageName || 'unknown'} secondary=${app?.packageName || 'unknown'} ratio=${browserSplitState.preset.ratio}`);
+        setBrowserSplitRatio(browserSplitState.preset.ratio || browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
+        playerShell?.classList.add('browser-split');
+        applyActiveFitModes();
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        lockBrowserSplitViewports(app);
+        await initSecondaryDecoder();
+        if (secondaryTouchHandler) {
+            secondaryTouchHandler.destroy();
+        }
+        secondaryTouchHandler = new TouchHandler(secondaryCanvas, getActiveSecondaryRenderer(), controlSocket, 'secondary');
+        applyActiveFitModes();
+        connectSecondaryVideo();
+        requestAnimationFrame(() => sendViewportSize());
+        setTimeout(() => sendSecondaryLaunchRequest(), 120);
+    }
+
+    function disableBrowserSplit(options = {}) {
+        const { notifyServer = true } = options;
+        const wasActive = browserSplitState.active;
+        browserSplitState.active = false;
+        browserSplitState.resizing = false;
+        browserSplitState.app = null;
+        browserSplitState.url = null;
+        browserSplitState.fitMode = 'contain';
+        browserSplitState.lockedPrimaryViewport = null;
+        browserSplitState.lockedSecondaryViewport = null;
+        browserSplitState.preset = null;
+        streamPolicy.layoutMode = 'single';
+        document.body.dataset.layoutMode = streamPolicy.layoutMode;
+        playerShell?.classList.remove('browser-split');
+
+        if (BROWSER_ONLY_SPLIT) {
+            clearBrowserPane();
+        } else {
+            destroySecondaryTransport();
+            if (notifyServer && wasActive && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'closeSecondary' }));
+            }
+        }
+
+        applyActiveFitModes();
+        requestAnimationFrame(() => sendViewportSize());
+    }
+
     function applyStreamPolicy(config = {}) {
         streamPolicy = {
             ...streamPolicy,
             ...config
         };
 
-        document.body.dataset.fitMode = streamPolicy.fitMode;
         document.body.dataset.layoutMode = streamPolicy.layoutMode;
 
         if (adBanner) {
             adBanner.style.display = streamPolicy.showAdBanner ? 'block' : 'none';
         }
 
-        const renderer = getActiveRenderer();
-        renderer?.setFitMode?.(streamPolicy.fitMode);
-
+        applyActiveFitModes();
         requestAnimationFrame(() => sendViewportSize());
     }
 
@@ -110,7 +498,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bubbleBackspace = document.getElementById('bubble-backspace');
     const bubbleCancel = document.getElementById('bubble-cancel');
 
-    // Prevent bubble touch/pointer events from propagating to canvas (touch handler)
+    // Prevent bubble touch/pointer events from propagating to canvas
     if (inputBubble) {
         for (const evt of ['pointerdown', 'pointerup', 'pointermove', 'touchstart', 'touchend', 'touchmove', 'mousedown', 'mouseup']) {
             inputBubble.addEventListener(evt, (e) => e.stopPropagation());
@@ -126,8 +514,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function showLauncherNotice(message) {
         if (!launcherLoading) return;
-        launcherLoading.textContent = message;
-        launcherLoading.style.display = 'block';
+        launcherLoading.innerHTML = `<div class="loading-text">${message}</div>`;
+        launcherLoading.style.display = 'flex';
     }
 
     function hideLauncherNotice() {
@@ -138,9 +526,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ── Bubble Composer functions ──
     function positionInputBubble(anchor) {
         if (!inputBubble) return;
-        const bh = 56;  // approximate bubble height
+        const bh = 56;
         const margin = 12;
-        // Measure actual bubble width for centering (no CSS transform needed)
         const bw = inputBubble.offsetWidth || 360;
 
         let cx, top;
@@ -153,11 +540,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             top = window.innerHeight - bh - 60;
         }
 
-        // Center horizontally around cx
         let left = cx - bw / 2;
         if (left < margin) left = margin;
         if (left + bw > window.innerWidth - margin) left = window.innerWidth - margin - bw;
-        // Clamp vertical
         if (top < margin) top = margin;
         if (top + bh > window.innerHeight - margin) top = window.innerHeight - margin - bh;
 
@@ -172,10 +557,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         inputBubble.classList.add('visible');
         bubbleText.value = '';
         setTimeout(() => bubbleText.focus({ preventScroll: true }), 80);
-        const cs = window.getComputedStyle(inputBubble);
-        console.log('[Bubble] Opened at', inputBubble.style.left, inputBubble.style.top,
-            'display:', cs.display, 'visibility:', cs.visibility, 'opacity:', cs.opacity,
-            'size:', inputBubble.offsetWidth, 'x', inputBubble.offsetHeight);
     }
 
     function closeInputBubble(clear = true) {
@@ -184,7 +565,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         inputBubble.classList.remove('visible');
         if (clear && bubbleText) bubbleText.value = '';
         bubbleText?.blur();
-        console.log('[Bubble] Closed');
     }
 
     function submitBubbleInput() {
@@ -193,9 +573,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
             if (text) {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text }));
-                console.log('[Bubble] Submitted:', text);
             }
-            // Send Enter key to Android — confirms input and dismisses IME naturally
             controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 66 }));
         }
         bubbleText.value = '';
@@ -231,17 +609,140 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // ── Browser-Only Split Pane Functions ──
+    const browserPaneUi = document.getElementById('browser-pane-ui');
+    const browserUrlInput = document.getElementById('browser-url-input');
+    const browserGoBtn = document.getElementById('browser-go-btn');
+    const browserRefreshBtn = document.getElementById('browser-refresh-btn');
+    const browserPresetsContainer = document.getElementById('browser-presets');
+    const browserIframe = document.getElementById('browser-iframe');
+    const browserLoading = document.getElementById('browser-loading');
+    const browserError = document.getElementById('browser-error');
+    const browserErrorClose = document.getElementById('browser-error-close');
+    const browserHomeState = document.getElementById('browser-home-state');
+
+    // Map from package name to browser URL (mirrors server-side OTT_WEB_URLS)
+    const OTT_WEB_URLS = {
+        'com.google.android.youtube': 'https://m.youtube.com',
+        'com.netflix.mediaclient': 'https://www.netflix.com',
+        'com.disney.disneyplus': 'https://www.disneyplus.com',
+        'com.disney.disneyplus.kr': 'https://www.disneyplus.com',
+        'com.wavve.player': 'https://m.wavve.com',
+        'net.cj.cjhv.gs.tving': 'https://www.tving.com',
+        'com.coupang.play': 'https://www.coupangplay.com',
+        'com.frograms.watcha': 'https://watcha.com'
+    };
+
+    function getPresetUrlForApp(app) {
+        if (!app) return null;
+        // 1. Server already provides webUrl for OTT apps
+        if (app.webUrl) return app.webUrl;
+        // 2. Fallback: check client-side OTT map
+        const url = OTT_WEB_URLS[app.packageName];
+        if (url) return url;
+        return null;
+    }
+
+    function loadBrowserUrl(url) {
+        if (!url) return;
+        browserSplitState.url = url;
+        if (browserHomeState) browserHomeState.classList.add('hidden');
+        if (browserError) browserError.classList.remove('visible');
+        if (browserLoading) browserLoading.classList.remove('hidden');
+        if (browserIframe) {
+            browserIframe.src = url;
+            browserIframe.style.display = 'block';
+        }
+        if (browserUrlInput) browserUrlInput.value = url;
+        updatePresetButtons(url);
+        console.log(`[Main] Browser pane loading: ${url}`);
+
+        // Detect load or timeout
+        let loaded = false;
+        const onLoad = () => {
+            loaded = true;
+            if (browserLoading) browserLoading.classList.add('hidden');
+        };
+        if (browserIframe) {
+            browserIframe.onload = onLoad;
+        }
+        setTimeout(() => {
+            if (!loaded && browserLoading) browserLoading.classList.add('hidden');
+        }, 8000);
+    }
+
+    function showBrowserHome() {
+        browserSplitState.url = null;
+        if (browserIframe) { browserIframe.src = 'about:blank'; browserIframe.style.display = 'none'; }
+        if (browserHomeState) browserHomeState.classList.remove('hidden');
+        if (browserError) browserError.classList.remove('visible');
+        if (browserLoading) browserLoading.classList.add('hidden');
+        if (browserUrlInput) browserUrlInput.value = '';
+        updatePresetButtons(null);
+    }
+
+    function clearBrowserPane() {
+        if (browserIframe) { browserIframe.src = 'about:blank'; browserIframe.style.display = 'none'; }
+        if (browserLoading) browserLoading.classList.add('hidden');
+        if (browserError) browserError.classList.remove('visible');
+        if (browserHomeState) browserHomeState.classList.remove('hidden');
+        if (browserUrlInput) browserUrlInput.value = '';
+    }
+
+    function updatePresetButtons(activeUrl) {
+        if (!browserPresetsContainer) return;
+        const buttons = browserPresetsContainer.querySelectorAll('.browser-preset-btn');
+        buttons.forEach(btn => {
+            btn.classList.toggle('active', activeUrl && btn.dataset.url === activeUrl);
+        });
+    }
+
+    // Render preset buttons
+    if (browserPresetsContainer) {
+        BROWSER_PRESETS.forEach(preset => {
+            const btn = document.createElement('button');
+            btn.className = 'browser-preset-btn';
+            btn.textContent = preset.label;
+            btn.dataset.url = preset.url;
+            btn.addEventListener('click', () => loadBrowserUrl(preset.url));
+            browserPresetsContainer.appendChild(btn);
+        });
+    }
+
+    if (browserGoBtn && browserUrlInput) {
+        const navigateBrowserUrl = () => {
+            let url = (browserUrlInput.value || '').trim();
+            if (!url) return;
+            if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+            loadBrowserUrl(url);
+        };
+        browserGoBtn.addEventListener('click', navigateBrowserUrl);
+        browserUrlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); navigateBrowserUrl(); }
+        });
+    }
+
+    if (browserRefreshBtn && browserIframe) {
+        browserRefreshBtn.addEventListener('click', () => {
+            if (browserSplitState.url) loadBrowserUrl(browserSplitState.url);
+        });
+    }
+
+    if (browserErrorClose) {
+        browserErrorClose.addEventListener('click', () => showBrowserHome());
+    }
+
+    setBrowserSplitRatio(DEFAULT_BROWSER_SPLIT_RATIO);
+    updateSplitFitButton();
     hideOverlay();
 
     async function initDecoder() {
         console.log('[Main] Initializing decoders...');
 
-        // Tesla browser has MediaSource, but doesn't support raw Annex-B H.264 without an fMP4 transmuxer.
-        // We will force MJPEG fallback for now if WebCodecs (VideoDecoder) is not available.
         if (typeof WebCodecs !== 'undefined' || window.VideoDecoder) {
             console.log('[Main] Using WebCodecs Decoder');
             const renderer = new CanvasRenderer(canvas);
-            renderer.setFitMode(streamPolicy.fitMode);
+            renderer.setFitMode(getEffectivePrimaryFitMode());
             decoder = new H264Decoder(
                 (frame) => renderer.render(frame),
                 (error) => console.error('[Main] Decoder error:', error)
@@ -249,13 +750,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             decoder.renderer = renderer;
             await decoder.init(canvas);
             codecMode = 'h264';
+            applyActiveFitModes();
         } else if (typeof createImageBitmap !== 'undefined') {
-            console.log('[Main] Using MJPEG fallback (WebCodecs not supported)');
+            console.log('[Main] Using MJPEG fallback');
             decoder = new FallbackDecoder(
                 () => {
-                    // This callback fires when the first successful JPEG is drawn!
                     if (!firstFrameReceived) {
-                        console.log('[Main] First MJPEG image successfully drawn!');
                         firstFrameReceived = true;
                         checkReady();
                     }
@@ -263,72 +763,51 @@ document.addEventListener('DOMContentLoaded', async () => {
                 (error) => console.error('[Main] Fallback error:', error)
             );
             await decoder.init(canvas);
-            decoder.renderer?.setFitMode?.(streamPolicy.fitMode);
+            decoder.renderer?.setFitMode?.(getEffectivePrimaryFitMode());
             codecMode = 'mjpeg';
+            applyActiveFitModes();
 
-            // Show canvas explicitly for MJPEG
             canvas.style.display = 'block';
             const mseVideo = document.getElementById('mse-video');
             if (mseVideo) mseVideo.style.display = 'none';
 
-            // Tell the server we want MJPEG frames
             if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
             }
         } else {
-            throw new Error(
-                'No supported decoder available. ' +
-                'This browser requires WebCodecs (Chromium 94+) or createImageBitmap.'
-            );
+            throw new Error('No supported decoder available.');
         }
     }
 
     function connectVideo() {
         const wsUrl = `ws://${host}/ws/video`;
-        console.log('[Main] Connecting video:', wsUrl);
-        // Don't show status overlay if we are in Launcher mode
         if (!isLauncherMode) setStatus('Connecting...', '');
 
         videoSocket = new WebSocket(wsUrl);
         videoSocket.binaryType = 'arraybuffer';
 
         videoSocket.onopen = () => {
-            console.log('[Main] Video connected');
             if (!isLauncherMode) setStatus('Loading...', '');
-
-            // If we are using MJPEG, tell the server immediately upon connection
             if (codecMode === 'mjpeg' && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
-                console.log('[Main] Sending initial MJPEG codec mode request');
                 controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
             }
         };
 
         videoSocket.onmessage = async (event) => {
             if (event.data instanceof ArrayBuffer) {
-                if (!decoder) {
-                    console.warn('[Main] Frame arrived but no decoder');
-                    return;
-                }
-
-                // If using H.264/WebCodecs, we detect first keyframe based on flags.
-                // For MJPEG, the FallbackDecoder will fire its callback when the first image successfully draws,
-                // so we don't guess based on bytes here.
+                if (!decoder) return;
                 if (codecMode === 'h264') {
                     const v = new Uint8Array(event.data);
                     if (v.length > 0 && v[0] === 0x01 && !firstFrameReceived) {
-                        console.log('[Main] First keyframe received, size=' + v.length);
                         firstFrameReceived = true;
                         checkReady();
                     }
                 }
-
-                // Even for MJPEG, if we get data, we try to decode.
                 decoder.decode(event.data);
             }
         };
 
         videoSocket.onclose = () => {
-            console.log('[Main] Video disconnected');
             if (!isLauncherMode) {
                 setStatus('Disconnected', 'error');
                 showOverlay();
@@ -336,15 +815,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             scheduleReconnect();
         };
 
-        videoSocket.onerror = (error) => {
-            console.error('[Main] Video WebSocket error:', error);
-        };
+        videoSocket.onerror = (error) => console.error('[Main] Video WebSocket error:', error);
     }
 
     function checkReady() {
         if (firstFrameReceived) {
             clearLaunchTimeout();
-            console.log('[Main] All streams ready, hiding overlay');
             const mseVideo = document.getElementById('mse-video');
             if (codecMode === 'mjpeg') {
                 canvas.style.opacity = '1';
@@ -367,9 +843,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         isReconnecting = true;
         clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(() => {
-            console.log('[Main] Attempting reconnect...');
             isReconnecting = false;
             if (videoSocket && videoSocket.readyState === WebSocket.CLOSED) connectVideo();
+            if (!BROWSER_ONLY_SPLIT && browserSplitState.active && (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED)) connectSecondaryVideo();
             if (controlSocket && controlSocket.readyState === WebSocket.CLOSED) connectControl();
             if (audioPlayer && (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED)) {
                 audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
@@ -378,58 +854,82 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     let resizeTimer = null;
+    function describeViewport(viewport) {
+        return viewport && viewport.width > 0 && viewport.height > 0
+            ? `${viewport.width}x${viewport.height}`
+            : 'none';
+    }
+
     function sendViewportSize() {
         if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+        if (codecMode === 'mjpeg' && !streamPolicy.autoFit) return;
 
-        if (codecMode === 'mjpeg' && !streamPolicy.autoFit) {
-            console.log(`[Main] Skipped viewport auto-fit for MJPEG free mode: ${canvas.clientWidth}x${canvas.clientHeight}`);
-            return;
-        }
-
-        const width = Math.round(canvas.clientWidth || window.innerWidth);
-        const height = Math.round(canvas.clientHeight || window.innerHeight);
-        // Don't send invalid sizes (e.g. 0x0)
-        if (width <= 0 || height <= 0) return;
+        const livePrimaryWidth = Math.round(streamPane?.clientWidth || canvas.clientWidth || window.innerWidth);
+        const livePrimaryHeight = Math.round(streamPane?.clientHeight || canvas.clientHeight || window.innerHeight);
+        if (livePrimaryWidth <= 0 || livePrimaryHeight <= 0) return;
 
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-            console.log(`[Main] Sending viewport size: ${width}x${height} fit=${streamPolicy.fitMode} layout=${streamPolicy.layoutMode}`);
+            const primaryViewport = browserSplitState.active && browserSplitState.lockedPrimaryViewport
+                ? browserSplitState.lockedPrimaryViewport
+                : { width: livePrimaryWidth, height: livePrimaryHeight };
+
+            // Only send secondary viewport in legacy dual-stream mode
+            if (!BROWSER_ONLY_SPLIT && browserSplitState.active && browserSplitPane) {
+                const secondaryViewport = browserSplitState.lockedSecondaryViewport;
+                if (secondaryViewport && secondaryViewport.width > 0 && secondaryViewport.height > 0) {
+                    console.log(`[Main] Sending viewport pane=secondary requested=${secondaryViewport.width}x${secondaryViewport.height} fitMode=${getEffectiveSecondaryFitMode()} locked=${describeViewport(secondaryViewport)} split=${browserSplitState.active}`);
+                    controlSocket.send(JSON.stringify({
+                        type: 'viewport',
+                        pane: 'secondary',
+                        width: secondaryViewport.width,
+                        height: secondaryViewport.height,
+                        fitMode: getEffectiveSecondaryFitMode(),
+                        layoutMode: streamPolicy.layoutMode
+                    }));
+                }
+            }
+
+            console.log(`[Main] Sending viewport pane=primary requested=${primaryViewport.width}x${primaryViewport.height} fitMode=${getEffectivePrimaryFitMode()} locked=${describeViewport(browserSplitState.lockedPrimaryViewport)} split=${browserSplitState.active}`);
+
             controlSocket.send(JSON.stringify({
                 type: 'viewport',
-                width: width,
-                height: height,
-                fitMode: streamPolicy.fitMode,
+                pane: 'primary',
+                width: primaryViewport.width,
+                height: primaryViewport.height,
+                fitMode: getEffectivePrimaryFitMode(),
                 layoutMode: streamPolicy.layoutMode
             }));
-        }, 500); // 500ms debounce
+        }, 500);
     }
 
     function connectControl() {
         const wsUrl = `ws://${host}/ws/control`;
-        console.log('[Main] Connecting control:', wsUrl);
         controlSocket = new WebSocket(wsUrl);
 
         controlSocket.onopen = () => {
-            console.log('[Main] Control connected');
             closeInputBubble(true);
-
-            // Re-instantiate touchHandler with correct socket to prevent 'Socket not open' error
-            if (touchHandler) {
-                touchHandler.destroy();
-            }
+            if (touchHandler) touchHandler.destroy();
             const renderer = (decoder && decoder.renderer) ? decoder.renderer : null;
-            touchHandler = new TouchHandler(canvas, renderer, controlSocket);
-            touchHandler.bindEvents();
+            touchHandler = new TouchHandler(canvas, renderer, controlSocket, 'primary');
+            if (!BROWSER_ONLY_SPLIT && browserSplitState.active && secondaryCanvas) {
+                if (secondaryTouchHandler) secondaryTouchHandler.destroy();
+                secondaryTouchHandler = new TouchHandler(secondaryCanvas, getActiveSecondaryRenderer(), controlSocket, 'secondary');
+            }
 
             sendViewportSize();
 
-            // Re-apply codec mode if MJPEG was chosen during init
+            if (!BROWSER_ONLY_SPLIT && browserSplitState.active) {
+                if (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED) {
+                    connectSecondaryVideo();
+                }
+                setTimeout(() => sendSecondaryLaunchRequest(), 150);
+            }
+
             if (codecMode === 'mjpeg') {
-                console.log('[Main] Sending MJPEG codec mode request after control connect');
                 controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
             }
 
-            // Also load launcher apps if not yet loaded
             if (isLauncherMode) {
                 loadLauncherApps();
             }
@@ -438,74 +938,90 @@ document.addEventListener('DOMContentLoaded', async () => {
         controlSocket.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
-                // Listen for resolution changes
                 if (msg.type === 'resolutionChanged') {
-                    console.log(`[Main] Server resolution changed to ${msg.width}x${msg.height}`);
-                    // FallbackDecoder handles size changes internally during render
+                    const pane = msg.pane || 'primary';
+                    const lockedViewport = pane === 'secondary'
+                        ? browserSplitState.lockedSecondaryViewport
+                        : browserSplitState.lockedPrimaryViewport;
+                    const fitMode = pane === 'secondary'
+                        ? getEffectiveSecondaryFitMode()
+                        : getEffectivePrimaryFitMode();
+                    console.log(`[Main] Server resolution changed pane=${pane} server=${msg.width}x${msg.height} fitMode=${fitMode} locked=${describeViewport(lockedViewport)} split=${browserSplitState.active}`);
                 } else if (msg.type === 'showKeyboard') {
                     if (useBubbleInput) {
-                        console.log('[Main] Server detected IME open — opening bubble');
                         const anchor = touchHandler?.lastTap || null;
                         openInputBubble(anchor);
-                    } else {
-                        console.log('[Main] Server detected IME open — focusing keyboard input');
-                        focusKeyboardProxy();
-                    }
+                    } else focusKeyboardProxy();
                 } else if (msg.type === 'hideKeyboard') {
-                    if (useBubbleInput) {
-                        console.log('[Main] Server detected IME closed — closing bubble');
-                        closeInputBubble(true);
-                    } else {
-                        console.log('[Main] Server detected IME closed');
-                        blurKeyboardProxy();
-                    }
+                    if (useBubbleInput) closeInputBubble(true);
+                    else blurKeyboardProxy();
                 }
-            } catch (e) {
-                console.error('[Main] Control message parsing failed:', e);
-            }
+            } catch (e) {}
         };
 
-        controlSocket.onclose = () => {
-            console.log('[Main] Control disconnected');
-            scheduleReconnect();
-        };
-
-        controlSocket.onerror = (error) => {
-            console.error('[Main] Control WebSocket error:', error);
-        };
+        controlSocket.onclose = () => scheduleReconnect();
     }
 
-    // --- Web Launcher Code ---
+    // --- Web Launcher & Split Launcher Code ---
     async function loadLauncherApps() {
-        console.log('[Launcher] Fetching apps...');
         try {
             const response = await fetch('/api/apps');
-            if (!response.ok) throw new Error('Network response was not ok');
+            if (!response.ok) throw new Error('Network error');
             const data = await response.json();
 
-            // If Premium isn't active, we still list all apps but lock Video/Music/Other.
-            // (Handled server-side usually, but we will rely on UI tags returned or just lock them blindly if we know status.
-            // For now, the API returns isPremium=true/false alongside apps.)
             const isPremium = data.isPremium || false;
             const apps = data.apps || [];
 
             applyStreamPolicy({
                 isPremium,
-                fitMode: data.fitMode || (isPremium ? 'cover' : 'contain'),
+                fitMode: data.fitMode || 'contain',
                 autoFit: data.autoFit === true,
                 layoutMode: data.layoutMode || 'single',
                 showAdBanner: data.showAdBanner === true
             });
 
             renderLauncherApps(apps, isPremium);
+            renderSplitLauncherApps(apps, isPremium);
         } catch (err) {
-            console.error('[Launcher] Failed to fetch apps:', err);
-            launcherLoading.textContent = 'Failed to load apps. Try refreshing.';
+            console.error('[Launcher]', err);
+            showLauncherNotice('Failed to load apps. Try refreshing.');
         }
     }
 
+    function renderSplitLauncherApps(apps, isPremium) {
+        if (!splitAppList) return;
+        splitAppList.innerHTML = '';
+
+        apps.forEach(app => {
+            const cell = document.createElement('div');
+            cell.className = 'split-app-item';
+
+            const icon = document.createElement('img');
+            icon.className = 'split-app-icon';
+            icon.src = `/api/icon?pkg=${app.packageName}`;
+            cell.appendChild(icon);
+
+            const label = document.createElement('div');
+            label.textContent = BROWSER_ONLY_SPLIT ? `${app.label} (Split)` : `${app.label} (Dual Stream)`;
+            label.style.color = '#FFD700';
+            cell.appendChild(label);
+
+            cell.addEventListener('click', () => {
+                if ((app.category !== 'NAVIGATION') && !isPremium) {
+                    requestPurchase(`locked:${app.packageName}`);
+                    return;
+                }
+
+                launchApp(app, true);
+                splitDrawer.classList.remove('open');
+            });
+
+            splitAppList.appendChild(cell);
+        });
+    }
+
     function renderLauncherApps(apps, isPremium) {
-        launcherContent.innerHTML = ''; // Clear previous
+        launcherContent.innerHTML = '';
         const grouped = {
             'NAVIGATION': { title: 'Navigation', color: '#4CAF50', items: [] },
             'VIDEO': { title: 'Video', color: '#FF5722', items: [], locked: !isPremium },
@@ -514,11 +1030,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         apps.forEach(app => {
-            if (grouped[app.category]) {
-                grouped[app.category].items.push(app);
-            } else {
-                grouped['OTHER'].items.push(app);
-            }
+            if (grouped[app.category]) grouped[app.category].items.push(app);
+            else grouped['OTHER'].items.push(app);
         });
 
         Object.keys(grouped).forEach(key => {
@@ -565,7 +1078,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         requestPurchase(`locked:${app.packageName}`);
                         return;
                     }
-                    launchApp(app);
+                    launchApp(app, false);
                 });
 
                 grid.appendChild(cell);
@@ -580,153 +1093,219 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isLauncherMode) {
             webLauncher.classList.remove('hidden');
         }
+        window.dispatchEvent(new Event('launcher-ready'));
     }
 
-    function launchApp(app) {
+    function launchApp(app, isSplit = false) {
         const pkgName = app.packageName;
         const componentName = app.componentName || null;
-        console.log(`[Launcher] Launching app: ${pkgName} (${componentName || 'package-only'})`);
+        console.log(`[Launcher] Launching app: ${pkgName} (split=${isSplit})`);
 
-        // Hide launcher, show video player
+        if (isSplit) {
+            if (isLauncherMode) {
+                showLauncherNotice('먼저 왼쪽에 실행할 앱을 선택하세요.');
+                return;
+            }
+            if (!isDualStreamCapable(app)) {
+                showLauncherNotice('이 앱은 듀얼 스트림을 지원하지 않습니다.');
+                return;
+            }
+            enableBrowserSplit(app);
+            return;
+        }
+
+        disableBrowserSplit();
+        currentPrimaryApp = app;
         isLauncherMode = false;
         webLauncher.classList.add('hidden');
+        splitDrawer.style.display = 'flex';
         homeBtn.style.display = 'block';
-
-
-        // RESET firstFrameReceived so the "Loading..." overlay can be hidden upon the next frame.
         firstFrameReceived = false;
         clearLaunchTimeout();
 
-        // Ensure UI transitions are processed before blocking threads
         setTimeout(() => {
             if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
-                // Send the launch command to start the app AND trigger MediaProjection/VirtualDisplay frames
                 const message = {
                     type: 'launchApp',
-                    pkg: pkgName
+                    pkg: pkgName,
+                    splitMode: false
                 };
-                if (componentName) {
-                    message.componentName = componentName;
-                }
+                if (componentName) message.componentName = componentName;
+
                 controlSocket.send(JSON.stringify(message));
 
-                // Force codec mode request just in case to ensure frames start flowing
                 if (codecMode === 'mjpeg') {
                     controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
                 }
 
                 sendViewportSize();
-
-                // Wait for stream to start
                 setStatus('Loading...', '');
                 showOverlay();
                 launchTimeout = setTimeout(() => {
                     if (firstFrameReceived) return;
-
-                    console.warn(`[Launcher] Timed out waiting for first frame after launching ${pkgName}`);
                     closeInputBubble(true);
                     isLauncherMode = true;
                     webLauncher.classList.remove('hidden');
+                    splitDrawer.style.display = 'none';
                     homeBtn.style.display = 'none';
-
                     hideOverlay();
                     showLauncherNotice('Launch timed out. Try again.');
                 }, 5000);
-            } else {
-                console.error('[Launcher] Control socket not connected!');
-                isLauncherMode = true;
-                webLauncher.classList.remove('hidden');
-                homeBtn.style.display = 'none';
-        
-                showLauncherNotice('Connection lost. Try again.');
             }
         }, 50);
     }
 
     function goHome() {
-        console.log('[Main] Going home to launcher');
         isLauncherMode = true;
         clearLaunchTimeout();
         closeInputBubble(true);
         blurKeyboardProxy();
+        disableBrowserSplit();
         webLauncher.classList.remove('hidden');
+        splitDrawer.style.display = 'none';
+        splitDrawer.classList.remove('open');
         homeBtn.style.display = 'none';
 
         hideOverlay();
-        firstFrameReceived = false; // Reset frame state
+        firstFrameReceived = false;
 
+        currentPrimaryApp = null;
         if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
             controlSocket.send(JSON.stringify({ type: 'goHome' }));
         }
     }
 
-    homeBtn.addEventListener('click', () => {
-        goHome();
-    });
+    homeBtn.addEventListener('click', goHome);
 
-    if (canvas) {
-        const maybeFocusKeyboard = () => {
-            if (!isLauncherMode && !useBubbleInput) {
-                focusKeyboardProxy();
+    // ── Edge Swipe Handlers for Split Drawer ──
+    if (splitHandle) {
+        splitHandle.addEventListener('click', () => {
+            splitDrawer.classList.toggle('open');
+        });
+
+        // Swipe on handle
+        let startX = 0;
+        splitHandle.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX;
+        }, {passive: true});
+
+        splitHandle.addEventListener('touchend', (e) => {
+            let endX = e.changedTouches[0].clientX;
+            if (startX - endX > 15) { // Swiped left
+                splitDrawer.classList.add('open');
+            } else if (endX - startX > 15) { // Swiped right
+                splitDrawer.classList.remove('open');
             }
+        }, {passive: true});
+    }
+
+    if (splitDrawer) {
+        // Swipe on the drawer itself to close it
+        let drawerStartX = 0;
+        splitDrawer.addEventListener('touchstart', (e) => {
+            drawerStartX = e.touches[0].clientX;
+        }, {passive: true});
+
+        splitDrawer.addEventListener('touchend', (e) => {
+            let endX = e.changedTouches[0].clientX;
+            if (endX - drawerStartX > 30) { // Swiped right
+                splitDrawer.classList.remove('open');
+            }
+        }, {passive: true});
+    }
+
+    if (splitResetBtn) {
+        splitResetBtn.addEventListener('click', () => {
+            const preset = resolveSplitPreset(currentPrimaryApp, browserSplitState.app);
+            setBrowserSplitRatio(preset.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
+            lockBrowserSplitViewports(browserSplitState.app);
+            requestAnimationFrame(() => sendViewportSize());
+        });
+    }
+
+    if (splitCloseBtn) {
+        splitCloseBtn.addEventListener('click', () => {
+            disableBrowserSplit();
+        });
+    }
+
+    if (splitDivider && playerShell) {
+        const updateSplitFromClientX = (clientX) => {
+            const rect = playerShell.getBoundingClientRect();
+            if (rect.width <= 0) return;
+            setBrowserSplitRatio((clientX - rect.left) / rect.width);
         };
 
+        const stopResizing = () => {
+            if (!browserSplitState.resizing) return;
+            browserSplitState.resizing = false;
+            lockBrowserSplitViewports(browserSplitState.app);
+            requestAnimationFrame(() => sendViewportSize());
+        };
+
+        splitDivider.addEventListener('pointerdown', (e) => {
+            if (!browserSplitState.active) return;
+            browserSplitState.resizing = true;
+            splitDivider.setPointerCapture?.(e.pointerId);
+            e.preventDefault();
+            updateSplitFromClientX(e.clientX);
+        });
+
+        splitDivider.addEventListener('pointermove', (e) => {
+            if (!browserSplitState.resizing) return;
+            e.preventDefault();
+            updateSplitFromClientX(e.clientX);
+        });
+
+        splitDivider.addEventListener('pointerup', stopResizing);
+        splitDivider.addEventListener('pointercancel', stopResizing);
+    }
+
+    // ── Keyboard handling ──
+    if (canvas) {
+        const maybeFocusKeyboard = () => {
+            if (!isLauncherMode && !useBubbleInput) focusKeyboardProxy();
+        };
         canvas.addEventListener('pointerup', maybeFocusKeyboard);
         canvas.addEventListener('mouseup', maybeFocusKeyboard);
         canvas.addEventListener('touchend', maybeFocusKeyboard, { passive: true });
     }
 
-    if (adBanner) {
-        adBanner.addEventListener('click', () => requestPurchase('banner'));
-    }
+    if (adBanner) adBanner.addEventListener('click', () => requestPurchase('banner'));
 
     const kbInput = document.getElementById('keyboard-input');
     if (kbInput) {
         kbInput.addEventListener('compositionstart', () => {
-            if (useBubbleInput) return; // bubble handles its own IME
+            if (useBubbleInput) return;
             composing = true;
             skipNextInput = false;
         });
-
-        kbInput.addEventListener('compositionupdate', (e) => {
-            if (useBubbleInput) return;
-            console.log('[KB] Composition preview:', e.data || '');
-        });
-
+        kbInput.addEventListener('compositionupdate', () => {});
         kbInput.addEventListener('compositionend', (e) => {
             if (useBubbleInput) return;
             const finalText = e.data || kbInput.value || '';
             if (finalText && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text: finalText }));
-                console.log('[KB] Composition commit:', finalText);
             }
-
             composing = false;
             skipNextInput = true;
             kbInput.value = '';
         });
-
         kbInput.addEventListener('input', (e) => {
-            if (useBubbleInput) return;
-            if (composing) return;
-
+            if (useBubbleInput || composing) return;
             if (skipNextInput) {
                 skipNextInput = false;
                 kbInput.value = '';
                 return;
             }
-
             const text = e.data || e.target.value;
             if (text && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text }));
-                console.log('[KB] Sent:', text);
             }
             kbInput.value = '';
         });
-
         kbInput.addEventListener('keydown', (e) => {
             if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
-            // Allow backspace even in bubble mode
             if (e.key === 'Backspace' && !composing) {
                 controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
                 e.preventDefault();
@@ -738,7 +1317,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 e.preventDefault();
             }
         });
-
         kbInput.addEventListener('blur', () => {
             kbInput.style.pointerEvents = 'none';
             composing = false;
@@ -746,10 +1324,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Handle resize events to update Android's virtual display resolution
-    window.addEventListener('resize', sendViewportSize);
+    window.addEventListener('resize', () => {
+        if (browserSplitState.active) {
+            requestAnimationFrame(() => {
+                setBrowserSplitRatio(browserSplitState.ratio);
+                lockBrowserSplitViewports(browserSplitState.app);
+                sendViewportSize();
+            });
+            return;
+        }
+        sendViewportSize();
+    });
 
-    // Initial setups
     try {
         await initDecoder();
         connectVideo();
@@ -757,41 +1343,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) {
         setStatus(e.message, 'error');
         showOverlay();
-        console.error('[Main] Initialization failed:', e);
     }
 
-    // Audio setup on user interaction
-    // The AudioCapture must be instantiated first, but it requires user gesture to start playing
-    // on most modern browsers. We wrap the entire page to listen for the first tap.
     audioPlayer = new AudioPlayer();
+    const splashScreen = document.getElementById('splash-screen');
+    const splashUnmute = document.getElementById('splash-unmute');
+    let splashReady = false;
 
-    // Make sure we explicitly hide unmute-overlay
-    const unmuteOverlay = document.getElementById('unmute-overlay');
-    const startAudio = async () => {
+    // Show "Tap to Start" once launcher apps are loaded
+    const splashLoading = document.getElementById('splash-loading');
+    window.addEventListener('launcher-ready', () => {
+        splashReady = true;
+        if (splashLoading) splashLoading.classList.add('hidden');
+        if (splashUnmute) splashUnmute.classList.add('visible');
+    });
+
+    const dismissSplash = async () => {
+        if (!splashReady) return; // ignore taps before loading finishes
         if (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED) {
             await audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
         }
-        document.removeEventListener('click', startAudio);
-        document.removeEventListener('touchstart', startAudio);
-
-        // Hide the unmute overlay!
-        if (unmuteOverlay) {
-            unmuteOverlay.classList.add('hidden');
-            unmuteOverlay.style.display = 'none';
+        document.removeEventListener('click', dismissSplash);
+        document.removeEventListener('touchstart', dismissSplash);
+        if (splashScreen) {
+            splashScreen.classList.add('hidden');
+            setTimeout(() => splashScreen.classList.add('removed'), 500);
         }
     };
-
-    // Bind to the overlay so tapping the unmute button triggers it
-    if (unmuteOverlay) {
-        unmuteOverlay.addEventListener('click', startAudio);
-        unmuteOverlay.addEventListener('touchstart', startAudio);
+    if (splashScreen) {
+        splashScreen.addEventListener('click', dismissSplash);
+        splashScreen.addEventListener('touchstart', dismissSplash);
     }
-    // Also bind globally as fallback
-    document.addEventListener('click', startAudio);
-    document.addEventListener('touchstart', startAudio);
+    document.addEventListener('click', dismissSplash);
+    document.addEventListener('touchstart', dismissSplash);
 
-    // Now that video element (mse-video) or canvas is definitely created/found:
     const mseVideo = document.getElementById('mse-video');
-    if (mseVideo) mseVideo.style.pointerEvents = 'none'; // let touches go through to canvas
-    if (canvas) canvas.style.pointerEvents = 'auto';     // ensure canvas catches touch
+    if (mseVideo) mseVideo.style.pointerEvents = 'none';
+    if (canvas) canvas.style.pointerEvents = 'auto';
+    if (secondaryCanvas) secondaryCanvas.style.pointerEvents = 'auto';
 });
