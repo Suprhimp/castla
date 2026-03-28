@@ -18,20 +18,7 @@ class MirrorServerTokenTest {
     @Before
     fun setup() {
         context = mockk(relaxed = true)
-        server = MirrorServer(context, 0) // port 0 = don't actually bind
-    }
-
-    @Test
-    fun `session pin is 4 digits`() {
-        assertEquals(4, server.sessionPin.length)
-        assertTrue(server.sessionPin.matches(Regex("[0-9]{4}")))
-    }
-
-    @Test
-    fun `each server instance gets a unique pin`() {
-        // Generate multiple servers — with 10000 possibilities, collisions are rare
-        val pins = (1..10).map { MirrorServer(context, 0).sessionPin }.toSet()
-        assertTrue("Expected at least 2 unique PINs from 10 servers", pins.size >= 2)
+        server = MirrorServer(context) // Port 9090 default
     }
 
     @Test
@@ -48,22 +35,17 @@ class MirrorServerTokenTest {
     }
 
     @Test
-    fun `connectedClients starts at zero`() {
-        assertEquals(0, server.connectedClients)
-    }
-
-    @Test
     fun `touch listener receives events`() {
-        var received: MirrorServer.TouchEvent? = null
+        var received: TouchEvent? = null
         server.setTouchListener { received = it }
 
-        val event = MirrorServer.TouchEvent("down", 0.5f, 0.5f, 0)
+        val event = TouchEvent("down", 0.5f, 0.5f, 0)
         server.onTouchEvent(event)
 
         assertNotNull(received)
-        assertEquals("down", received!!.action)
-        assertEquals(0.5f, received!!.x, 0.001f)
-        assertEquals(0.5f, received!!.y, 0.001f)
+        assertEquals("down", received?.action)
+        assertEquals(0.5f, received?.x ?: 0f, 0.001f)
+        assertEquals(0.5f, received?.y ?: 0f, 0.001f)
     }
 
     @Test

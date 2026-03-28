@@ -12,6 +12,7 @@ class FallbackDecoder {
         this.onError = onError;
         this.canvas = null;
         this.ctx = null;
+        this.renderer = null;
         this.frameCount = 0;
         this.startTime = 0;
     }
@@ -22,6 +23,7 @@ class FallbackDecoder {
 
     async init(canvas) {
         this.canvas = canvas;
+        this.renderer = new CanvasRenderer(canvas);
         this.ctx = canvas.getContext('2d');
         this.startTime = performance.now();
         console.log('[Fallback] MJPEG decoder initialized');
@@ -39,17 +41,20 @@ class FallbackDecoder {
 
         const blob = new Blob([payload], { type: 'image/jpeg' });
         createImageBitmap(blob).then((bitmap) => {
-            if (this.canvas && this.ctx) {
-                if (this.canvas.width !== bitmap.width || this.canvas.height !== bitmap.height) {
-                    this.canvas.width = bitmap.width;
-                    this.canvas.height = bitmap.height;
-                }
-                this.ctx.drawImage(bitmap, 0, 0);
-                bitmap.close();
+            if (this.canvas && this.ctx && this.renderer) {
+                this.renderer.render(bitmap);
                 this.frameCount++;
+                if (this.onFrame) {
+                    this.onFrame();
+                }
+            } else {
+                console.error('[Fallback] canvas or ctx is null');
             }
-        }).catch((_) => {
-            // Silent — expected when receiving non-JPEG data during mode negotiation
+        }).catch((err) => {
+            console.error('[Fallback] createImageBitmap error:', err);
+            if (this.onError) {
+                this.onError(err);
+            }
         });
     }
 
@@ -65,6 +70,8 @@ class FallbackDecoder {
     }
 
     destroy() {
+        this.renderer?.destroy?.();
+        this.renderer = null;
         this.canvas = null;
         this.ctx = null;
     }

@@ -1,0 +1,9 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import SetupPage from '../components/SetupPage.astro';
+import { useTranslations } from '../i18n/utils';
+const tr = useTranslations('ko');
+---
+<BaseLayout title={`${tr('setup.title')} — Castla`} description={tr('setup.desc')}>
+  <SetupPage lang="ko" />
+</BaseLayout>

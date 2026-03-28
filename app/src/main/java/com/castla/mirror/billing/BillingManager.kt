@@ -109,6 +109,7 @@ class BillingManager(
     fun launchPurchaseFlow(activity: Activity): Boolean {
         val client = billingClient ?: return false
         val details = productDetails
+
         if (details == null) {
             Log.w(TAG, "Product details not loaded yet")
             return false

@@ -15,6 +15,18 @@ android {
         versionName = "1.0.0"
     }
 
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("playstore") {
+            dimension = "distribution"
+            // Uses default applicationId
+        }
+        create("standalone") {
+            dimension = "distribution"
+            applicationIdSuffix = ".standalone"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -72,6 +84,10 @@ dependencies {
 
     // Google Play Billing (one-time in-app purchase)
     implementation("com.android.billingclient:billing-ktx:7.0.0")
+
+    // Google Play In-App Updates (playstore flavor only)
+    "playstoreImplementation"("com.google.android.play:app-update:2.1.0")
+    "playstoreImplementation"("com.google.android.play:app-update-ktx:2.1.0")
 
     // QR Code generation
     implementation("com.google.zxing:core:3.5.2")

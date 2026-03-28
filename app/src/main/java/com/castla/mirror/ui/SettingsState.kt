@@ -7,61 +7,50 @@ import com.castla.mirror.billing.LicenseManager
 enum class MirroringMode { FULL_SCREEN, APP }
 
 data class StreamSettings(
-    val resolution: Resolution = Resolution.HD_720,
-    val bitrate: Int = 4_000_000,
+    val maxResolution: Resolution = Resolution.RES_1080,
     val fps: Int = 30,
-    val audioEnabled: Boolean = false,
+    val audioEnabled: Boolean = true,
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
     val targetAppPackage: String = "",
     val targetAppLabel: String = ""
 ) {
-    enum class Resolution(val width: Int, val height: Int, val label: String) {
-        AUTO(0, 0, "Auto (Tesla)"),
-        SD_480(854, 480, "480p"),
-        HD_720(1280, 720, "720p"),
-        FHD_1080(1920, 1080, "1080p");
+    enum class Resolution(val maxHeight: Int, val label: String) {
+        RES_720(720, "720p (Normal)"),
+        RES_1080(1080, "1080p (High)");
     }
 
     companion object {
         private const val PREFS_NAME = "castla_settings"
-        private const val KEY_RESOLUTION = "resolution"
-        private const val KEY_BITRATE = "bitrate"
+        private const val KEY_RESOLUTION = "max_resolution"
         private const val KEY_FPS = "fps"
         private const val KEY_AUDIO = "audio"
         private const val KEY_MIRRORING_MODE = "mirroring_mode"
         private const val KEY_TARGET_APP_PACKAGE = "target_app_package"
         private const val KEY_TARGET_APP_LABEL = "target_app_label"
 
-        val BITRATE_OPTIONS = listOf(
-            2_000_000 to "2 Mbps",
-            4_000_000 to "4 Mbps",
-            8_000_000 to "8 Mbps",
-            12_000_000 to "12 Mbps"
-        )
-
         val FPS_OPTIONS = listOf(30, 60)
 
         fun load(context: Context): StreamSettings {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val loadedResolution = try {
-                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.HD_720.name)!!)
-            } catch (_: Exception) { Resolution.HD_720 }
-            // Clamp resolution for free users
-            val resolution = if (!LicenseManager.isPremiumNow &&
-                (loadedResolution == Resolution.FHD_1080 || loadedResolution == Resolution.AUTO)) {
-                Resolution.HD_720
+                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.RES_1080.name)!!)
+            } catch (_: Exception) { Resolution.RES_1080 }
+            
+            // Auto-select 720p if not premium
+            val resolution = if (!LicenseManager.isPremiumNow) {
+                Resolution.RES_720
             } else {
                 loadedResolution
             }
+            
             // Clamp FPS for free users
             val loadedFps = prefs.getInt(KEY_FPS, 30)
             val fps = if (!LicenseManager.isPremiumNow && loadedFps > 30) 30 else loadedFps
 
             return StreamSettings(
-                resolution = resolution,
-                bitrate = prefs.getInt(KEY_BITRATE, 4_000_000),
+                maxResolution = resolution,
                 fps = fps,
-                audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
+                audioEnabled = prefs.getBoolean(KEY_AUDIO, true),
                 mirroringMode = try {
                     MirroringMode.valueOf(prefs.getString(KEY_MIRRORING_MODE, MirroringMode.FULL_SCREEN.name)!!)
                 } catch (_: Exception) { MirroringMode.FULL_SCREEN },
@@ -72,8 +61,7 @@ data class StreamSettings(
 
         fun save(context: Context, settings: StreamSettings) {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putString(KEY_RESOLUTION, settings.resolution.name)
-                .putInt(KEY_BITRATE, settings.bitrate)
+                .putString(KEY_RESOLUTION, settings.maxResolution.name)
                 .putInt(KEY_FPS, settings.fps)
                 .putBoolean(KEY_AUDIO, settings.audioEnabled)
                 .putString(KEY_MIRRORING_MODE, settings.mirroringMode.name)

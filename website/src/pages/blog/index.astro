@@ -1,0 +1,10 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import BlogIndex from '../../components/BlogIndex.astro';
+
+const globResult = import.meta.glob('./*.md', { eager: true });
+const posts = Object.values(globResult) as any[];
+---
+<BaseLayout title="블로그 — Castla" description="Castla 업데이트, Tesla 미러링 팁, 활용 가이드를 공유합니다.">
+  <BlogIndex lang="ko" posts={posts} />
+</BaseLayout>

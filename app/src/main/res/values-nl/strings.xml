@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Castla</string>
+    <string name="widget_description">Castla mirroring bediening en Shizuku status</string>
+    <string name="tesla_detect_channel">Tesla Auto-Detectie</string>
+    <string name="tesla_detected_title">Tesla gedetecteerd</string>
+    <string name="tesla_detected_text">Tik om Castla mirroring te starten</string>
+
+    <string name="toast_screen_capture_granted">Schermopname toegestaan!</string>
+    <string name="toast_screen_capture_denied">Schermopname geweigerd (code=%d)</string>
+    <string name="toast_vpn_permission_required">VPN-toestemming vereist voor Tesla-verbinding</string>
+    <string name="toast_tesla_pairing_cancelled">Tesla koppeling geannuleerd</string>
+    <string name="toast_could_not_open_browser">Kon browser niet openen. Installeer Shizuku handmatig.</string>
+    <string name="toast_tesla_pairing_failed">Tesla koppeling mislukt: %s</string>
+    <string name="toast_tesla_paired_device">Tesla gekoppeld: %s</string>
+    <string name="toast_tesla_paired">Tesla gekoppeld!</string>
+    <string name="toast_bluetooth_permission_missing">Bluetooth toestemming ontbreekt. Auto-detectie werkt mogelijk niet.</string>
+    <string name="toast_tesla_paired_auto_detect">Tesla gekoppeld! Auto-detectie ingeschakeld.</string>
+    <string name="toast_tesla_auto_detect_disabled">Tesla auto-detectie uitgeschakeld</string>
+    <string name="toast_requesting_screen_capture">Schermopname aanvragen...</string>
+    <string name="toast_error">Fout: %s</string>
+
+    <string name="subtitle_tesla_screen_mirroring">Tesla Scherm Mirroring</string>
+    <string name="btn_settings">Instellingen</string>
+    <string name="title_castla_pro">Castla PRO</string>
+    <string name="desc_castla_pro_features">Ontgrendel alle apps / 1080p streaming / Geen advertenties</string>
+    <string name="btn_upgrade_pro">Upgrade — Eenmalige aankoop</string>
+    <string name="title_tesla_auto_detect_on">Tesla Auto-Detectie AAN</string>
+    <string name="title_tesla_auto_detect">Tesla Auto-Detectie</string>
+    <string name="desc_tesla_auto_detect_on">Je krijgt een melding wanneer Tesla verbinding maakt</string>
+    <string name="desc_tesla_auto_detect_off">Ontvang een melding wanneer je Tesla in de buurt is</string>
+    <string name="status_streaming_active">Streaming Actief</string>
+    <string name="status_ready_to_stream">Klaar om te streamen</string>
+    <string name="title_open_tesla_browser">Open Tesla Browser</string>
+    <string name="label_enter_pin">VOER PIN IN</string>
+    <string name="title_tesla_setup_required">Tesla Setup Vereist</string>
+    <string name="desc_shizuku_install_required">Tesla browser heeft Shizuku nodig om te verbinden.\nTik hieronder om te zien hoe je Shizuku installeert.</string>
+    <string name="btn_how_to_install_shizuku">Hoe installeer je Shizuku</string>
+    <string name="title_shizuku_setup_steps">Shizuku Setup Stappen:</string>
+    <string name="desc_shizuku_setup_steps">1. Instellingen &gt; Over de telefoon &gt; Softwaregegevens\n   &gt; Tik 7 keer op Buildnummer\n2. Instellingen &gt; Ontwikkelaarsopties\n   &gt; Draadloze foutopsporing &gt; AAN\n3. Open Shizuku &gt; \"Start via Draadloze foutopsporing\"</string>
+    <string name="btn_open_shizuku">Open Shizuku</string>
+    <string name="status_shizuku_running_setup">Shizuku draait. Tesla-verbinding instellen...</string>
+    <string name="btn_stop_mirroring">Stop Mirroring</string>
+    <string name="btn_start_mirroring">Start Mirroring</string>
+    <string name="title_how_to_use">Hoe te gebruiken</string>
+    <string name="desc_how_to_use">1. Verbind telefoon en Tesla met dezelfde WiFi\n2. Tik op \"Start Mirroring\" hierboven\n3. Open de URL in de browser van Tesla\n4. Voer de 4-cijferige PIN in\n5. Het scherm van je telefoon verschijnt op de Tesla</string>
+    <string name="title_network_setup_log">Netwerk Setup Log</string>
+    <string name="btn_copy">Kopiëren</string>
+</resources>

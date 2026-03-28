@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Castla</string>
+    <string name="widget_description">Castla 镜像控制和 Shizuku 状态</string>
+    <string name="tesla_detect_channel">特斯拉自动检测</string>
+    <string name="tesla_detected_title">检测到特斯拉</string>
+    <string name="tesla_detected_text">点击以开始 Castla 镜像</string>
+
+    <string name="toast_screen_capture_granted">屏幕截图已授权！</string>
+    <string name="toast_screen_capture_denied">屏幕截图被拒绝 (代码=%d)</string>
+    <string name="toast_vpn_permission_required">特斯拉连接需要 VPN 权限</string>
+    <string name="toast_tesla_pairing_cancelled">特斯拉配对已取消</string>
+    <string name="toast_could_not_open_browser">无法打开浏览器。请手动安装 Shizuku。</string>
+    <string name="toast_tesla_pairing_failed">特斯拉配对失败: %s</string>
+    <string name="toast_tesla_paired_device">已配对特斯拉: %s</string>
+    <string name="toast_tesla_paired">特斯拉配对成功！</string>
+    <string name="toast_bluetooth_permission_missing">缺少蓝牙权限。自动检测可能无法工作。</string>
+    <string name="toast_tesla_paired_auto_detect">特斯拉配对成功！自动检测已启用。</string>
+    <string name="toast_tesla_auto_detect_disabled">特斯拉自动检测已禁用</string>
+    <string name="toast_requesting_screen_capture">正在请求屏幕截图...</string>
+    <string name="toast_error">错误: %s</string>
+
+    <string name="subtitle_tesla_screen_mirroring">特斯拉屏幕镜像</string>
+    <string name="btn_settings">设置</string>
+    <string name="title_castla_pro">Castla PRO</string>
+    <string name="desc_castla_pro_features">解锁所有应用  /  1080p 投屏  /  无广告</string>
+    <string name="btn_upgrade_pro">升级 — 一次性购买</string>
+    <string name="title_tesla_auto_detect_on">特斯拉自动检测 已开启</string>
+    <string name="title_tesla_auto_detect">特斯拉自动检测</string>
+    <string name="desc_tesla_auto_detect_on">当特斯拉连接时您将收到通知</string>
+    <string name="desc_tesla_auto_detect_off">当您的特斯拉在附近时获取通知</string>
+    <string name="status_streaming_active">投屏进行中</string>
+    <string name="status_ready_to_stream">准备投屏</string>
+    <string name="title_open_tesla_browser">打开特斯拉浏览器</string>
+    <string name="label_enter_pin">输入 PIN 码</string>
+    <string name="title_tesla_setup_required">需要特斯拉设置</string>
+    <string name="desc_shizuku_install_required">特斯拉浏览器需要 Shizuku 才能连接。\n点击下方查看如何安装 Shizuku。</string>
+    <string name="btn_how_to_install_shizuku">如何安装 Shizuku</string>
+    <string name="title_shizuku_setup_steps">Shizuku 设置步骤:</string>
+    <string name="desc_shizuku_setup_steps">1. 设置 &gt; 关于手机 &gt; 软件信息\n   &gt; 连续点击版本号 7 次\n2. 设置 &gt; 开发者选项\n   &gt; 无线调试 &gt; 开启\n3. 打开 Shizuku &gt; \"通过无线调试启动\"</string>
+    <string name="btn_open_shizuku">打开 Shizuku</string>
+    <string name="status_shizuku_running_setup">Shizuku 正在运行。正在设置特斯拉连接...</string>
+    <string name="btn_stop_mirroring">停止镜像</string>
+    <string name="btn_start_mirroring">开始镜像</string>
+    <string name="title_how_to_use">使用方法</string>
+    <string name="desc_how_to_use">1. 将手机和特斯拉连接到同一个 WiFi\n2. 点击上方的 \"开始镜像\"\n3. 在特斯拉浏览器中打开此 URL\n4. 输入 4 位 PIN 码\n5. 您的手机屏幕将显示在特斯拉上</string>
+    <string name="title_network_setup_log">网络设置日志</string>
+    <string name="btn_copy">复制</string>
+</resources>

@@ -40,11 +40,12 @@ class ControlSocket(
 
             when (type) {
                 "touch" -> {
-                    val event = MirrorServer.TouchEvent(
+                    val event = TouchEvent(
                         action = json.getString("action"),
                         x = json.getDouble("x").toFloat(),
                         y = json.getDouble("y").toFloat(),
-                        pointerId = json.optInt("id", 0)
+                        pointerId = json.optInt("id", 0),
+                        pane = json.optString("pane", "primary")
                     )
                     server.onTouchEvent(event)
                 }
@@ -58,8 +59,10 @@ class ControlSocket(
                 "viewport" -> {
                     val width = json.optInt("width", 0)
                     val height = json.optInt("height", 0)
+                    val pane = json.optString("pane", "primary")
+                    val layoutMode = json.optString("layoutMode", "")
                     if (width > 0 && height > 0) {
-                        server.onViewportChange(width, height)
+                        server.onViewportChange(pane, width, height, layoutMode)
                     }
                 }
                 "textInput" -> {
@@ -83,7 +86,27 @@ class ControlSocket(
                     server.onPurchaseRequest()
                 }
                 "goHome" -> {
-                    server.onGoHome()
+                    server.onGoHomeRequest()
+                }
+                "audioCodec" -> {
+                    val codec = json.optString("codec", "")
+                    server.onAudioCodecRequest(codec)
+                }
+                "launchApp" -> {
+                    val pkg = json.optString("pkg", "")
+                    val splitMode = json.optBoolean("splitMode", false)
+                    val pane = json.optString("pane", if (splitMode) "secondary" else "primary")
+                    val componentName = json.optString("componentName", "")
+                        .takeIf { it.isNotEmpty() }
+                    if (pkg.isNotEmpty()) {
+                        server.onAppLaunchRequest(pkg, componentName, splitMode, pane)
+                    }
+                }
+                "closeSecondary" -> {
+                    server.onAppLaunchRequest("", null, true, "secondary")
+                }
+                "closeSplit" -> {
+                    server.onCloseSplitRequest()
                 }
             }
         } catch (e: Exception) {
@@ -104,19 +127,14 @@ class ControlSocket(
         val id = buf.get().toInt() and 0xFF
         val x = buf.float
         val y = buf.float
-        Log.d(TAG, "Touch: $action id=$id x=${"%.3f".format(x)} y=${"%.3f".format(y)}")
-        server.onTouchEvent(MirrorServer.TouchEvent(action, x, y, id))
-    }
-
-    /**
-     * Send a text message to this control socket client.
-     */
-    fun sendMessage(text: String) {
-        try {
-            send(text)
-        } catch (e: IOException) {
-            Log.w(TAG, "Failed to send control message", e)
-        }
+        val pane = if (data.size >= 11) {
+            when (data[10].toInt() and 0xFF) {
+                1 -> "secondary"
+                else -> "primary"
+            }
+        } else "primary"
+        Log.d(TAG, "Touch[$pane]: $action id=$id x=${"%.3f".format(x)} y=${"%.3f".format(y)}")
+        server.onTouchEvent(TouchEvent(action, x, y, id, pane))
     }
 
     override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
