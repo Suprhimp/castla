@@ -113,4 +113,12 @@ interface IPrivilegedService {
      * Activities receive a configuration change instead of being killed.
      */
     void resizeVirtualDisplay(int displayId, int width, int height, int densityDpi) = 18;
+
+    /**
+     * Turn the physical display panel on/off via SurfaceControl.setDisplayPowerMode().
+     * When off, the device stays awake (CPU/GPU/compositor running) but the physical
+     * screen panel is dark. VirtualDisplays keep rendering normally.
+     * This is the scrcpy "screen off" approach.
+     */
+    void setPhysicalDisplayPower(boolean on) = 19;
 }

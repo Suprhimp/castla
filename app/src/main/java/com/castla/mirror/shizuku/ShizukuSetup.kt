@@ -33,10 +33,10 @@ class ShizukuSetup {
 
     private val serviceArgs = Shizuku.UserServiceArgs(
         ComponentName(
-            "com.castla.mirror",
+            com.castla.mirror.BuildConfig.APPLICATION_ID,
             PrivilegedService::class.java.name
         )
-    ).daemon(false).processNameSuffix("privileged")
+    ).daemon(false).processNameSuffix("privileged").version(101)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {

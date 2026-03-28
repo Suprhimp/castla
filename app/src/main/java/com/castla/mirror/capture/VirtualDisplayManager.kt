@@ -48,14 +48,14 @@ class VirtualDisplayManager {
         return try {
             val args = Shizuku.UserServiceArgs(
                 ComponentName(
-                    "com.castla.mirror",
+                    com.castla.mirror.BuildConfig.APPLICATION_ID,
                     PrivilegedService::class.java.name
                 )
             )
                 .daemon(false)
                 .processNameSuffix("privileged")
                 .debuggable(true)
-                .version(2)
+                .version(101)
             userServiceArgs = args
 
             var callbackFired = false
@@ -201,6 +201,19 @@ class VirtualDisplayManager {
             Log.i(TAG, "Forced VD $id display state to ON")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to force VD awake", e)
+        }
+    }
+
+    /**
+     * Turn the physical display panel on/off via SurfaceControl (scrcpy approach).
+     * When off, device stays awake and VD keeps rendering. Physical screen goes dark.
+     */
+    fun setPhysicalDisplayPower(on: Boolean) {
+        try {
+            privilegedService?.setPhysicalDisplayPower(on)
+            Log.i(TAG, "Physical display power: ${if (on) "ON" else "OFF"}")
+        } catch (e: Exception) {
+            Log.w(TAG, "setPhysicalDisplayPower failed", e)
         }
     }
 

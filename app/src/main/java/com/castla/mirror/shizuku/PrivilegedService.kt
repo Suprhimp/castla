@@ -31,6 +31,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         private const val DISPLAY_FLAG_ALWAYS_UNLOCKED = 1 shl 12
         // FLAG_TRUSTED makes the system treat this VD as a trusted display (needed for some system UI)
         private const val DISPLAY_FLAG_TRUSTED = 1 shl 10
+        // FLAG_OWN_DISPLAY_GROUP puts the VD in a separate display group so Keyguard does NOT show on it
+        private const val DISPLAY_FLAG_OWN_DISPLAY_GROUP = 1 shl 11
     }
 
     private val virtualDisplays = mutableMapOf<Int, VirtualDisplay>()
@@ -125,7 +127,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // TRUSTED allows system UI to render normally on the VD.
             var flags = DISPLAY_FLAG_PUBLIC or DISPLAY_FLAG_OWN_CONTENT_ONLY or DISPLAY_FLAG_PRESENTATION
             if (android.os.Build.VERSION.SDK_INT >= 33) {
-                flags = flags or DISPLAY_FLAG_ALWAYS_UNLOCKED or DISPLAY_FLAG_TRUSTED
+                flags = flags or DISPLAY_FLAG_ALWAYS_UNLOCKED or DISPLAY_FLAG_TRUSTED or DISPLAY_FLAG_OWN_DISPLAY_GROUP
             }
 
             val builderCtor = builderClass.getConstructor(
@@ -419,53 +421,43 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
     override fun wakeUpDisplay(displayId: Int) {
         try {
-            // 1. Wake up the display via PowerManagerService internal API
-            val smClass = Class.forName("android.os.ServiceManager")
-            val getService = smClass.getMethod("getService", String::class.java)
-            val powerBinder = getService.invoke(null, "power") as android.os.IBinder
-            val ipmStub = Class.forName("android.os.IPowerManager\$Stub")
-            val pm = ipmStub.getMethod("asInterface", android.os.IBinder::class.java)
-                .invoke(null, powerBinder)
+            // Do NOT use PowerManager.wakeUp() — it wakes the physical screen too.
+            // Instead, use display-targeted methods that only affect the VD.
 
-            // Try wakeUp(long time, int reason, String details, String opPackageName)
-            val now = android.os.SystemClock.uptimeMillis()
-            val wakeUpMethods = pm.javaClass.methods.filter { it.name == "wakeUp" }
-            var woken = false
-            for (m in wakeUpMethods) {
-                try {
-                    when (m.parameterTypes.size) {
-                        4 -> { m.invoke(pm, now, 0, "castla:vd_keep_alive", "com.android.shell"); woken = true }
-                        2 -> { m.invoke(pm, now, "castla:vd_keep_alive"); woken = true }
-                        1 -> { m.invoke(pm, now); woken = true }
-                    }
-                    if (woken) break
-                } catch (_: Exception) {}
-            }
-
-            // 2. Inject user activity to prevent doze/dream on the VD
-            val userActivityMethods = pm.javaClass.methods.filter { it.name == "userActivity" }
-            for (m in userActivityMethods) {
-                try {
-                    when (m.parameterTypes.size) {
-                        4 -> { m.invoke(pm, displayId.toLong(), now, 0, 0); break }
-                        3 -> { m.invoke(pm, now, 0, 0); break }
-                        2 -> { m.invoke(pm, now, 0); break }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            // 3. Send WAKEUP key event to the specific display
+            // 1. Send WAKEUP key event to the specific display (does not wake physical screen)
             execCommand("input -d $displayId keyevent 224")
 
-            // 4. Dismiss keyguard on the VD just in case
-            execCommand("wm dismiss-keyguard -d $displayId")
-
-            Log.i(TAG, "wakeUpDisplay($displayId): woken=$woken")
-        } catch (e: Exception) {
-            Log.w(TAG, "wakeUpDisplay($displayId) failed, falling back to keyevent", e)
+            // 2. Inject user activity on the VD via PowerManager to prevent doze/dream
             try {
-                execCommand("input -d $displayId keyevent 224")
+                val smClass = Class.forName("android.os.ServiceManager")
+                val getService = smClass.getMethod("getService", String::class.java)
+                val powerBinder = getService.invoke(null, "power") as android.os.IBinder
+                val ipmStub = Class.forName("android.os.IPowerManager\$Stub")
+                val pm = ipmStub.getMethod("asInterface", android.os.IBinder::class.java)
+                    .invoke(null, powerBinder)
+                val now = SystemClock.uptimeMillis()
+                val userActivityMethods = pm.javaClass.methods.filter { it.name == "userActivity" }
+                for (m in userActivityMethods) {
+                    try {
+                        when (m.parameterTypes.size) {
+                            4 -> { m.invoke(pm, displayId.toLong(), now, 0, 0); break }
+                            3 -> { m.invoke(pm, now, 0, 0); break }
+                            2 -> { m.invoke(pm, now, 0); break }
+                        }
+                    } catch (_: Exception) {}
+                }
             } catch (_: Exception) {}
+
+            // 3. Inject a no-op touch (down+up at 1,1) to generate user activity on the VD
+            try {
+                val now = SystemClock.uptimeMillis()
+                injectInput(displayId, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
+                injectInput(displayId, MotionEvent.ACTION_UP, 1f, 1f, 0)
+            } catch (_: Exception) {}
+
+            Log.i(TAG, "wakeUpDisplay($displayId): keyevent+userActivity+touch (no PowerManager.wakeUp)")
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeUpDisplay($displayId) failed", e)
         }
     }
 
@@ -489,5 +481,84 @@ class PrivilegedService : IPrivilegedService.Stub() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to link to death", e)
         }
+    }
+
+    // --- Physical display power control (scrcpy approach) ---
+
+    private val POWER_MODE_OFF = 0
+    private val POWER_MODE_NORMAL = 2
+
+    override fun setPhysicalDisplayPower(on: Boolean) {
+        val mode = if (on) POWER_MODE_NORMAL else POWER_MODE_OFF
+        try {
+            val scClass = Class.forName("android.view.SurfaceControl")
+            val setMethod = scClass.getMethod(
+                "setDisplayPowerMode",
+                android.os.IBinder::class.java, Int::class.javaPrimitiveType
+            )
+
+            val token = getPhysicalDisplayToken(scClass)
+            if (token != null) {
+                setMethod.invoke(null, token, mode)
+                Log.i(TAG, "Physical display power set to ${if (on) "ON" else "OFF"}")
+            } else {
+                Log.e(TAG, "Could not get physical display token")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "setPhysicalDisplayPower failed", e)
+        }
+    }
+
+    private fun getPhysicalDisplayToken(scClass: Class<*>): android.os.IBinder? {
+        // Try Android 10-13: SurfaceControl.getPhysicalDisplayIds() + getPhysicalDisplayToken()
+        try {
+            val getIds = scClass.getMethod("getPhysicalDisplayIds")
+            val getToken = scClass.getMethod("getPhysicalDisplayToken", Long::class.javaPrimitiveType)
+            val ids = getIds.invoke(null) as? LongArray
+            if (ids != null && ids.isNotEmpty()) {
+                return getToken.invoke(null, ids[0]) as? android.os.IBinder
+            }
+        } catch (_: Exception) {}
+
+        // Try Android 10+: getInternalDisplayToken()
+        try {
+            val m = scClass.getMethod("getInternalDisplayToken")
+            return m.invoke(null) as? android.os.IBinder
+        } catch (_: Exception) {}
+
+        // Try Android 14+: DisplayControl from services.jar
+        try {
+            val classLoaderFactoryClass = Class.forName("com.android.internal.os.ClassLoaderFactory")
+            val createClassLoaderMethod = classLoaderFactoryClass.getDeclaredMethod(
+                "createClassLoader",
+                String::class.java, String::class.java, String::class.java,
+                ClassLoader::class.java, Int::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType, String::class.java
+            )
+            val classLoader = createClassLoaderMethod.invoke(
+                null, "/system/framework/services.jar", null, null,
+                ClassLoader.getSystemClassLoader(), 0, true, null
+            ) as ClassLoader
+            val dcClass = classLoader.loadClass("com.android.server.display.DisplayControl")
+            try {
+                val loadLib = Runtime::class.java.getDeclaredMethod("loadLibrary0", Class::class.java, String::class.java)
+                loadLib.isAccessible = true
+                loadLib.invoke(Runtime.getRuntime(), dcClass, "android_servers")
+            } catch (_: Exception) {}
+            val getIds = dcClass.getMethod("getPhysicalDisplayIds")
+            val getToken = dcClass.getMethod("getPhysicalDisplayToken", Long::class.javaPrimitiveType)
+            val ids = getIds.invoke(null) as? LongArray
+            if (ids != null && ids.isNotEmpty()) {
+                return getToken.invoke(null, ids[0]) as? android.os.IBinder
+            }
+        } catch (_: Exception) {}
+
+        // Fallback: getBuiltInDisplay(0)
+        try {
+            val m = scClass.getMethod("getBuiltInDisplay", Int::class.javaPrimitiveType)
+            return m.invoke(null, 0) as? android.os.IBinder
+        } catch (_: Exception) {}
+
+        return null
     }
 }

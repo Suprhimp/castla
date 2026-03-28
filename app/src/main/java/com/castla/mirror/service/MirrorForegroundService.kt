@@ -131,6 +131,7 @@ class MirrorForegroundService : Service() {
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
     private var screenOffReceiver: BroadcastReceiver? = null
     private var vdKeepAliveJob: Job? = null
+    private var physicalDisplayOff = false
 
     val isRunning: Boolean
         get() = mirrorServer != null
@@ -166,12 +167,12 @@ class MirrorForegroundService : Service() {
             override fun onReceive(context: Context, intent: Intent?) {
                 when (intent?.action) {
                     android.content.Intent.ACTION_SCREEN_OFF -> {
-                        Log.i(TAG, "Screen OFF detected — keeping VD awake")
+                        Log.i(TAG, "Screen OFF detected — using scrcpy approach")
                         onPhoneScreenOff()
                     }
                     android.content.Intent.ACTION_SCREEN_ON -> {
-                        Log.i(TAG, "Screen ON detected — stopping VD keepalive")
-                        stopVdKeepAlive()
+                        Log.i(TAG, "Screen ON detected")
+                        onPhoneScreenOn()
                     }
                 }
             }
@@ -375,19 +376,28 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onPhoneScreenOff() {
-        // When the physical screen turns off, force the virtual display to stay awake.
-        // Without this, Android may put the VD into DOZE state showing a clock screensaver.
-        // We wake the VD immediately and then periodically to prevent re-dozing.
+        // scrcpy approach: turn off physical display panel via SurfaceControl
+        // while keeping the device awake. VD keeps rendering because device never sleeps.
         stopVdKeepAlive()
+        physicalDisplayOff = true
         vdKeepAliveJob = serviceScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(300)
-            virtualDisplayManager?.keepDisplayAwake()
-            // Periodically re-wake the VD to prevent it from dozing again
-            while (coroutineContext[kotlinx.coroutines.Job]?.isActive == true) {
-                kotlinx.coroutines.delay(25_000)
-                virtualDisplayManager?.keepDisplayAwake()
+            // Turn off physical display panel (device stays awake, VD keeps rendering)
+            virtualDisplayManager?.setPhysicalDisplayPower(false)
+            Log.i(TAG, "Physical display panel turned OFF, VD continues rendering")
+        }
+    }
+
+    private fun onPhoneScreenOn() {
+        // Physical screen turned on (user pressed power button or unlocked)
+        // Restore physical display power if we turned it off
+        if (physicalDisplayOff) {
+            physicalDisplayOff = false
+            serviceScope.launch(Dispatchers.IO) {
+                virtualDisplayManager?.setPhysicalDisplayPower(true)
+                Log.i(TAG, "Physical display panel restored to ON")
             }
         }
+        stopVdKeepAlive()
     }
 
     private fun stopVdKeepAlive() {
@@ -406,6 +416,11 @@ class MirrorForegroundService : Service() {
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                 thermalListener?.let { pm.removeThermalStatusListener(it) }
             } catch (_: Exception) {}
+        }
+        // Restore physical display if we turned it off
+        if (physicalDisplayOff) {
+            try { virtualDisplayManager?.setPhysicalDisplayPower(true) } catch (_: Exception) {}
+            physicalDisplayOff = false
         }
         releaseWakeLocks()
         stopVdKeepAlive()
