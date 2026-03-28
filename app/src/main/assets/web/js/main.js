@@ -8,7 +8,8 @@ let secondaryVideoSocket = null;
 let secondaryTouchHandler = null;
 let secondaryDecoder = null;
 
-const BROWSER_ONLY_SPLIT = true;
+// Split strategy: 'dual_stream' = two VDs with separate video streams
+const SPLIT_STRATEGY = 'dual_stream';
 
 let decoder = null;
 let currentPrimaryApp = null;
@@ -213,7 +214,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             primaryHeight
         );
 
-        if (!BROWSER_ONLY_SPLIT) {
+        if (SPLIT_STRATEGY === 'dual_stream') {
             const secondaryHeight = Math.round(browserSplitPane?.clientHeight || shellHeight || 0);
             if (secondaryWidth > 0 && secondaryHeight > 0) {
                 browserSplitState.lockedSecondaryViewport = buildLockedViewport(
@@ -356,31 +357,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function enableBrowserSplit(app) {
         if (!app) return;
 
-        if (BROWSER_ONLY_SPLIT) {
+        if (SPLIT_STRATEGY === 'freeform') {
+            // Single-VD freeform split: both apps on the same VD, single stream
             browserSplitState.active = true;
             browserSplitState.app = app;
             browserSplitState.fitMode = 'contain';
             browserSplitState.lockedPrimaryViewport = null;
             browserSplitState.lockedSecondaryViewport = null;
-            browserSplitState.preset = resolveSplitPreset(currentPrimaryApp, app);
-            streamPolicy.layoutMode = 'browser_only_split';
+            streamPolicy.layoutMode = 'freeform_split';
             document.body.dataset.layoutMode = streamPolicy.layoutMode;
-            console.log(`[Main] Browser-only split primary=${currentPrimaryApp?.packageName || 'unknown'} app=${app?.packageName || 'unknown'} ratio=${browserSplitState.preset.ratio}`);
-            setBrowserSplitRatio(browserSplitState.preset.ratio || browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
-            playerShell?.classList.add('browser-split');
-            applyActiveFitModes();
-            await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-            lockBrowserSplitViewports(app);
+            console.log(`[Main] Freeform split: primary=${currentPrimaryApp?.packageName || 'unknown'} split=${app?.packageName || 'unknown'}`);
 
-            // Determine URL for browser pane
-            const url = app.webUrl || getPresetUrlForApp(app) || '';
-            if (url) {
-                loadBrowserUrl(url);
-            } else {
-                showBrowserHome();
+            // Single canvas shows both apps — add freeform-split class for close button
+            playerShell?.classList.add('freeform-split');
+            // Send split app launch request to server
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                const message = {
+                    type: 'launchApp',
+                    pkg: app.packageName,
+                    splitMode: true,
+                    pane: 'primary'
+                };
+                if (app.componentName) message.componentName = app.componentName;
+                controlSocket.send(JSON.stringify(message));
             }
-
-            requestAnimationFrame(() => sendViewportSize());
             return;
         }
 
@@ -394,7 +394,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         browserSplitState.preset = resolveSplitPreset(currentPrimaryApp, app);
         streamPolicy.layoutMode = 'browser_split';
         document.body.dataset.layoutMode = streamPolicy.layoutMode;
-        console.log(`[Main] Split preset primary=${currentPrimaryApp?.packageName || 'unknown'} secondary=${app?.packageName || 'unknown'} ratio=${browserSplitState.preset.ratio}`);
         setBrowserSplitRatio(browserSplitState.preset.ratio || browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
         playerShell?.classList.add('browser-split');
         applyActiveFitModes();
@@ -425,9 +424,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         streamPolicy.layoutMode = 'single';
         document.body.dataset.layoutMode = streamPolicy.layoutMode;
         playerShell?.classList.remove('browser-split');
+        playerShell?.classList.remove('freeform-split');
 
-        if (BROWSER_ONLY_SPLIT) {
-            clearBrowserPane();
+        if (SPLIT_STRATEGY === 'freeform') {
+            // Tell server to close split and restore primary fullscreen
+            if (notifyServer && wasActive && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'closeSplit' }));
+            }
         } else {
             destroySecondaryTransport();
             if (notifyServer && wasActive && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
@@ -845,7 +848,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         reconnectTimer = setTimeout(() => {
             isReconnecting = false;
             if (videoSocket && videoSocket.readyState === WebSocket.CLOSED) connectVideo();
-            if (!BROWSER_ONLY_SPLIT && browserSplitState.active && (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED)) connectSecondaryVideo();
+            if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active && (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED)) connectSecondaryVideo();
             if (controlSocket && controlSocket.readyState === WebSocket.CLOSED) connectControl();
             if (audioPlayer && (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED)) {
                 audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
@@ -875,7 +878,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 : { width: livePrimaryWidth, height: livePrimaryHeight };
 
             // Only send secondary viewport in legacy dual-stream mode
-            if (!BROWSER_ONLY_SPLIT && browserSplitState.active && browserSplitPane) {
+            if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active && browserSplitPane) {
                 const secondaryViewport = browserSplitState.lockedSecondaryViewport;
                 if (secondaryViewport && secondaryViewport.width > 0 && secondaryViewport.height > 0) {
                     console.log(`[Main] Sending viewport pane=secondary requested=${secondaryViewport.width}x${secondaryViewport.height} fitMode=${getEffectiveSecondaryFitMode()} locked=${describeViewport(secondaryViewport)} split=${browserSplitState.active}`);
@@ -912,14 +915,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (touchHandler) touchHandler.destroy();
             const renderer = (decoder && decoder.renderer) ? decoder.renderer : null;
             touchHandler = new TouchHandler(canvas, renderer, controlSocket, 'primary');
-            if (!BROWSER_ONLY_SPLIT && browserSplitState.active && secondaryCanvas) {
+            if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active && secondaryCanvas) {
                 if (secondaryTouchHandler) secondaryTouchHandler.destroy();
                 secondaryTouchHandler = new TouchHandler(secondaryCanvas, getActiveSecondaryRenderer(), controlSocket, 'secondary');
             }
 
             sendViewportSize();
 
-            if (!BROWSER_ONLY_SPLIT && browserSplitState.active) {
+            if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active) {
                 if (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED) {
                     connectSecondaryVideo();
                 }
@@ -1002,7 +1005,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             cell.appendChild(icon);
 
             const label = document.createElement('div');
-            label.textContent = BROWSER_ONLY_SPLIT ? `${app.label} (Split)` : `${app.label} (Dual Stream)`;
+            label.textContent = SPLIT_STRATEGY === 'freeform' ? `${app.label} (Split)` : `${app.label} (Dual Stream)`;
             label.style.color = '#FFD700';
             cell.appendChild(label);
 

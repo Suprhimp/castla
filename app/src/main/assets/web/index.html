@@ -425,7 +425,9 @@
         }
         #display-secondary {
             background: #111;
-            display: none; /* hidden in browser-only split */
+        }
+        #player-shell.browser-split #display-secondary {
+            display: block;
         }
 
         /* ── Browser-Only Split Pane ── */
@@ -576,7 +578,8 @@
             display: none;
             gap: 8px;
         }
-        #player-shell.browser-split #split-pane-toolbar {
+        #player-shell.browser-split #split-pane-toolbar,
+        #player-shell.freeform-split #split-pane-toolbar {
             display: flex;
         }
         .split-pane-btn {

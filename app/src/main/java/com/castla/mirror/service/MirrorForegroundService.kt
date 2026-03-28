@@ -117,7 +117,7 @@ class MirrorForegroundService : Service() {
     private var savedMediaVolume: Int = -1
     private val mainHandler = Handler(Looper.getMainLooper())
     private var splitPresentation: SplitWebPresentation? = null
-    private var browserOnlySplit: Boolean = true
+    private var singleVdSplit: Boolean = false
 
     // ABR (Adaptive Bitrate) state
     private var targetBitrate: Int = 4_000_000
@@ -129,6 +129,8 @@ class MirrorForegroundService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
 
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
+    private var screenOffReceiver: BroadcastReceiver? = null
+    private var vdKeepAliveJob: Job? = null
 
     val isRunning: Boolean
         get() = mirrorServer != null
@@ -158,6 +160,27 @@ class MirrorForegroundService : Service() {
             }
             pm.addThermalStatusListener(mainExecutor, thermalListener!!)
         }
+
+        // Keep virtual display alive when phone screen turns off
+        screenOffReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent?) {
+                when (intent?.action) {
+                    android.content.Intent.ACTION_SCREEN_OFF -> {
+                        Log.i(TAG, "Screen OFF detected — keeping VD awake")
+                        onPhoneScreenOff()
+                    }
+                    android.content.Intent.ACTION_SCREEN_ON -> {
+                        Log.i(TAG, "Screen ON detected — stopping VD keepalive")
+                        stopVdKeepAlive()
+                    }
+                }
+            }
+        }
+        val filter = android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_SCREEN_OFF)
+            addAction(android.content.Intent.ACTION_SCREEN_ON)
+        }
+        registerReceiver(screenOffReceiver, filter)
     }
     
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
@@ -351,15 +374,41 @@ class MirrorForegroundService : Service() {
         }.start()
     }
 
+    private fun onPhoneScreenOff() {
+        // When the physical screen turns off, force the virtual display to stay awake.
+        // Without this, Android may put the VD into DOZE state showing a clock screensaver.
+        // We wake the VD immediately and then periodically to prevent re-dozing.
+        stopVdKeepAlive()
+        vdKeepAliveJob = serviceScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(300)
+            virtualDisplayManager?.keepDisplayAwake()
+            // Periodically re-wake the VD to prevent it from dozing again
+            while (coroutineContext[kotlinx.coroutines.Job]?.isActive == true) {
+                kotlinx.coroutines.delay(25_000)
+                virtualDisplayManager?.keepDisplayAwake()
+            }
+        }
+    }
+
+    private fun stopVdKeepAlive() {
+        vdKeepAliveJob?.cancel()
+        vdKeepAliveJob = null
+    }
+
     private fun performCleanup(reason: String) {
         Log.i(TAG, "Performing cleanup: $reason")
         isServiceRunning = false
         instance = null
+        try { screenOffReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
+        screenOffReceiver = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            thermalListener?.let { pm.removeThermalStatusListener(it) }
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                thermalListener?.let { pm.removeThermalStatusListener(it) }
+            } catch (_: Exception) {}
         }
         releaseWakeLocks()
+        stopVdKeepAlive()
         dismissSplitPresentation(clearState = true)
         releaseSecondaryPipeline(clearState = true)
         try { resizeJob?.cancel() } catch (_: Exception) {}
@@ -369,6 +418,7 @@ class MirrorForegroundService : Service() {
         try { audioCapture?.stop() } catch (_: Exception) {}
         restoreMediaVolume()
 
+        try { removeAllVdTasks() } catch (e: Exception) { Log.w(TAG, "Failed to remove VD tasks", e) }
         try { virtualDisplayManager?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release virtual display manager", e) }
         try { shizukuSetup?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release shizuku setup", e) }
         try { screenCapture?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release screen capture", e) }
@@ -460,10 +510,10 @@ class MirrorForegroundService : Service() {
                     }
                     server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
                     server.setViewportChangeListener { pane, w, h, layoutMode ->
-                        if (layoutMode == "browser_only_split") browserOnlySplit = true
+                        singleVdSplit = layoutMode == "browser_only_split" || layoutMode == "freeform_split"
                         if (pane == "secondary") {
-                            if (browserOnlySplit) {
-                                Log.d(TAG, "Ignoring secondary viewport in browser-only split mode")
+                            if (singleVdSplit) {
+                                Log.d(TAG, "Ignoring secondary viewport in single-VD split mode")
                             } else {
                                 onSecondaryViewportChange(w, h)
                             }
@@ -478,7 +528,7 @@ class MirrorForegroundService : Service() {
                     server.setGoHomeListener {
                         Log.i(TAG, "Navigating to home requested by Web Launcher")
                         dismissSplitPresentation(clearState = true)
-                        if (!browserOnlySplit) {
+                        if (!singleVdSplit) {
                             releaseSecondaryPipeline(clearState = true)
                         }
                         virtualDisplayManager?.launchHomeOnDisplay()
@@ -488,6 +538,11 @@ class MirrorForegroundService : Service() {
                     }
                     server.setAppLaunchListener { pkgName, componentName, splitMode, pane ->
                         launchAppFromWebLauncher(pkgName, componentName, splitMode, pane)
+                    }
+
+                    server.setCloseSplitListener {
+                        Log.i(TAG, "Close split requested — restoring primary fullscreen")
+                        closeFreeformSplit()
                     }
 
                     server.setBrowserConnectionListener { connected ->
@@ -732,7 +787,70 @@ class MirrorForegroundService : Service() {
         activeSplitComponent = null
     }
 
+    private fun closeFreeformSplit() {
+        val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+        if (displayId < 0) return
+
+        // Remove the split app's task from the VD
+        val splitTarget = activeSplitComponent
+        if (splitTarget != null) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    val service = virtualDisplayManager?.getPrivilegedService() ?: return@launch
+                    val tasks = parseDisplayTasks(service.execCommand("dumpsys activity activities"), displayId)
+                    // Find and remove split task
+                    for (task in tasks) {
+                        if (task.mode == "freeform" && taskMatchesLaunchTarget(task, splitTarget)) {
+                            service.execCommand("am task remove ${task.taskId}")
+                            Log.i(TAG, "Removed split task ${task.taskId} ($splitTarget)")
+                            break
+                        }
+                    }
+                    // Restore primary to fullscreen bounds
+                    val primaryTarget = normalizeLaunchTarget(currentVdApp)
+                    val fullBounds = android.graphics.Rect(0, 0, currentWidth, currentHeight)
+                    val primaryTaskId = findTaskId(service, displayId, primaryTarget)
+                    if (primaryTaskId != null) {
+                        service.execCommand("cmd activity task resize $primaryTaskId ${fullBounds.left} ${fullBounds.top} ${fullBounds.right} ${fullBounds.bottom}")
+                        Log.i(TAG, "Restored primary task $primaryTaskId to fullscreen")
+                    } else {
+                        // Re-launch primary fullscreen as fallback
+                        virtualDisplayManager?.launchAppOnDisplay(primaryTarget)
+                        Log.i(TAG, "Re-launched primary $primaryTarget fullscreen")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to close freeform split", e)
+                }
+            }
+        }
+
+        dismissSplitPresentation(clearState = true)
+        clearSplitState()
+    }
+
     private fun hasActiveSplitSession(): Boolean = activeSplitUrl != null || activeSplitComponent != null
+
+    /**
+     * Remove all tasks from the virtual display so they don't get
+     * reparented to the main display when the VD is released.
+     */
+    private fun removeAllVdTasks() {
+        val service = virtualDisplayManager?.getPrivilegedService() ?: return
+        val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+        if (displayId < 0) return
+
+        try {
+            val dumpsys = service.execCommand("dumpsys activity activities")
+            val tasks = parseDisplayTasks(dumpsys, displayId)
+            for (task in tasks) {
+                service.execCommand("am task remove ${task.taskId}")
+                Log.i(TAG, "Removed VD task ${task.taskId} (${task.header.take(80)})")
+            }
+            Log.i(TAG, "Removed ${tasks.size} tasks from display $displayId")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to remove VD tasks", e)
+        }
+    }
 
     private fun canLaunchPrimarySplitTask(): Boolean {
         return currentVdApp.isNotBlank() && currentVdApp != "HOME" && currentVdApp != "com.android.settings"
@@ -807,8 +925,9 @@ class MirrorForegroundService : Service() {
         val service = virtualDisplayManager?.getPrivilegedService() ?: return false
         return try {
             val command = buildShellLaunchCommand(displayId, packageOrComponent, extraKey, extraValue, freeform)
-            service.execCommand(command)
-            Log.i(TAG, "Launched $packageOrComponent on display $displayId (freeform=$freeform)")
+            Log.i(TAG, "Executing: $command")
+            val result = service.execCommand(command)
+            Log.i(TAG, "Launch result for $packageOrComponent: $result")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageOrComponent on display $displayId", e)
@@ -833,7 +952,6 @@ class MirrorForegroundService : Service() {
         relaunchPrimaryTaskForSplit(displayId)
         val componentName = internalComponentName(activityClassName)
         launchInternalActivity(activityClassName, displayId, url, splitMode = true)
-        schedulePrimarySplitRelaunch(displayId)
         activeSplitUrl = url
         activeSplitComponent = componentName
     }
@@ -848,17 +966,25 @@ class MirrorForegroundService : Service() {
 
     private fun launchSplitStandardTarget(launchTarget: String) {
         val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+        Log.i(TAG, "launchSplitStandardTarget: target=$launchTarget displayId=$displayId currentVdApp=$currentVdApp canSplit=${canLaunchPrimarySplitTask()} currentSize=${currentWidth}x${currentHeight}")
         if (displayId < 0 || !canLaunchPrimarySplitTask()) {
             Log.w(TAG, "Split app launch requested without a primary app; falling back to fullscreen")
             launchFullscreenStandardTarget(launchTarget)
             return
         }
         val resolvedTarget = normalizeLaunchTarget(launchTarget)
+        val primaryBounds = primaryTaskBounds()
+        val secondaryBounds = splitTaskBounds()
+        Log.i(TAG, "Split bounds: primary=$primaryBounds secondary=$secondaryBounds")
+
+        // Step 1: Convert primary to freeform and resize to left
         relaunchPrimaryTaskForSplit(displayId)
+
+        // Step 2: Launch secondary in freeform mode
         val launched = launchTargetOnDisplay(displayId, resolvedTarget, freeform = true)
         if (launched) {
+            // Step 3: Resize secondary to right bounds
             scheduleSplitTaskResize(displayId, resolvedTarget)
-            schedulePrimarySplitRelaunch(displayId)
             activeSplitComponent = resolvedTarget
             activeSplitUrl = null
         }
@@ -867,21 +993,34 @@ class MirrorForegroundService : Service() {
     private fun relaunchPrimaryTaskForSplit(displayId: Int) {
         if (displayId < 0 || !canLaunchPrimarySplitTask()) return
         val primaryTarget = normalizeLaunchTarget(currentVdApp)
+        val primaryPkg = primaryTarget.substringBefore('/')
+        val bounds = primaryTaskBounds()
+        val service = virtualDisplayManager?.getPrivilegedService() ?: return
+
+        // Try to find and convert existing fullscreen task to freeform
+        val existingTaskId = findTaskId(service, displayId, primaryTarget)
+        if (existingTaskId != null) {
+            val existingMode = parseDisplayTasks(service.execCommand("dumpsys activity activities"), displayId)
+                .firstOrNull { it.taskId == existingTaskId }?.mode ?: "unknown"
+            if (existingMode == "freeform") {
+                // Already freeform, just resize
+                service.execCommand("cmd activity task resize $existingTaskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                Log.i(TAG, "Primary task $existingTaskId already freeform, resized to $bounds")
+                return
+            }
+        }
+
+        // Must force-stop and relaunch in freeform mode (fullscreen→freeform can't be done via resize)
+        Log.i(TAG, "Force-restarting primary $primaryPkg in freeform mode")
+        service.execCommand("am force-stop $primaryPkg")
         val launched = if (primaryTarget.contains("WebBrowserActivity")) {
             launchTargetOnDisplay(displayId, primaryTarget, "url", currentWebUrl ?: "https://m.youtube.com", freeform = true)
         } else {
             launchTargetOnDisplay(displayId, primaryTarget, freeform = true)
         }
         if (launched) {
+            // Resize primary to left bounds after launch
             schedulePrimaryTaskResize(displayId, primaryTarget)
-        }
-    }
-
-    private fun schedulePrimarySplitRelaunch(displayId: Int) {
-        if (displayId < 0 || !canLaunchPrimarySplitTask()) return
-        serviceScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(500L)
-            relaunchPrimaryTaskForSplit(displayId)
         }
     }
 
@@ -977,20 +1116,30 @@ class MirrorForegroundService : Service() {
             repeat(10) { attempt ->
                 kotlinx.coroutines.delay(if (attempt == 0) 250L else 400L)
                 val service = virtualDisplayManager?.getPrivilegedService() ?: return@launch
-                val taskId = findTaskId(service, displayId, launchTarget) ?: return@repeat
+                // Use current display ID in case VD was recreated
+                val currentDisplayId = virtualDisplayManager?.getDisplayId() ?: displayId
+                val taskId = findTaskId(service, currentDisplayId, launchTarget) ?: return@repeat
                 service.execCommand("cmd activity task resizeable $taskId 2")
                 service.execCommand("cmd activity task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                Log.i(TAG, "Resized $label task $taskId on display $displayId to ${bounds.flattenToString()}")
+                Log.i(TAG, "Resized $label task $taskId on display $currentDisplayId to ${bounds.flattenToString()}")
                 return@launch
             }
-            Log.w(TAG, "Failed to locate $label task on display $displayId for resizing")
+            Log.w(TAG, "Failed to locate $label task on display ${virtualDisplayManager?.getDisplayId() ?: displayId} for resizing")
         }
     }
 
     private fun findTaskId(service: IPrivilegedService, displayId: Int, launchTarget: String): Int? {
-        return parseDisplayTasks(service.execCommand("dumpsys activity activities"), displayId)
-            .firstOrNull { it.mode == "freeform" && taskMatchesLaunchTarget(it, launchTarget) }
-            ?.taskId
+        val dumpsys = service.execCommand("dumpsys activity activities")
+        val tasks = parseDisplayTasks(dumpsys, displayId)
+        Log.d(TAG, "findTaskId: display=$displayId target=$launchTarget found ${tasks.size} tasks: ${tasks.map { "id=${it.taskId} mode=${it.mode}" }}")
+        val match = tasks.firstOrNull { taskMatchesLaunchTarget(it, launchTarget) }
+        if (match != null) {
+            Log.d(TAG, "findTaskId: matched task ${match.taskId} (mode=${match.mode})")
+        } else if (tasks.isNotEmpty()) {
+            Log.d(TAG, "findTaskId: no match for candidates=${launchTargetCandidates(launchTarget)}")
+            tasks.forEach { Log.d(TAG, "  task ${it.taskId}: ${it.header.take(120)}") }
+        }
+        return match?.taskId
     }
 
     private fun parseDisplayTasks(dumpsys: String?, displayId: Int): List<DisplayTaskSnapshot> {
@@ -1130,9 +1279,10 @@ class MirrorForegroundService : Service() {
     }
 
     private fun launchAppFromWebLauncher(pkgName: String, componentName: String? = null, splitMode: Boolean = false, pane: String = if (splitMode) "secondary" else "primary") {
+        Log.i(TAG, "launchAppFromWebLauncher: pkg=$pkgName split=$splitMode pane=$pane singleVdSplit=$singleVdSplit")
         if (pane == "secondary") {
-            if (browserOnlySplit) {
-                Log.d(TAG, "Ignoring secondary launch in browser-only split mode (pkg=$pkgName)")
+            if (singleVdSplit) {
+                Log.d(TAG, "Ignoring secondary launch in single-VD split mode (pkg=$pkgName)")
                 return
             }
             if (pkgName.isBlank()) {
@@ -1152,7 +1302,8 @@ class MirrorForegroundService : Service() {
             return
         }
 
-        val webUrl = OTT_WEB_URLS[pkgName]
+        // In freeform split mode, always launch native apps directly (skip OTT web redirect)
+        val webUrl = if (singleVdSplit && splitMode) null else OTT_WEB_URLS[pkgName]
         val displayId = virtualDisplayManager?.getDisplayId() ?: -1
 
         if (webUrl != null) {
@@ -1175,7 +1326,7 @@ class MirrorForegroundService : Service() {
             }
         } else {
             val launchTarget = componentName ?: pkgName
-            Log.i(TAG, "Web Launcher: Launching standard app: $pkgName (target=$launchTarget, splitMode=$splitMode)")
+            Log.i(TAG, "Web Launcher: Launching standard app: $pkgName (target=$launchTarget, splitMode=$splitMode, singleVdSplit=$singleVdSplit)")
 
             if (splitMode && canLaunchPrimarySplitTask()) {
                 launchSplitStandardTarget(launchTarget)
@@ -1243,6 +1394,16 @@ class MirrorForegroundService : Service() {
             vdm.bindShizukuService { bound ->
                 try {
                     if (bound) {
+                        // Enable freeform windowing support for split mode
+                        try {
+                            vdm.getPrivilegedService()?.let { svc ->
+                                svc.execCommand("settings put global enable_freeform_support 1")
+                                svc.execCommand("settings put global force_resizable_activities 1")
+                                Log.i(TAG, "Enabled freeform windowing support")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to enable freeform support (non-fatal)", e)
+                        }
                         vdm.createVirtualDisplay(width, height, 160, surface)
                         if (vdm.hasVirtualDisplay()) {
                             touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
@@ -1304,7 +1465,7 @@ class MirrorForegroundService : Service() {
                 }
             }
         }
-        if (!browserOnlySplit && secondaryWidth > 0 && secondaryHeight > 0 && currentSecondaryApp.isNotBlank()) {
+        if (!singleVdSplit && secondaryWidth > 0 && secondaryHeight > 0 && currentSecondaryApp.isNotBlank()) {
             rebuildSecondaryPipeline(secondaryWidth, secondaryHeight)
         }
     }
@@ -1327,9 +1488,10 @@ class MirrorForegroundService : Service() {
     private fun onBrowserDisconnected() {
         Log.i(TAG, "Browser disconnected — suspending pipeline")
         dismissSplitPresentation(clearState = false)
-        if (!browserOnlySplit) {
+        if (!singleVdSplit) {
             releaseSecondaryPipeline(clearState = false)
         }
+        try { removeAllVdTasks() } catch (e: Exception) { Log.w(TAG, "Failed to remove VD tasks on disconnect", e) }
         virtualDisplayManager?.releaseVirtualDisplay()
         
         screenCapture?.stopCapture()
@@ -1588,7 +1750,7 @@ class MirrorForegroundService : Service() {
             } else {
                 screenCapture?.reconfigure(surface, currentWidth, currentHeight)
             }
-            if (!browserOnlySplit && secondaryWidth > 0 && secondaryHeight > 0) {
+            if (!singleVdSplit && secondaryWidth > 0 && secondaryHeight > 0) {
                 rebuildSecondaryPipeline(secondaryWidth, secondaryHeight)
             }
         } catch (e: Exception) {}

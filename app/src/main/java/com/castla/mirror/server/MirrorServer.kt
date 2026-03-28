@@ -37,6 +37,7 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     // Web Launcher specific listeners
     private var onGoHomeListener: (() -> Unit)? = null
     private var onAppLaunchListener: ((String, String?, Boolean, String) -> Unit)? = null
+    private var onCloseSplitListener: (() -> Unit)? = null
 
     // Track active connection status
     private var isBrowserConnected = false
@@ -99,6 +100,14 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     
     fun setAppLaunchListener(listener: (String, String?, Boolean, String) -> Unit) {
         onAppLaunchListener = listener
+    }
+
+    fun setCloseSplitListener(listener: () -> Unit) {
+        onCloseSplitListener = listener
+    }
+
+    fun onCloseSplitRequest() {
+        onCloseSplitListener?.invoke()
     }
 
     private fun updateConnectionState() {

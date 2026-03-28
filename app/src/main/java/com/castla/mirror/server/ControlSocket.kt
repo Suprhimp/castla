@@ -105,6 +105,9 @@ class ControlSocket(
                 "closeSecondary" -> {
                     server.onAppLaunchRequest("", null, true, "secondary")
                 }
+                "closeSplit" -> {
+                    server.onCloseSplitRequest()
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)
