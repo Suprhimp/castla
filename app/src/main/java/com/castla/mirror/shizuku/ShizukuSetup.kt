@@ -36,7 +36,7 @@ class ShizukuSetup {
             com.castla.mirror.BuildConfig.APPLICATION_ID,
             PrivilegedService::class.java.name
         )
-    ).daemon(false).processNameSuffix("privileged").version(101)
+    ).daemon(false).processNameSuffix("privileged").version(102)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {

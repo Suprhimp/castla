@@ -55,7 +55,7 @@ class VirtualDisplayManager {
                 .daemon(false)
                 .processNameSuffix("privileged")
                 .debuggable(true)
-                .version(101)
+                .version(102)
             userServiceArgs = args
 
             var callbackFired = false

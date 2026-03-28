@@ -33,6 +33,8 @@ class PrivilegedService : IPrivilegedService.Stub() {
         private const val DISPLAY_FLAG_TRUSTED = 1 shl 10
         // FLAG_OWN_DISPLAY_GROUP puts the VD in a separate display group so Keyguard does NOT show on it
         private const val DISPLAY_FLAG_OWN_DISPLAY_GROUP = 1 shl 11
+        // FLAG_DESTROY_CONTENT_ON_REMOVAL destroys tasks instead of reparenting to main display
+        private const val DISPLAY_FLAG_DESTROY_CONTENT = 1 shl 8
     }
 
     private val virtualDisplays = mutableMapOf<Int, VirtualDisplay>()
@@ -125,7 +127,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             // PUBLIC + PRESENTATION + OWN_CONTENT_ONLY treats VD as external monitor.
             // ALWAYS_UNLOCKED (API 33+) prevents VD from entering lock state when phone locks.
             // TRUSTED allows system UI to render normally on the VD.
-            var flags = DISPLAY_FLAG_PUBLIC or DISPLAY_FLAG_OWN_CONTENT_ONLY or DISPLAY_FLAG_PRESENTATION
+            var flags = DISPLAY_FLAG_PUBLIC or DISPLAY_FLAG_OWN_CONTENT_ONLY or DISPLAY_FLAG_PRESENTATION or DISPLAY_FLAG_DESTROY_CONTENT
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 flags = flags or DISPLAY_FLAG_ALWAYS_UNLOCKED or DISPLAY_FLAG_TRUSTED or DISPLAY_FLAG_OWN_DISPLAY_GROUP
             }

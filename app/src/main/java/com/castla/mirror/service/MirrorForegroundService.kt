@@ -864,24 +864,62 @@ class MirrorForegroundService : Service() {
     private fun hasActiveSplitSession(): Boolean = activeSplitUrl != null || activeSplitComponent != null
 
     /**
-     * Remove all tasks from the virtual display so they don't get
-     * reparented to the main display when the VD is released.
+     * Aggressively clean up all tasks from a virtual display before releasing it.
+     * Uses multiple strategies to prevent reparenting to the main display:
+     * 1. HOME keyevent to push apps to background
+     * 2. force-stop third-party packages (atomic, no race condition)
+     * 3. am task remove for remaining tasks (our own activities, launchers)
+     * 4. Delay to let framework process
      */
     private fun removeAllVdTasks() {
-        val service = virtualDisplayManager?.getPrivilegedService() ?: return
-        val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+        cleanupDisplay(virtualDisplayManager?.getDisplayId() ?: -1)
+        cleanupDisplay(secondaryDisplayId)
+    }
+
+    private fun cleanupDisplay(displayId: Int) {
         if (displayId < 0) return
+        val service = virtualDisplayManager?.getPrivilegedService() ?: return
+        val myPackage = packageName
 
         try {
+            // 1. Send HOME to push everything to background
+            service.execCommand("input -d $displayId keyevent 3")
+
+            // 2. Parse tasks and collect third-party packages
             val dumpsys = service.execCommand("dumpsys activity activities")
             val tasks = parseDisplayTasks(dumpsys, displayId)
+            val packagesToStop = mutableSetOf<String>()
+
+            for (task in tasks) {
+                // Extract package name from task header: "Task{... A=<uid>:<package> ...}"
+                val pkgMatch = Regex("A=\\d+:([\\w.]+)").find(task.header)
+                val pkg = pkgMatch?.groupValues?.getOrNull(1)
+                if (pkg != null && pkg != myPackage
+                    && !pkg.startsWith("com.android.launcher")
+                    && !pkg.startsWith("com.sec.android.app.launcher")
+                    && pkg != "com.android.settings"
+                ) {
+                    packagesToStop.add(pkg)
+                }
+            }
+
+            // 3. force-stop third-party apps (atomic — no race condition)
+            for (pkg in packagesToStop) {
+                service.execCommand("am force-stop $pkg")
+                Log.i(TAG, "Force-stopped $pkg from display $displayId")
+            }
+
+            // 4. Remove remaining tasks (our own activities, etc.)
             for (task in tasks) {
                 service.execCommand("am task remove ${task.taskId}")
-                Log.i(TAG, "Removed VD task ${task.taskId} (${task.header.take(80)})")
+                Log.i(TAG, "Removed task ${task.taskId} from display $displayId")
             }
-            Log.i(TAG, "Removed ${tasks.size} tasks from display $displayId")
+
+            // 5. Brief delay to let framework process
+            Thread.sleep(300)
+            Log.i(TAG, "Cleaned up display $displayId: ${packagesToStop.size} force-stopped, ${tasks.size} tasks removed")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to remove VD tasks", e)
+            Log.w(TAG, "Failed to clean up display $displayId", e)
         }
     }
 
