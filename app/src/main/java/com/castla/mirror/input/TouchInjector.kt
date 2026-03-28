@@ -47,7 +47,7 @@ class TouchInjector(private var displayWidth: Int, private var displayHeight: In
     }
 
     /** Set callback to inject touch directly onto the VirtualDisplay via Shizuku */
-    fun setVirtualDisplayInjector(injector: (Int, Float, Float, Int) -> Unit) {
+    fun setVirtualDisplayInjector(injector: ((Int, Float, Float, Int) -> Unit)?) {
         virtualDisplayInjector = injector
     }
 

@@ -1,0 +1,71 @@
+---
+import { type Lang } from '../i18n/translations';
+import { useTranslations, localePath } from '../i18n/utils';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+const tr = useTranslations(lang);
+---
+
+<!-- Hero -->
+<div class="hero">
+  <div class="container">
+    <h1><span class="gradient-text">{tr('hero.title')}</span></h1>
+    <p>{tr('hero.desc')}</p>
+    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap; position:relative;">
+      <a href="https://play.google.com/store/apps/details?id=com.castla.mirror" class="btn btn-primary">{tr('hero.cta.download')}</a>
+      <a href={localePath(lang, '/guide')} class="btn btn-secondary">{tr('hero.cta.guide')}</a>
+    </div>
+  </div>
+</div>
+
+<!-- Features -->
+<section>
+  <div class="container">
+    <h2 class="gradient-text">{tr('features.title')}</h2>
+    <p class="subtitle">{tr('features.subtitle')}</p>
+    <div class="features">
+      {[
+        ['feat.stream', 'feat.stream'],
+        ['feat.touch', 'feat.touch'],
+        ['feat.app', 'feat.app'],
+        ['feat.detect', 'feat.detect'],
+        ['feat.audio', 'feat.audio'],
+        ['feat.pro', 'feat.pro'],
+      ].map(([titleKey]) => (
+        <div class="glass">
+          <h3 style="margin-bottom:8px;">{tr(`${titleKey}.title`)}</h3>
+          <p style="color:var(--text-dim); font-size:0.95rem;">{tr(`${titleKey}.desc`)}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section>
+  <div class="container">
+    <h2 class="gradient-text">{tr('how.title')}</h2>
+    <p class="subtitle">{tr('how.subtitle')}</p>
+    <div class="steps">
+      {[1, 2, 3].map((n) => (
+        <div class="step">
+          <h3>{tr(`how.${n}.title`)}</h3>
+          <p>{tr(`how.${n}.desc`)}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section style="text-align:center;">
+  <div class="container">
+    <h2 style="font-size:2.2rem;">{tr('cta.title')}</h2>
+    <p style="color:var(--text-dim); margin: 16px auto 32px; max-width:500px;">{tr('cta.desc')}</p>
+    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+      <a href="https://play.google.com/store/apps/details?id=com.castla.mirror" class="btn btn-primary">{tr('cta.download')}</a>
+      <a href={localePath(lang, '/setup')} class="btn btn-secondary">{tr('cta.setup')}</a>
+    </div>
+  </div>
+</section>

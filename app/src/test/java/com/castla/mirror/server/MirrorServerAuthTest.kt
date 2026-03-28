@@ -24,7 +24,8 @@ class MirrorServerAuthTest {
         assetManager = mockk(relaxed = true)
         context = mockk(relaxed = true)
         every { context.assets } returns assetManager
-        server = MirrorServer(context, 0)
+        // Since we removed PIN, there is no sessionPin param and the second argument was removed.
+        server = MirrorServer(context)
     }
 
     private fun mockSession(uri: String, params: Map<String, String> = emptyMap()): NanoHTTPD.IHTTPSession {
@@ -45,58 +46,39 @@ class MirrorServerAuthTest {
     }
 
     @Test
-    fun `root without pin serves PIN entry page`() {
-        every { assetManager.open("web/pin.html") } returns ByteArrayInputStream("<html>pin</html>".toByteArray())
+    fun `root serves index page directly`() {
+        every { assetManager.open("web/index.html") } returns ByteArrayInputStream("<html>test</html>".toByteArray())
         val session = mockSession("/", emptyMap())
         val response = callServeHttp(session)
         assertEquals(NanoHTTPD.Response.Status.OK, response.status)
+        assertEquals("text/html", response.mimeType)
     }
 
     @Test
-    fun `root with valid pin serves stream page`() {
-        every { assetManager.open("web/index.html") } returns ByteArrayInputStream("<html>test</html>".toByteArray())
-        val session = mockSession("/", mapOf("pin" to server.sessionPin))
-        val response = callServeHttp(session)
-        assertEquals(NanoHTTPD.Response.Status.OK, response.status)
-    }
-
-    @Test
-    fun `root with wrong pin serves PIN entry page`() {
-        every { assetManager.open("web/pin.html") } returns ByteArrayInputStream("<html>pin</html>".toByteArray())
-        val session = mockSession("/", mapOf("pin" to "9999"))
-        val response = callServeHttp(session)
-        assertEquals(NanoHTTPD.Response.Status.OK, response.status)
-    }
-
-    @Test
-    fun `non-root page with wrong pin returns 403`() {
-        val session = mockSession("/index.html", mapOf("pin" to "wrongpin"))
-        val response = callServeHttp(session)
-        assertEquals(NanoHTTPD.Response.Status.FORBIDDEN, response.status)
-    }
-
-    @Test
-    fun `JS sub-resource skips pin check`() {
+    fun `JS sub-resource serves correctly`() {
         every { assetManager.open("web/js/main.js") } returns ByteArrayInputStream("console.log('test')".toByteArray())
         val session = mockSession("/js/main.js", emptyMap())
         val response = callServeHttp(session)
         assertEquals(NanoHTTPD.Response.Status.OK, response.status)
+        assertEquals("application/javascript", response.mimeType)
     }
 
     @Test
-    fun `CSS sub-resource skips pin check`() {
+    fun `CSS sub-resource serves correctly`() {
         every { assetManager.open("web/css/player.css") } returns ByteArrayInputStream("body{}".toByteArray())
         val session = mockSession("/css/player.css", emptyMap())
         val response = callServeHttp(session)
         assertEquals(NanoHTTPD.Response.Status.OK, response.status)
+        assertEquals("text/css", response.mimeType)
     }
 
     @Test
-    fun `PNG sub-resource skips pin check`() {
+    fun `PNG sub-resource serves correctly`() {
         every { assetManager.open("web/img/logo.png") } returns ByteArrayInputStream(byteArrayOf(0x89.toByte(), 0x50))
         val session = mockSession("/img/logo.png", emptyMap())
         val response = callServeHttp(session)
         assertEquals(NanoHTTPD.Response.Status.OK, response.status)
+        assertEquals("image/png", response.mimeType)
     }
 
     @Test
@@ -105,13 +87,5 @@ class MirrorServerAuthTest {
         val session = mockSession("/nonexistent.js", emptyMap())
         val response = callServeHttp(session)
         assertEquals(NanoHTTPD.Response.Status.NOT_FOUND, response.status)
-    }
-
-    @Test
-    fun `index_html request with pin gets correct MIME type`() {
-        every { assetManager.open("web/index.html") } returns ByteArrayInputStream("<html></html>".toByteArray())
-        val session = mockSession("/index.html", mapOf("pin" to server.sessionPin))
-        val response = callServeHttp(session)
-        assertEquals("text/html", response.mimeType)
     }
 }

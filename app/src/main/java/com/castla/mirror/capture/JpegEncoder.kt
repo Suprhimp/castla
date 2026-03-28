@@ -1,7 +1,9 @@
 package com.castla.mirror.capture
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
@@ -16,8 +18,8 @@ import java.io.ByteArrayOutputStream
 class JpegEncoder(
     private val width: Int,
     private val height: Int,
-    private val fps: Int = 15,
-    private val quality: Int = 70
+    private var fps: Int = 15,
+    private var quality: Int = 70
 ) {
     companion object {
         private const val TAG = "JpegEncoder"
@@ -29,9 +31,14 @@ class JpegEncoder(
     @Volatile
     private var isRunning = false
     private var lastFrameTime = 0L
-    private val frameIntervalMs = 1000L / fps
+    private var frameIntervalMs = 1000L / fps
 
     private var reusableBitmap: Bitmap? = null
+    private var croppedBitmap: Bitmap? = null
+    private var cropCanvas: Canvas? = null
+    private val cropSrcRect = Rect()
+    private val cropDstRect = Rect()
+
     private val baos = ByteArrayOutputStream(width * height / 8)
 
     fun createInputSurface(): Surface {
@@ -40,6 +47,21 @@ class JpegEncoder(
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         Log.i(TAG, "JPEG encoder created: ${width}x${height} @ ${fps}fps, quality=$quality")
         return imageReader!!.surface
+    }
+    
+    fun setFps(newFps: Int) {
+        if (newFps > 0) {
+            fps = newFps
+            frameIntervalMs = 1000L / fps
+            Log.i(TAG, "JPEG encoder FPS changed to $fps")
+        }
+    }
+    
+    fun setQuality(newQuality: Int) {
+        if (newQuality in 1..100) {
+            quality = newQuality
+            Log.i(TAG, "JPEG encoder quality changed to $quality")
+        }
     }
 
     fun start(onFrame: (data: ByteArray, isKeyFrame: Boolean) -> Unit) {
@@ -56,7 +78,7 @@ class JpegEncoder(
             
             // Frame rate control
             if (now - lastFrameTime < frameIntervalMs) {
-                val imageToSkip = ir.acquireLatestImage()
+                val imageToSkip = try { ir.acquireLatestImage() } catch (e: Exception) { null }
                 imageToSkip?.close()
                 return@setOnImageAvailableListener
             }
@@ -96,19 +118,25 @@ class JpegEncoder(
                 reusableBitmap!!.copyPixelsFromBuffer(buffer)
 
                 // 패딩이 있다면 우리가 원하는 width/height만큼만 잘라냄
-                val cropped = if (rowPadding > 0) {
-                    Bitmap.createBitmap(reusableBitmap!!, 0, 0, width, height)
+                val target = if (rowPadding > 0) {
+                    if (croppedBitmap == null || croppedBitmap!!.width != width || croppedBitmap!!.height != height) {
+                        croppedBitmap?.recycle()
+                        croppedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        cropCanvas = Canvas(croppedBitmap!!)
+                    }
+                    cropSrcRect.set(0, 0, width, height)
+                    cropDstRect.set(0, 0, width, height)
+                    cropCanvas!!.drawBitmap(reusableBitmap!!, cropSrcRect, cropDstRect, null)
+                    croppedBitmap!!
                 } else {
                     reusableBitmap!!
                 }
 
                 baos.reset()
-                cropped.compress(Bitmap.CompressFormat.JPEG, quality, baos)
-                
-                if (rowPadding > 0) cropped.recycle()
+                target.compress(Bitmap.CompressFormat.JPEG, quality, baos)
 
                 val jpegData = baos.toByteArray()
-                Log.d(TAG, "Encoded JPEG frame: ${jpegData.size} bytes")
+                // Log.d(TAG, "Encoded JPEG frame: ${jpegData.size} bytes")
                 
                 // 전송
                 onFrame(jpegData, true)
@@ -134,6 +162,10 @@ class JpegEncoder(
         
         reusableBitmap?.recycle()
         reusableBitmap = null
+        
+        croppedBitmap?.recycle()
+        croppedBitmap = null
+        cropCanvas = null
 
         Log.i(TAG, "JPEG encoder released")
     }

@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.util.Log
 import com.android.billingclient.api.*
-import com.castla.mirror.BuildConfig
 
 /**
  * Wraps Google Play Billing for a single one-time in-app purchase ("castla_pro").
@@ -111,14 +110,7 @@ class BillingManager(
         val client = billingClient ?: return false
         val details = productDetails
 
-        // For local testing: if product details failed to load but we are in DEBUG mode,
-        // simulate a successful purchase immediately without Google Play UI.
         if (details == null) {
-            if (BuildConfig.DEBUG) {
-                Log.i(TAG, "DEBUG MODE: Simulating purchase because product details are null")
-                LicenseManager.setPremium(true, context)
-                return true
-            }
             Log.w(TAG, "Product details not loaded yet")
             return false
         }

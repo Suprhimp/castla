@@ -11,8 +11,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * A floating dialog-style activity that displays a Web App (like YouTube) on the right side
- * of the virtual display, leaving the left side transparent for the background map app.
+ * A floating right-aligned activity that displays a Web App (like YouTube) on the right side
+ * of the virtual display. Because its width is constrained, the left side remains fully
+ * visible and interactive (showing the underlying Map app).
  */
 class SplitWebBrowserActivity : Activity() {
 
@@ -21,15 +22,13 @@ class SplitWebBrowserActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Important: This removes any dialog borders and allows touches to pass through
-        // to the app (e.g. Map) running in the background.
+        // 투명 배경, 딤 효과 제거, 터치 모달 해제 -> 창 밖(왼쪽) 터치가 백그라운드 앱으로 전달됨
         window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)
 
-        // Hide system UI (immersive mode) inside the dialog window
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
@@ -38,14 +37,14 @@ class SplitWebBrowserActivity : Activity() {
             View.SYSTEM_UI_FLAG_FULLSCREEN or
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         )
-        window.decorView.setPadding(0, 0, 0, 0)
 
-        // Calculate initial width to leave the left side at a typical 9:16 phone ratio
+        // VD의 화면 크기를 가져와서, 스마트폰 비율(9:16)을 제외한 나머지 우측 공간 계산
         val metrics = resources.displayMetrics
+        val totalWidth = metrics.widthPixels
         val phoneWidth = (metrics.heightPixels * 9f / 16f).toInt()
-        val webWidth = (metrics.widthPixels - phoneWidth).coerceAtLeast((metrics.widthPixels * 0.3).toInt())
+        val webWidth = totalWidth - phoneWidth
 
-        // Apply width and position to the right
+        // 윈도우 자체의 크기를 줄여서 오른쪽에 붙임 (이것이 핵심!)
         val params = window.attributes
         params.gravity = Gravity.END or Gravity.FILL_VERTICAL
         params.width = webWidth
@@ -55,45 +54,11 @@ class SplitWebBrowserActivity : Activity() {
         window.attributes = params
 
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setBackgroundColor(Color.TRANSPARENT)
-        }
-
-        // Draggable divider handle
-        val divider = object : FrameLayout(this) {
-            override fun performClick(): Boolean {
-                super.performClick()
-                return true
-            }
-        }.apply {
-            layoutParams = LinearLayout.LayoutParams(48, ViewGroup.LayoutParams.MATCH_PARENT)
-            setBackgroundColor(0xFF1E1E1E.toInt())
-            
-            val dots = LinearLayout(this@SplitWebBrowserActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER
-                )
-                for (i in 0..2) {
-                    addView(View(this@SplitWebBrowserActivity).apply {
-                        layoutParams = LinearLayout.LayoutParams(8, 8).apply { setMargins(0, 8, 0, 8) }
-                        setBackgroundColor(0xFF888888.toInt())
-                    })
-                }
-            }
-            addView(dots)
-        }
-
-        // Web View Container (Header + WebView)
-        val webContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
             setBackgroundColor(Color.BLACK)
         }
 
@@ -102,7 +67,7 @@ class SplitWebBrowserActivity : Activity() {
             setBackgroundColor(0xFF111111.toInt())
             
             val closeBtn = TextView(this@SplitWebBrowserActivity).apply {
-                text = "✕ Close"
+                text = "✕ Close Split Screen"
                 textSize = 16f
                 setTextColor(Color.WHITE)
                 setPadding(30, 0, 30, 0)
@@ -143,41 +108,8 @@ class SplitWebBrowserActivity : Activity() {
             webChromeClient = WebChromeClient()
         }
 
-        webContainer.addView(header)
-        webContainer.addView(webView)
-
-        root.addView(divider)
-        root.addView(webContainer)
-
-        // Divider Drag Logic
-        var initialX = 0f
-        var initialWidth = 0
-        divider.setOnTouchListener { view, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = event.rawX
-                    initialWidth = window.attributes.width
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - initialX
-                    // If moving left (negative dx), width increases
-                    val newWidth = (initialWidth - dx).toInt().coerceIn(
-                        (metrics.widthPixels * 0.3).toInt(),
-                        (metrics.widthPixels * 0.8).toInt()
-                    )
-                    val p = window.attributes
-                    p.width = newWidth
-                    window.attributes = p
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    view.performClick()
-                    true
-                }
-                else -> false
-            }
-        }
+        root.addView(header)
+        root.addView(webView)
 
         setContentView(root)
         
@@ -185,6 +117,8 @@ class SplitWebBrowserActivity : Activity() {
         webView.loadUrl(url)
     }
 
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (webView.canGoBack()) {
             webView.goBack()

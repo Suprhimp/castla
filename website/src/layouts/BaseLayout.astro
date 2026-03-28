@@ -1,0 +1,113 @@
+---
+import { getLangFromUrl, useTranslations, localePath } from '../i18n/utils';
+import { languages, htmlLang, type Lang } from '../i18n/translations';
+
+interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const lang = getLangFromUrl(Astro.url);
+const tr = useTranslations(lang);
+
+const { title, description = tr('hero.desc'), ogImage = '/og.png' } = Astro.props;
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang={htmlLang[lang]}>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+  <!-- SEO -->
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={canonicalURL} />
+
+  <!-- hreflang for all locales -->
+  {Object.keys(languages).map((l) => {
+    const loc = l as Lang;
+    const href = new URL(localePath(loc, Astro.url.pathname.replace(/^\/(en|de|es|fr|ja|nl|no|zh-cn)/, '') || '/'), Astro.site);
+    return <link rel="alternate" hreflang={htmlLang[loc]} href={href} />;
+  })}
+  <link rel="alternate" hreflang="x-default" href={new URL(Astro.url.pathname.replace(/^\/(en|de|es|fr|ja|nl|no|zh-cn)/, '') || '/', Astro.site)} />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content={canonicalURL} />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:image" content={ogImage} />
+  <meta property="og:locale" content={htmlLang[lang]} />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={title} />
+  <meta name="twitter:description" content={description} />
+
+  <!-- Styles -->
+  <style is:global>
+    @import '../styles/global.css';
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container" style="display:flex; align-items:center; justify-content:space-between; padding-top:20px; padding-bottom:20px;">
+      <a href={localePath(lang, '/')} style="font-size:1.4rem; font-weight:800; text-decoration:none;">
+        <span class="gradient-text">Castla</span>
+      </a>
+      <div style="display:flex; gap:24px; align-items:center; font-size:0.95rem;">
+        <a href={localePath(lang, '/setup')} style="color:var(--text-dim);">{tr('nav.setup')}</a>
+        <a href={localePath(lang, '/guide')} style="color:var(--text-dim);">{tr('nav.guide')}</a>
+        <a href={localePath(lang, '/blog')} style="color:var(--text-dim);">{tr('nav.blog')}</a>
+
+        <!-- Language switcher -->
+        <div class="lang-switcher" style="position:relative;">
+          <button class="btn-secondary" style="padding:6px 12px; font-size:0.85rem; cursor:pointer; border-radius:8px; background:var(--surface); border:1px solid var(--border); color:var(--text);" id="lang-btn">
+            {languages[lang]}
+          </button>
+          <div id="lang-dropdown" style="display:none; position:absolute; right:0; top:100%; margin-top:4px; background:#151520; border:1px solid var(--border); border-radius:12px; padding:8px 0; min-width:140px; z-index:100;">
+            {Object.entries(languages).map(([code, label]) => (
+              <a
+                href={localePath(code as Lang, Astro.url.pathname.replace(/^\/(en|de|es|fr|ja|nl|no|zh-cn)/, '') || '/')}
+                style={`display:block; padding:8px 16px; color:${code === lang ? 'var(--blue)' : 'var(--text-dim)'}; font-size:0.85rem; text-decoration:none;`}
+              >
+                {label}
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <a href="https://play.google.com/store/apps/details?id=com.castla.mirror" class="btn btn-primary" style="padding:10px 20px; font-size:0.9rem;">{tr('nav.download')}</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <slot />
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>&copy; {new Date().getFullYear()} Castla. {tr('footer.rights')}</p>
+    </div>
+  </footer>
+
+  <script is:inline>
+    document.getElementById('lang-btn')?.addEventListener('click', () => {
+      const dd = document.getElementById('lang-dropdown');
+      if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', (e) => {
+      const dd = document.getElementById('lang-dropdown');
+      const btn = document.getElementById('lang-btn');
+      if (dd && btn && !btn.contains(e.target) && !dd.contains(e.target)) {
+        dd.style.display = 'none';
+      }
+    });
+  </script>
+</body>
+</html>

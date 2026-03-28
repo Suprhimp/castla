@@ -1,26 +1,25 @@
 package com.castla.mirror.utils
 
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
+data class AppLaunchRequest(
+    val packageName: String,
+    val className: String? = null,
+    val isVideoApp: Boolean = false,
+    val intentExtra: String? = null,
+    val splitMode: Boolean = false
+)
+
 /**
- * In-process event bus for launching apps on the Virtual Display.
- * DesktopActivity (uid 10612) emits requests, MirrorForegroundService
- * collects them and delegates to Shizuku PrivilegedService (uid 2000).
- * No Android framework (Broadcast/Binder) needed — same process memory.
+ * Singleton bus to pass launch requests from UI (DesktopActivity) to the running MirrorService.
  */
 object AppLaunchBus {
-    data class LaunchRequest(
-        val packageName: String,
-        val className: String?,
-        val isVideoApp: Boolean = false,
-        val intentExtra: String? = null
-    )
+    private val _events = MutableSharedFlow<AppLaunchRequest>(extraBufferCapacity = 5)
+    val events: SharedFlow<AppLaunchRequest> = _events.asSharedFlow()
 
-    private val _events = MutableSharedFlow<LaunchRequest>(extraBufferCapacity = 8)
-    val events = _events.asSharedFlow()
-
-    fun requestLaunch(packageName: String, className: String? = null, isVideoApp: Boolean = false, intentExtra: String? = null) {
-        _events.tryEmit(LaunchRequest(packageName, className, isVideoApp, intentExtra))
+    fun requestLaunch(packageName: String, className: String? = null, isVideoApp: Boolean = false, intentExtra: String? = null, splitMode: Boolean = false) {
+        _events.tryEmit(AppLaunchRequest(packageName, className, isVideoApp, intentExtra, splitMode))
     }
 }

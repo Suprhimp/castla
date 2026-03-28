@@ -14,6 +14,7 @@ import android.webkit.WebResourceError
 import android.widget.FrameLayout
 import android.util.Log
 import android.content.pm.ActivityInfo
+import android.view.Gravity
 
 class WebBrowserActivity : Activity() {
 
@@ -31,20 +32,55 @@ class WebBrowserActivity : Activity() {
         
         Log.i(TAG, "WebBrowserActivity created")
 
-        // 풀스크린 설정 및 가로모드(가상 디스플레이 특성) 고정
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        var url = intent.getStringExtra("url") ?: "https://m.youtube.com"
         
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_FULLSCREEN,
-            WindowManager.LayoutParams.FLAG_FULLSCREEN
-        )
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Parse splitMode from Intent or from URL hash fragment
+        var isSplit = intent.getBooleanExtra("splitMode", false) || intent.getStringExtra("splitMode") == "true"
+        if (url.contains("#split=true")) {
+            isSplit = true
+            url = url.replace("#split=true", "")
+        }
+
+        // split 화면은 display 비율을 따르도록 두고, 풀스크린 단독 모드만 가로 고정
+        requestedOrientation = if (isSplit) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
         
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        )
+        if (isSplit) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            )
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            val params = window.attributes
+            params.width = WindowManager.LayoutParams.MATCH_PARENT
+            params.height = WindowManager.LayoutParams.MATCH_PARENT
+            window.attributes = params
+
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+        } else {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN
+            )
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+        }
 
         val root = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -67,34 +103,37 @@ class WebBrowserActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setupWebView(this)
+            setupWebView(this, isSplit)
         }
 
         root.addView(webView)
         root.addView(fullScreenContainer)
         setContentView(root)
 
-        val url = intent.getStringExtra("url") ?: "https://m.youtube.com"
-        Log.i(TAG, "Loading URL: $url")
+        Log.i(TAG, "Loading URL: $url (Split: $isSplit)")
         webView.loadUrl(url)
     }
 
-    private fun setupWebView(webView: WebView) {
+    private fun setupWebView(webView: WebView, isSplit: Boolean) {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-            mediaPlaybackRequiresUserGesture = false // 터치 없이 자동재생 허용
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            setSupportZoom(true)
-            builtInZoomControls = true
+            mediaPlaybackRequiresUserGesture = false
+            useWideViewPort = !isSplit
+            loadWithOverviewMode = !isSplit
+            setSupportZoom(!isSplit)
+            builtInZoomControls = !isSplit
             displayZoomControls = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            
-            // 모바일 크롬 브라우저와 완벽하게 동일한 User-Agent 사용
-            // 단, 태블릿/PC UI를 선호하는 테슬라 화면 비율을 위해 iPad UserAgent를 사용하는 것이 더 안정적임
-            userAgentString = "Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+            userAgentString = if (isSplit) {
+                "Mozilla/5.0 (Linux; Android 15; SM-F741N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
+            } else {
+                "Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+            }
+        }
+        if (isSplit) {
+            webView.setInitialScale(100)
         }
 
         // 쿠키 허용
@@ -146,6 +185,20 @@ class WebBrowserActivity : Activity() {
                 webView.visibility = View.VISIBLE
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        webView.onPause()
+        webView.pauseTimers()
+        Log.i(TAG, "WebBrowserActivity paused — media playback stopped")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
+        webView.resumeTimers()
+        Log.i(TAG, "WebBrowserActivity resumed")
     }
 
     override fun onBackPressed() {

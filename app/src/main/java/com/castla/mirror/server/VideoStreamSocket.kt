@@ -9,7 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class VideoStreamSocket(
     handshake: NanoHTTPD.IHTTPSession,
-    private val server: MirrorServer
+    private val server: MirrorServer,
+    private val channel: String = "primary"
 ) : NanoWSD.WebSocket(handshake) {
 
     companion object {
@@ -47,20 +48,20 @@ class VideoStreamSocket(
     }, "WS-Video-Send").apply { isDaemon = true }
 
     override fun onOpen() {
-        server.registerVideoSocket(this)
+        server.registerVideoSocket(channel, this)
         sendThread.start()
     }
 
     override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
         closed = true
         sendThread.interrupt()
-        server.unregisterVideoSocket(this)
+        server.unregisterVideoSocket(channel, this)
     }
 
     override fun onMessage(message: NanoWSD.WebSocketFrame) {
         val text = message.textPayload
         if (text == "requestKeyframe") {
-            server.onKeyframeRequest()
+            server.onKeyframeRequest(channel)
         }
     }
 
@@ -70,7 +71,7 @@ class VideoStreamSocket(
         Log.w(TAG, "WebSocket exception", exception)
         closed = true
         sendThread.interrupt()
-        server.unregisterVideoSocket(this)
+        server.unregisterVideoSocket(channel, this)
     }
 
     /**
@@ -109,7 +110,7 @@ class VideoStreamSocket(
                 // until the next I-frame. Instead, clear the queue to stop sending
                 // useless deltas, and immediately request a fresh I-frame from the encoder.
                 sendQueue.clear()
-                server.onKeyframeRequest()
+                server.onKeyframeRequest(channel)
             }
         }
     }

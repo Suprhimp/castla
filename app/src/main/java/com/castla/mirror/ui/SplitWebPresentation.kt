@@ -19,11 +19,13 @@ class SplitWebPresentation(
 ) : Presentation(outerContext, display) {
 
     private lateinit var webView: WebView
+    private var webViewDestroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window?.setBackgroundDrawable(ColorDrawable(Color.BLACK))
+        // 아주 중요한 부분: 왼쪽 창 영역을 완벽히 투명하게 만들어 뒤의 지도가 터치까지 되도록 함
+        window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window?.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -48,13 +50,18 @@ class SplitWebPresentation(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(Color.TRANSPARENT)
         }
 
         // Draggable divider handle
-        val divider = FrameLayout(context).apply {
+        val divider = object : FrameLayout(context) {
+            override fun performClick(): Boolean {
+                super.performClick()
+                return true
+            }
+        }.apply {
             layoutParams = LinearLayout.LayoutParams(48, ViewGroup.LayoutParams.MATCH_PARENT)
-            setBackgroundColor(Color.parseColor("#1E1E1E"))
+            setBackgroundColor(0xFF1E1E1E.toInt())
             
             val dots = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -66,7 +73,7 @@ class SplitWebPresentation(
                 for (i in 0..2) {
                     addView(View(context).apply {
                         layoutParams = LinearLayout.LayoutParams(8, 8).apply { setMargins(0, 8, 0, 8) }
-                        setBackgroundColor(Color.parseColor("#888888"))
+                        setBackgroundColor(0xFF888888.toInt())
                     })
                 }
             }
@@ -77,11 +84,12 @@ class SplitWebPresentation(
         val webContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            setBackgroundColor(Color.BLACK)
         }
 
         val header = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 100)
-            setBackgroundColor(Color.parseColor("#111111"))
+            setBackgroundColor(0xFF111111.toInt())
             
             val closeBtn = TextView(context).apply {
                 text = "✕ Close"
@@ -103,6 +111,7 @@ class SplitWebPresentation(
         webView = WebView(context).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             settings.apply {
+                @Suppress("SetJavaScriptEnabled")
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
@@ -133,7 +142,7 @@ class SplitWebPresentation(
         // Divider Drag Logic
         var initialX = 0f
         var initialWidth = 0
-        divider.setOnTouchListener { _, event ->
+        divider.setOnTouchListener { view, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = event.rawX
@@ -152,6 +161,10 @@ class SplitWebPresentation(
                     window?.attributes = p
                     true
                 }
+                MotionEvent.ACTION_UP -> {
+                    view.performClick()
+                    true
+                }
                 else -> false
             }
         }
@@ -161,6 +174,34 @@ class SplitWebPresentation(
     }
 
     fun loadUrl(url: String) {
-        webView.loadUrl(url)
+        if (!webViewDestroyed) {
+            webView.loadUrl(url)
+        }
     }
+    override fun onStart() {
+        super.onStart()
+        if (::webView.isInitialized && !webViewDestroyed) {
+            webView.onResume()
+            webView.resumeTimers()
+        }
+    }
+
+    override fun onStop() {
+        if (::webView.isInitialized && !webViewDestroyed) {
+            webView.onPause()
+            webView.pauseTimers()
+        }
+        super.onStop()
+    }
+
+    override fun onDetachedFromWindow() {
+        if (::webView.isInitialized && !webViewDestroyed) {
+            webViewDestroyed = true
+            webView.stopLoading()
+            webView.loadUrl("about:blank")
+            webView.destroy()
+        }
+        super.onDetachedFromWindow()
+    }
+
 }

@@ -1,0 +1,35 @@
+---
+import { type Lang } from '../i18n/translations';
+import { useTranslations } from '../i18n/utils';
+
+interface Props {
+  lang: Lang;
+  posts: { url?: string; frontmatter: { title: string; description: string; date: string } }[];
+}
+
+const { lang, posts } = Astro.props;
+const tr = useTranslations(lang);
+
+const sortedPosts = posts.sort((a, b) =>
+  new Date(b.frontmatter.date).getTime() - new Date(a.frontmatter.date).getTime()
+);
+---
+
+<section>
+  <div class="container" style="max-width:860px;">
+    <h1 style="font-size:2.4rem; font-weight:800; margin-bottom:12px;">
+      <span class="gradient-text">{tr('blog.title')}</span>
+    </h1>
+    <p class="subtitle">{tr('blog.subtitle')}</p>
+
+    <div class="blog-grid">
+      {sortedPosts.map((post) => (
+        <a href={post.url} class="blog-card glass" style="text-decoration:none; color:inherit;">
+          <time>{post.frontmatter.date}</time>
+          <h3 style="font-size:1.2rem; font-weight:700;">{post.frontmatter.title}</h3>
+          <p>{post.frontmatter.description}</p>
+        </a>
+      ))}
+    </div>
+  </div>
+</section>
