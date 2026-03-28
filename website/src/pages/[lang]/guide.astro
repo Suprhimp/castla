@@ -1,0 +1,18 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import GuidePage from '../../components/GuidePage.astro';
+import { languages, defaultLang, type Lang } from '../../i18n/translations';
+import { useTranslations } from '../../i18n/utils';
+
+export function getStaticPaths() {
+  return Object.keys(languages)
+    .filter((l) => l !== defaultLang)
+    .map((lang) => ({ params: { lang } }));
+}
+
+const { lang } = Astro.params as { lang: Lang };
+const tr = useTranslations(lang);
+---
+<BaseLayout title={`${tr('guide.title')} — Castla`} description={tr('guide.subtitle')}>
+  <GuidePage lang={lang} />
+</BaseLayout>

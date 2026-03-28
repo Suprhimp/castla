@@ -1,23 +1,27 @@
 /**
  * Touch Event Handler
  * Captures touch/pointer events on the canvas and sends them via WebSocket
- * Uses binary protocol (10 bytes) for minimal latency and rAF-based throttling
+ * Uses binary protocol (11 bytes) for minimal latency and rAF-based throttling
  */
 class TouchHandler {
     static ACTION_DOWN = 0;
     static ACTION_UP = 1;
     static ACTION_MOVE = 2;
 
-    constructor(canvas, renderer, controlSocket) {
+    constructor(canvas, renderer, controlSocket, pane = "primary") {
         this.canvas = canvas;
         this.renderer = renderer;
         this.controlSocket = controlSocket;
+        this.pane = pane;
         this.pendingMoves = new Map(); // pointerId -> {action, x, y}
         this.rafId = null;
         this.mouseDown = false;
 
+        // Last tap position (viewport coords) — used by Bubble Composer
+        this.lastTap = null;
+
         // Pre-allocate binary buffer for touch events (reused)
-        this._buf = new ArrayBuffer(10);
+        this._buf = new ArrayBuffer(11);
         this._view = new DataView(this._buf);
 
         this.bindEvents();
@@ -85,6 +89,10 @@ class TouchHandler {
         const rect = this.canvas.getBoundingClientRect();
         const coords = this._toNormalized(event.clientX, event.clientY, rect);
 
+        if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
+            this.lastTap = { clientX: event.clientX, clientY: event.clientY, ts: Date.now() };
+        }
+
         if (actionCode === TouchHandler.ACTION_MOVE) {
             // Coalesce: only store latest position per pointer, sent on next rAF
             if (coords.inBounds) {
@@ -108,6 +116,10 @@ class TouchHandler {
             const touch = event.changedTouches[i];
             const coords = this._toNormalized(touch.clientX, touch.clientY, rect);
 
+            if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
+                this.lastTap = { clientX: touch.clientX, clientY: touch.clientY, ts: Date.now() };
+            }
+
             if (actionCode === TouchHandler.ACTION_MOVE) {
                 if (coords.inBounds) {
                     this.pendingMoves.set(touch.identifier, {
@@ -123,6 +135,10 @@ class TouchHandler {
     _sendMouse(event, actionCode) {
         const rect = this.canvas.getBoundingClientRect();
         const coords = this._toNormalized(event.clientX, event.clientY, rect);
+
+        if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
+            this.lastTap = { clientX: event.clientX, clientY: event.clientY, ts: Date.now() };
+        }
 
         if (actionCode === TouchHandler.ACTION_MOVE) {
             if (coords.inBounds) {
@@ -179,7 +195,7 @@ class TouchHandler {
         };
     }
 
-    /** Send touch event as 10-byte binary: [action:u8][id:u8][x:f32LE][y:f32LE] */
+    /** Send touch event as 11-byte binary: [action:u8][id:u8][x:f32LE][y:f32LE][pane:u8] */
     _sendBinary(action, id, x, y) {
         if (!this.controlSocket || this.controlSocket.readyState !== WebSocket.OPEN) {
             if (this._logCount === undefined) this._logCount = 0;
@@ -190,6 +206,7 @@ class TouchHandler {
         this._view.setUint8(1, id & 0xFF);
         this._view.setFloat32(2, x, true); // little-endian
         this._view.setFloat32(6, y, true);
+        this._view.setUint8(10, this.pane === "secondary" ? 1 : 0);
         this.controlSocket.send(this._buf);
     }
 

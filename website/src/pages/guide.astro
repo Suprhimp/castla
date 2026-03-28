@@ -1,0 +1,9 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import GuidePage from '../components/GuidePage.astro';
+import { useTranslations } from '../i18n/utils';
+const tr = useTranslations('ko');
+---
+<BaseLayout title={`${tr('guide.title')} — Castla`} description={tr('guide.subtitle')}>
+  <GuidePage lang="ko" />
+</BaseLayout>

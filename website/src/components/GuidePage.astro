@@ -1,0 +1,77 @@
+---
+import { type Lang } from '../i18n/translations';
+import { useTranslations, localePath } from '../i18n/utils';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+const tr = useTranslations(lang);
+---
+
+<section>
+  <div class="container" style="max-width:760px;">
+    <h1 style="font-size:2.4rem; font-weight:800; margin-bottom:12px;">
+      <span class="gradient-text">{tr('guide.title')}</span>
+    </h1>
+    <p class="subtitle">{tr('guide.subtitle')}</p>
+
+    <!-- Prerequisites -->
+    <div class="glass" style="margin-bottom:32px;">
+      <h3 style="margin-bottom:12px;">{tr('guide.prereq.title')}</h3>
+      <ul style="padding-left:20px; color:var(--text-dim); line-height:2;">
+        {tr('guide.prereq.list').split('|').map((item, i, arr) => (
+          <li>
+            {item}
+            {i === arr.length - 1 && (
+              <> (<a href={localePath(lang, '/setup')}>{tr('guide.prereq.link')}</a>)</>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    <!-- Basic mirroring -->
+    <h2 style="font-size:1.6rem; margin-bottom:24px;">{tr('guide.basic.title')}</h2>
+    <div class="steps" style="margin-bottom:48px;">
+      {[1, 2, 3, 4].map((n) => (
+        <div class="step">
+          <h3>{tr(`guide.basic.${n}.title`)}</h3>
+          <p>{tr(`guide.basic.${n}.desc`)}</p>
+        </div>
+      ))}
+    </div>
+
+    <!-- App mode -->
+    <h2 style="font-size:1.6rem; margin-bottom:24px;">{tr('guide.appmode.title')}</h2>
+    <div class="glass" style="margin-bottom:48px;">
+      <p style="color:var(--text-dim); margin-bottom:16px;">{tr('guide.appmode.desc')}</p>
+      <ol style="padding-left:20px; color:var(--text-dim); line-height:2.2;">
+        {tr('guide.appmode.steps').split('|').map((s) => <li>{s}</li>)}
+      </ol>
+    </div>
+
+    <!-- Settings -->
+    <h2 style="font-size:1.6rem; margin-bottom:24px;">{tr('guide.settings.title')}</h2>
+    <div style="display:grid; gap:16px; margin-bottom:48px;">
+      {['res', 'fps', 'audio'].map((key) => (
+        <div class="glass">
+          <h4 style="margin-bottom:8px;">{tr(`guide.settings.${key}.title`)}</h4>
+          <p style="color:var(--text-dim); font-size:0.95rem;">{tr(`guide.settings.${key}.desc`)}</p>
+        </div>
+      ))}
+    </div>
+
+    <!-- Tesla Auto-Detect -->
+    <h2 style="font-size:1.6rem; margin-bottom:24px;">{tr('guide.autodetect.title')}</h2>
+    <div class="glass" style="margin-bottom:48px;">
+      <p style="color:var(--text-dim);">{tr('guide.autodetect.desc')}</p>
+    </div>
+
+    <!-- Tips -->
+    <h2 style="font-size:1.6rem; margin-bottom:24px;">{tr('guide.tips.title')}</h2>
+    <div class="glass">
+      <ul style="padding-left:20px; color:var(--text-dim); line-height:2.2;">
+        {tr('guide.tips.list').split('|').map((tip) => <li>{tip}</li>)}
+      </ul>
+    </div>
+  </div>
+</section>

@@ -79,14 +79,8 @@ class TeslaCompanionService : CompanionDeviceService() {
     }
 
     private fun isMirrorServiceRunning(): Boolean {
-        @Suppress("DEPRECATION")
-        val manager = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-        for (service in manager.getRunningServices(50)) {
-            if (service.service.className == MirrorForegroundService::class.java.name) {
-                return true
-            }
-        }
-        return false
+        // Use static volatile flag instead of deprecated ActivityManager.getRunningServices
+        return MirrorForegroundService.isServiceRunning
     }
 
     private fun showStartMirroringNotification() {

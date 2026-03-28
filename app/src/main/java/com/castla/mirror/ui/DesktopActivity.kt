@@ -74,6 +74,18 @@ class DesktopActivity : Activity() {
             "stream", "vod", "player", "hulu", "disney", "tving", "wavve"
         )
 
+        // Web URLs for DRM-restricted OTT apps
+        private val OTT_WEB_URLS = mapOf(
+            "com.google.android.youtube" to "https://m.youtube.com", // 모바일 유튜브 웹버전
+            "com.netflix.mediaclient" to "https://www.netflix.com",
+            "com.disney.disneyplus" to "https://www.disneyplus.com",
+            "com.disney.disneyplus.kr" to "https://www.disneyplus.com",
+            "com.wavve.player" to "https://m.wavve.com",
+            "net.cj.cjhv.gs.tving" to "https://www.tving.com",
+            "com.coupang.play" to "https://www.coupangplay.com",
+            "com.frograms.watcha" to "https://watcha.com"
+        )
+
         // --- Music ---
         private val MUSIC_PACKAGES = setOf(
             "com.spotify.music",                    // Spotify
@@ -254,6 +266,32 @@ class DesktopActivity : Activity() {
         }
         iconContainer.addView(icon)
 
+        // Web badge for DRM-restricted OTTs
+        if (OTT_WEB_URLS.containsKey(app.packageName)) {
+            val webBadge = TextView(this).apply {
+                text = "WEB"
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 8f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                val bg = GradientDrawable().apply {
+                    setColor(0xFF2196F3.toInt()) // Blue badge for Web
+                    cornerRadius = 6f
+                }
+                background = bg
+                setPadding(6, 2, 6, 2)
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.END
+                ).apply {
+                    topMargin = -4
+                    rightMargin = -4
+                }
+            }
+            iconContainer.addView(webBadge)
+        }
+
         if (isPremium) {
             // Lock overlay
             val lock = TextView(this).apply {
@@ -308,8 +346,21 @@ class DesktopActivity : Activity() {
 
     private fun launchApp(packageName: String, className: String, category: AppCategory = AppCategory.OTHER) {
         val isVideo = category == AppCategory.VIDEO
-        com.castla.mirror.utils.AppLaunchBus.requestLaunch(packageName, className, isVideoApp = isVideo)
-        Log.i(TAG, "Requested launch of $packageName (video=$isVideo) on display $displayId")
+        
+        // Check if this is a DRM-restricted OTT app that should be launched in our WebBrowserActivity
+        val webUrl = OTT_WEB_URLS[packageName]
+        if (webUrl != null) {
+            Log.i(TAG, "Launching DRM-restricted OTT app via WebBrowserActivity locally: $packageName -> $webUrl")
+            // System 앱이 아닌 일반 앱은 권한 문제(SecurityException)로 인해
+            // 가상 디스플레이에 직접 ActivityOptions.launchDisplayId 를 사용할 수 없습니다.
+            // 따라서 1차적으로 시도했던 Shizuku(시스템 권한)를 통한 launchAppWithExtraOnDisplay 로 롤백하여 안전하게 띄웁니다.
+            val componentName = "com.castla.mirror/com.castla.mirror.ui.WebBrowserActivity"
+            com.castla.mirror.utils.AppLaunchBus.requestLaunch(componentName, null, isVideoApp = true, intentExtra = webUrl)
+        } else {
+            // Standard app launch via Shizuku
+            com.castla.mirror.utils.AppLaunchBus.requestLaunch(packageName, className, isVideoApp = isVideo)
+            Log.i(TAG, "Requested launch of $packageName (video=$isVideo) on display $displayId")
+        }
     }
 
     /**

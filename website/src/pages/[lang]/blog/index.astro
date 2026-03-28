@@ -1,0 +1,22 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import BlogIndex from '../../../components/BlogIndex.astro';
+import { languages, defaultLang, type Lang } from '../../../i18n/translations';
+import { useTranslations } from '../../../i18n/utils';
+
+export function getStaticPaths() {
+  return Object.keys(languages)
+    .filter((l) => l !== defaultLang)
+    .map((lang) => ({ params: { lang } }));
+}
+
+const { lang } = Astro.params as { lang: Lang };
+const tr = useTranslations(lang);
+
+// Blog posts currently only in Korean — shown across all locales
+const globResult = import.meta.glob('../../blog/*.md', { eager: true });
+const posts = Object.values(globResult) as any[];
+---
+<BaseLayout title={`${tr('blog.title')} — Castla`} description={tr('blog.subtitle')}>
+  <BlogIndex lang={lang} posts={posts} />
+</BaseLayout>

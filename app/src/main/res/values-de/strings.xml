@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Castla</string>
+    <string name="widget_description">Castla Spiegelungssteuerung und Shizuku Status</string>
+    <string name="tesla_detect_channel">Tesla Auto-Erkennung</string>
+    <string name="tesla_detected_title">Tesla erkannt</string>
+    <string name="tesla_detected_text">Tippen, um die Castla Spiegelung zu starten</string>
+
+    <string name="toast_screen_capture_granted">Bildschirmaufnahme gewährt!</string>
+    <string name="toast_screen_capture_denied">Bildschirmaufnahme abgelehnt (Code=%d)</string>
+    <string name="toast_vpn_permission_required">VPN-Berechtigung für Tesla-Verbindung erforderlich</string>
+    <string name="toast_tesla_pairing_cancelled">Tesla-Kopplung abgebrochen</string>
+    <string name="toast_could_not_open_browser">Browser konnte nicht geöffnet werden. Bitte installieren Sie Shizuku manuell.</string>
+    <string name="toast_tesla_pairing_failed">Tesla-Kopplung fehlgeschlagen: %s</string>
+    <string name="toast_tesla_paired_device">Tesla gekoppelt: %s</string>
+    <string name="toast_tesla_paired">Tesla gekoppelt!</string>
+    <string name="toast_bluetooth_permission_missing">Bluetooth-Berechtigung fehlt. Auto-Erkennung funktioniert möglicherweise nicht.</string>
+    <string name="toast_tesla_paired_auto_detect">Tesla gekoppelt! Auto-Erkennung aktiviert.</string>
+    <string name="toast_tesla_auto_detect_disabled">Tesla Auto-Erkennung deaktiviert</string>
+    <string name="toast_requesting_screen_capture">Fordere Bildschirmaufnahme an...</string>
+    <string name="toast_error">Fehler: %s</string>
+
+    <string name="subtitle_tesla_screen_mirroring">Tesla Bildschirmspiegelung</string>
+    <string name="btn_settings">Einstellungen</string>
+    <string name="title_castla_pro">Castla PRO</string>
+    <string name="desc_castla_pro_features">Alle Apps entsperren  /  1080p Streaming  /  Keine Werbung</string>
+    <string name="btn_upgrade_pro">Upgrade — Einmaliger Kauf</string>
+    <string name="title_tesla_auto_detect_on">Tesla Auto-Erkennung EIN</string>
+    <string name="title_tesla_auto_detect">Tesla Auto-Erkennung</string>
+    <string name="desc_tesla_auto_detect_on">Sie erhalten eine Benachrichtigung, wenn Tesla sich verbindet</string>
+    <string name="desc_tesla_auto_detect_off">Lassen Sie sich benachrichtigen, wenn Ihr Tesla in der Nähe ist</string>
+    <string name="status_streaming_active">Streaming aktiv</string>
+    <string name="status_ready_to_stream">Bereit zum Streamen</string>
+    <string name="title_open_tesla_browser">Tesla Browser öffnen</string>
+    <string name="label_enter_pin">PIN EINGEBEN</string>
+    <string name="title_tesla_setup_required">Tesla Einrichtung erforderlich</string>
+    <string name="desc_shizuku_install_required">Der Tesla-Browser benötigt Shizuku zur Verbindung.\nTippen Sie unten, um zu sehen, wie Sie Shizuku installieren.</string>
+    <string name="btn_how_to_install_shizuku">Wie man Shizuku installiert</string>
+    <string name="title_shizuku_setup_steps">Shizuku Einrichtungsschritte:</string>
+    <string name="desc_shizuku_setup_steps">1. Einstellungen &gt; Telefoninfo &gt; Softwareinformationen\n   &gt; 7 Mal auf die Buildnummer tippen\n2. Einstellungen &gt; Entwickleroptionen\n   &gt; Wireless Debugging &gt; EIN\n3. Shizuku öffnen &gt; \"Über Wireless Debugging starten\"</string>
+    <string name="btn_open_shizuku">Shizuku öffnen</string>
+    <string name="status_shizuku_running_setup">Shizuku läuft. Richte Tesla-Verbindung ein...</string>
+    <string name="btn_stop_mirroring">Spiegelung stoppen</string>
+    <string name="btn_start_mirroring">Spiegelung starten</string>
+    <string name="title_how_to_use">Wie benutzt man es</string>
+    <string name="desc_how_to_use">1. Verbinden Sie das Telefon und Tesla mit demselben WiFi\n2. Tippen Sie oben auf \"Spiegelung starten\"\n3. Öffnen Sie die URL im Tesla-Browser\n4. Geben Sie die 4-stellige PIN ein\n5. Ihr Telefonbildschirm wird auf dem Tesla angezeigt</string>
+    <string name="title_network_setup_log">Netzwerk-Setup Protokoll</string>
+    <string name="btn_copy">Kopieren</string>
+</resources>
