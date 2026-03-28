@@ -577,12 +577,19 @@
             transform: translateX(-50%);
             z-index: 231;
             display: none;
-            gap: 6px;
+            gap: 5px;
             align-items: center;
-            background: rgba(0,0,0,0.55);
-            backdrop-filter: blur(8px);
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
             border-radius: 999px;
-            padding: 4px 8px;
+            padding: 4px 6px;
+            opacity: 0;
+            transition: opacity 0.25s ease;
+            pointer-events: none;
+        }
+        #split-pane-toolbar.visible {
+            opacity: 1;
+            pointer-events: auto;
         }
         #player-shell.browser-split #split-pane-toolbar,
         #player-shell.freeform-split #split-pane-toolbar {
@@ -591,31 +598,32 @@
         .split-pane-btn {
             border: none;
             border-radius: 999px;
-            padding: 7px 12px;
-            background: rgba(255,255,255,0.12);
-            color: rgba(255,255,255,0.85);
+            padding: 6px 11px;
+            background: rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.75);
             font-size: 12px;
             font-weight: 500;
             cursor: pointer;
             white-space: nowrap;
-            transition: background 0.15s;
+            transition: background 0.15s, color 0.15s;
         }
-        .split-pane-btn:hover { background: rgba(255,255,255,0.22); }
+        .split-pane-btn:hover { background: rgba(255,255,255,0.20); color: #fff; }
         .split-pane-btn.active {
-            background: rgba(255,255,255,0.28);
+            background: rgba(255,255,255,0.25);
             color: #fff;
+            font-weight: 600;
         }
-        .split-pane-btn.close-btn {
-            background: rgba(255,80,80,0.5);
-            color: #fff;
-            margin-left: 4px;
+        .split-pane-btn.stop-btn {
+            background: rgba(255,255,255,0.10);
+            color: rgba(255,120,120,0.9);
+            margin-left: 2px;
         }
-        .split-pane-btn.close-btn:hover { background: rgba(255,80,80,0.7); }
+        .split-pane-btn.stop-btn:hover { background: rgba(255,80,80,0.4); color: #fff; }
         .split-toolbar-sep {
             width: 1px;
-            height: 18px;
-            background: rgba(255,255,255,0.2);
-            margin: 0 2px;
+            height: 16px;
+            background: rgba(255,255,255,0.15);
+            margin: 0 1px;
         }
     </style>
 </head>
@@ -698,7 +706,7 @@
                 <button class="split-pane-btn split-ratio-btn" data-ratio="0.6">6:4</button>
                 <button class="split-pane-btn split-ratio-btn" data-ratio="0.7">7:3</button>
                 <div class="split-toolbar-sep"></div>
-                <button id="split-close-btn" class="split-pane-btn close-btn">✕ 닫기</button>
+                <button id="split-close-btn" class="split-pane-btn stop-btn">종료</button>
             </div>
         </div>
         <div id="overlay">

@@ -1223,23 +1223,50 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, {passive: true});
     }
 
+    // Split toolbar: show on tap, auto-hide after 3s
+    const splitToolbar = document.getElementById('split-pane-toolbar');
+    let splitToolbarTimer = null;
+    function showSplitToolbar() {
+        if (!splitToolbar || !browserSplitState.active) return;
+        splitToolbar.classList.add('visible');
+        clearTimeout(splitToolbarTimer);
+        splitToolbarTimer = setTimeout(() => {
+            splitToolbar.classList.remove('visible');
+        }, 3000);
+    }
+    function hideSplitToolbar() {
+        splitToolbar?.classList.remove('visible');
+        clearTimeout(splitToolbarTimer);
+    }
+    // Show toolbar on tap anywhere on the player shell
+    playerShell?.addEventListener('click', (e) => {
+        if (!browserSplitState.active) return;
+        // Don't toggle if clicking toolbar buttons
+        if (e.target.closest('#split-pane-toolbar')) return;
+        if (splitToolbar?.classList.contains('visible')) {
+            hideSplitToolbar();
+        } else {
+            showSplitToolbar();
+        }
+    });
+
     // Split ratio buttons
     document.querySelectorAll('.split-ratio-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const ratio = parseFloat(btn.dataset.ratio);
             if (!ratio || !browserSplitState.active) return;
-            // Update active state
             document.querySelectorAll('.split-ratio-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            // Apply new ratio — this rebuilds VDs (apps will restart)
             setBrowserSplitRatio(ratio);
             lockBrowserSplitViewports(browserSplitState.app);
             requestAnimationFrame(() => sendViewportSize());
+            showSplitToolbar(); // reset auto-hide timer
         });
     });
 
     if (splitCloseBtn) {
         splitCloseBtn.addEventListener('click', () => {
+            hideSplitToolbar();
             disableBrowserSplit();
         });
     }
