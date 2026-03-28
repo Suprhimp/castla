@@ -635,6 +635,7 @@ class MirrorForegroundService : Service() {
         return (reference * 240 / 720).coerceIn(120, 320)
     }
 
+
     private fun releaseSecondaryPipeline(clearState: Boolean = false) {
         if (secondaryDisplayId >= 0) {
             virtualDisplayManager?.releaseSecondaryVirtualDisplay(secondaryDisplayId)
@@ -677,7 +678,14 @@ class MirrorForegroundService : Service() {
             return
         }
 
-        releaseSecondaryPipeline(clearState = false)
+        val existingSecondaryVd = secondaryDisplayId >= 0
+
+        // Release encoder only (NOT the VD) so we can resize
+        secondaryVideoEncoder?.release()
+        secondaryVideoEncoder = null
+        secondaryJpegEncoder?.release()
+        secondaryJpegEncoder = null
+        mirrorServer?.setKeyframeRequester("secondary") {}
 
         val surface = if (currentCodecMode == "mjpeg") {
             val jpeg = JpegEncoder(width, height, fps = 15, quality = 65)
@@ -696,27 +704,37 @@ class MirrorForegroundService : Service() {
         }
 
         val dpi = computeVirtualDisplayDpi(width, height)
-        val newDisplayId = virtualDisplayManager?.createSecondaryVirtualDisplay(width, height, dpi, surface) ?: -1
-        if (newDisplayId < 0) {
-            releaseSecondaryPipeline(clearState = false)
-            return
-        }
 
-        secondaryDisplayId = newDisplayId
-        secondaryWidth = width
-        secondaryHeight = height
-        secondaryTouchInjector = (secondaryTouchInjector ?: TouchInjector(width, height)).also { injector ->
-            injector.updateDimensions(width, height)
-            injector.setVirtualDisplayInjector { action, x, y, pointerId ->
-                try {
-                    shizukuSetup?.privilegedService?.injectInput(secondaryDisplayId, action, x, y, pointerId)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to inject secondary input on display $secondaryDisplayId", e)
+        if (existingSecondaryVd) {
+            // Resize existing secondary VD gradually to avoid activity recreation
+            virtualDisplayManager?.getPrivilegedService()?.setSurface(secondaryDisplayId, surface)
+            virtualDisplayManager?.resizeDisplay(secondaryDisplayId, width, height, dpi)
+            secondaryWidth = width
+            secondaryHeight = height
+            secondaryTouchInjector?.updateDimensions(width, height)
+            Log.i(TAG, "Gradually resized secondary VD $secondaryDisplayId to ${width}x${height}")
+        } else {
+            // First creation
+            val newDisplayId = virtualDisplayManager?.createSecondaryVirtualDisplay(width, height, dpi, surface) ?: -1
+            if (newDisplayId < 0) {
+                releaseSecondaryPipeline(clearState = false)
+                return
+            }
+            secondaryDisplayId = newDisplayId
+            secondaryWidth = width
+            secondaryHeight = height
+            secondaryTouchInjector = (secondaryTouchInjector ?: TouchInjector(width, height)).also { injector ->
+                injector.updateDimensions(width, height)
+                injector.setVirtualDisplayInjector { action, x, y, pointerId ->
+                    try {
+                        shizukuSetup?.privilegedService?.injectInput(secondaryDisplayId, action, x, y, pointerId)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to inject secondary input on display $secondaryDisplayId", e)
+                    }
                 }
             }
+            restoreSecondaryVdContent()
         }
-
-        restoreSecondaryVdContent()
         mirrorServer?.broadcastControlMessage(JSONObject().apply {
             put("type", "resolutionChanged")
             put("pane", "secondary")
@@ -1689,15 +1707,26 @@ class MirrorForegroundService : Service() {
 
             if (virtualDisplayManager?.isBound() == true) {
                 dismissSplitPresentation(clearState = false)
-                virtualDisplayManager?.releaseVirtualDisplay()
-                virtualDisplayManager?.createVirtualDisplay(width, height, dpi, surface)
-                if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                if (virtualDisplayManager?.hasVirtualDisplay() == true && !force) {
+                    // Resize existing VD gradually to avoid activity recreation
+                    val vdId = virtualDisplayManager!!.getDisplayId()
+                    virtualDisplayManager?.getPrivilegedService()?.setSurface(vdId, surface)
+                    virtualDisplayManager?.resizeDisplay(vdId, width, height, dpi)
                     touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                         virtualDisplayManager?.injectInput(action, x, y, pointerId)
                     }
-                    restoreCurrentVdContent()
+                    Log.i(TAG, "Gradually resized primary VD $vdId to ${width}x${height}")
                 } else {
-                    screenCapture?.reconfigure(surface, width, height)
+                    virtualDisplayManager?.releaseVirtualDisplay()
+                    virtualDisplayManager?.createVirtualDisplay(width, height, dpi, surface)
+                    if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                        touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                            virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                        }
+                        restoreCurrentVdContent()
+                    } else {
+                        screenCapture?.reconfigure(surface, width, height)
+                    }
                 }
             } else {
                 screenCapture?.reconfigure(surface, width, height)

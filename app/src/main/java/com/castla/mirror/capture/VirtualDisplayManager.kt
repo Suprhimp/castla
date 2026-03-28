@@ -62,6 +62,13 @@ class VirtualDisplayManager {
             val connection = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                     privilegedService = IPrivilegedService.Stub.asInterface(binder)
+                    
+                    try {
+                        privilegedService?.registerDeathToken(android.os.Binder())
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to register death token", e)
+                    }
+
                     isBound = true
                     Log.i(TAG, "Shizuku privileged service connected")
                     if (!callbackFired) {
@@ -143,6 +150,34 @@ class VirtualDisplayManager {
         }
     }
     
+    /** Creates an additional virtual display for dual-screen scenarios */
+    fun createSecondaryVirtualDisplay(width: Int, height: Int, dpi: Int, surface: Surface): Int {
+        val service = privilegedService
+        if (service == null) return -1
+        
+        return try {
+            val id = service.createVirtualDisplay(width, height, dpi, "Castla_Sec")
+            if (id >= 0) {
+                service.setSurface(id, surface)
+                id
+            } else -1
+        } catch (e: Exception) {
+            -1
+        }
+    }
+    
+    fun releaseSecondaryVirtualDisplay(id: Int) {
+        try {
+            privilegedService?.releaseVirtualDisplay(id)
+        } catch (e: Exception) {}
+    }
+    
+    fun launchAppOnSpecificDisplay(targetDisplayId: Int, packageName: String) {
+        try {
+            privilegedService?.launchAppOnDisplay(targetDisplayId, packageName)
+        } catch (e: Exception) {}
+    }
+
     fun setSurface(surface: Surface) {
         if (displayId >= 0 && privilegedService != null) {
             try {
@@ -154,6 +189,21 @@ class VirtualDisplayManager {
         }
     }
 
+    /**
+     * Force the virtual display to stay awake/unlocked when the physical screen turns off.
+     * Uses PowerManager internal APIs via Shizuku to wake the display and inject user activity.
+     */
+    fun keepDisplayAwake() {
+        val id = displayId
+        if (id < 0) return
+        try {
+            privilegedService?.wakeUpDisplay(id)
+            Log.i(TAG, "Forced VD $id display state to ON")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to force VD awake", e)
+        }
+    }
+
     /** Returns true if the Shizuku service is bound (even if no VD is active). */
     fun isBound(): Boolean = isBound && privilegedService != null
 
@@ -162,6 +212,18 @@ class VirtualDisplayManager {
 
     /** Returns true if a Shizuku virtual display is active. */
     fun hasVirtualDisplay(): Boolean = displayId >= 0 && privilegedService != null
+
+    /** Resize a virtual display by ID without destroying it. */
+    fun resizeDisplay(displayId: Int, width: Int, height: Int, dpi: Int): Boolean {
+        if (displayId < 0) return false
+        return try {
+            privilegedService?.resizeVirtualDisplay(displayId, width, height, dpi)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to resize VD $displayId", e)
+            false
+        }
+    }
 
     /** Inject a touch event on the virtual display. */
     fun injectInput(action: Int, x: Float, y: Float, pointerId: Int) {

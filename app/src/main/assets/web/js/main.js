@@ -394,7 +394,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         browserSplitState.preset = resolveSplitPreset(currentPrimaryApp, app);
         streamPolicy.layoutMode = 'browser_split';
         document.body.dataset.layoutMode = streamPolicy.layoutMode;
-        setBrowserSplitRatio(browserSplitState.preset.ratio || browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
+        const initialRatio = browserSplitState.preset.ratio || browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO;
+        setBrowserSplitRatio(initialRatio);
+        // Highlight the closest ratio button
+        document.querySelectorAll('.split-ratio-btn').forEach(b => {
+            const btnRatio = parseFloat(b.dataset.ratio);
+            b.classList.toggle('active', Math.abs(btnRatio - initialRatio) < 0.05);
+        });
         playerShell?.classList.add('browser-split');
         applyActiveFitModes();
         await new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -1217,51 +1223,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, {passive: true});
     }
 
-    if (splitResetBtn) {
-        splitResetBtn.addEventListener('click', () => {
-            const preset = resolveSplitPreset(currentPrimaryApp, browserSplitState.app);
-            setBrowserSplitRatio(preset.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
+    // Split ratio buttons
+    document.querySelectorAll('.split-ratio-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const ratio = parseFloat(btn.dataset.ratio);
+            if (!ratio || !browserSplitState.active) return;
+            // Update active state
+            document.querySelectorAll('.split-ratio-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            // Apply new ratio — this rebuilds VDs (apps will restart)
+            setBrowserSplitRatio(ratio);
             lockBrowserSplitViewports(browserSplitState.app);
             requestAnimationFrame(() => sendViewportSize());
         });
-    }
+    });
 
     if (splitCloseBtn) {
         splitCloseBtn.addEventListener('click', () => {
             disableBrowserSplit();
         });
-    }
-
-    if (splitDivider && playerShell) {
-        const updateSplitFromClientX = (clientX) => {
-            const rect = playerShell.getBoundingClientRect();
-            if (rect.width <= 0) return;
-            setBrowserSplitRatio((clientX - rect.left) / rect.width);
-        };
-
-        const stopResizing = () => {
-            if (!browserSplitState.resizing) return;
-            browserSplitState.resizing = false;
-            lockBrowserSplitViewports(browserSplitState.app);
-            requestAnimationFrame(() => sendViewportSize());
-        };
-
-        splitDivider.addEventListener('pointerdown', (e) => {
-            if (!browserSplitState.active) return;
-            browserSplitState.resizing = true;
-            splitDivider.setPointerCapture?.(e.pointerId);
-            e.preventDefault();
-            updateSplitFromClientX(e.clientX);
-        });
-
-        splitDivider.addEventListener('pointermove', (e) => {
-            if (!browserSplitState.resizing) return;
-            e.preventDefault();
-            updateSplitFromClientX(e.clientX);
-        });
-
-        splitDivider.addEventListener('pointerup', stopResizing);
-        splitDivider.addEventListener('pointercancel', stopResizing);
     }
 
     // ── Keyboard handling ──

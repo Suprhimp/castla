@@ -560,7 +560,7 @@
             touch-action: none;
         }
         #player-shell.browser-split #split-divider {
-            display: flex;
+            display: none;
         }
         #split-divider::before {
             content: '';
@@ -573,10 +573,16 @@
         #split-pane-toolbar {
             position: absolute;
             top: 12px;
-            right: 12px;
+            left: 50%;
+            transform: translateX(-50%);
             z-index: 231;
             display: none;
-            gap: 8px;
+            gap: 6px;
+            align-items: center;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(8px);
+            border-radius: 999px;
+            padding: 4px 8px;
         }
         #player-shell.browser-split #split-pane-toolbar,
         #player-shell.freeform-split #split-pane-toolbar {
@@ -585,12 +591,31 @@
         .split-pane-btn {
             border: none;
             border-radius: 999px;
-            padding: 10px 14px;
-            background: rgba(0,0,0,0.65);
-            color: #fff;
-            font-size: 13px;
-            backdrop-filter: blur(6px);
+            padding: 7px 12px;
+            background: rgba(255,255,255,0.12);
+            color: rgba(255,255,255,0.85);
+            font-size: 12px;
+            font-weight: 500;
             cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s;
+        }
+        .split-pane-btn:hover { background: rgba(255,255,255,0.22); }
+        .split-pane-btn.active {
+            background: rgba(255,255,255,0.28);
+            color: #fff;
+        }
+        .split-pane-btn.close-btn {
+            background: rgba(255,80,80,0.5);
+            color: #fff;
+            margin-left: 4px;
+        }
+        .split-pane-btn.close-btn:hover { background: rgba(255,80,80,0.7); }
+        .split-toolbar-sep {
+            width: 1px;
+            height: 18px;
+            background: rgba(255,255,255,0.2);
+            margin: 0 2px;
         }
     </style>
 </head>
@@ -667,8 +692,13 @@
                 </div>
             </div>
             <div id="split-pane-toolbar">
-                <button id="split-reset-btn" class="split-pane-btn">비율 초기화</button>
-                <button id="split-close-btn" class="split-pane-btn">분할 닫기</button>
+                <button class="split-pane-btn split-ratio-btn" data-ratio="0.3">3:7</button>
+                <button class="split-pane-btn split-ratio-btn" data-ratio="0.4">4:6</button>
+                <button class="split-pane-btn split-ratio-btn active" data-ratio="0.5">5:5</button>
+                <button class="split-pane-btn split-ratio-btn" data-ratio="0.6">6:4</button>
+                <button class="split-pane-btn split-ratio-btn" data-ratio="0.7">7:3</button>
+                <div class="split-toolbar-sep"></div>
+                <button id="split-close-btn" class="split-pane-btn close-btn">✕ 닫기</button>
             </div>
         </div>
         <div id="overlay">

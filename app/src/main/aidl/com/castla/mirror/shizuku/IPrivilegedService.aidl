@@ -94,4 +94,23 @@ interface IPrivilegedService {
      * Called on each compositionupdate from browser. Serialized on a single thread.
      */
     void injectComposingText(int backspaces, String text, int displayId) = 14;
+
+    /**
+     * Register a binder token to monitor the client's lifecycle.
+     * If the client process dies, the service will clean up and exit.
+     */
+    void registerDeathToken(in IBinder token) = 16;
+
+    /**
+     * Force a virtual display to stay awake by injecting user activity
+     * and waking up the display via PowerManager internal APIs.
+     * Call this when the physical screen turns off.
+     */
+    void wakeUpDisplay(int displayId) = 17;
+
+    /**
+     * Resize an existing virtual display without destroying it.
+     * Activities receive a configuration change instead of being killed.
+     */
+    void resizeVirtualDisplay(int displayId, int width, int height, int densityDpi) = 18;
 }
