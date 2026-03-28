@@ -1,0 +1,50 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { languages, defaultLang, type Lang } from '../../i18n/translations';
+import { useTranslations } from '../../i18n/utils';
+
+export function getStaticPaths() {
+  return Object.keys(languages)
+    .filter((l) => l !== defaultLang)
+    .map((lang) => ({ params: { lang } }));
+}
+
+const { lang } = Astro.params as { lang: Lang };
+const tr = useTranslations(lang);
+---
+
+<BaseLayout title="Privacy Policy - Castla">
+  <section class="container" style="max-width: 800px; padding: 40px 20px;">
+    <h1 style="font-size: 2.5rem; margin-bottom: 1rem; color: var(--blue);">Privacy Policy</h1>
+    <p style="color: var(--text-dim); margin-bottom: 2rem;">Last updated: October 2023</p>
+
+    <div class="glass" style="padding: 30px; line-height: 1.6;">
+      <h2 style="margin-top: 0; color: var(--coral);">1. Introduction</h2>
+      <p style="margin-bottom: 1.5rem; color: var(--text-dim);">
+        Castla ("we", "our", or "us") respects your privacy. This Privacy Policy explains how we handle data when you use the Castla application.
+      </p>
+
+      <h2 style="color: var(--coral);">2. Microphone Permission (RECORD_AUDIO)</h2>
+      <p style="margin-bottom: 1.5rem; color: var(--text-dim);">
+        Castla requires the <strong>RECORD_AUDIO</strong> permission to capture and stream the internal device audio to your Tesla browser during screen mirroring.
+        <br/><br/>
+        <strong>Important:</strong> We do <strong>not</strong> record, store, or transmit your audio data to any external servers, third parties, or cloud services. The audio stream is only transmitted locally over your WiFi network or hotspot directly to the connected Tesla browser, purely for the purpose of mirroring your screen and audio in real-time.
+      </p>
+
+      <h2 style="color: var(--coral);">3. Data Collection and Usage</h2>
+      <p style="margin-bottom: 1.5rem; color: var(--text-dim);">
+        Castla operates locally. We do not collect, store, or share any personal information, usage data, screen captures, or audio recordings. All data transmitted between your device and the Tesla browser remains entirely within your local network.
+      </p>
+
+      <h2 style="color: var(--coral);">4. Changes to This Privacy Policy</h2>
+      <p style="margin-bottom: 1.5rem; color: var(--text-dim);">
+        We may update our Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page. You are advised to review this Privacy Policy periodically for any changes.
+      </p>
+
+      <h2 style="color: var(--coral);">5. Contact Us</h2>
+      <p style="margin-bottom: 0; color: var(--text-dim);">
+        If you have any questions or suggestions about our Privacy Policy, do not hesitate to contact us.
+      </p>
+    </div>
+  </section>
+</BaseLayout>
