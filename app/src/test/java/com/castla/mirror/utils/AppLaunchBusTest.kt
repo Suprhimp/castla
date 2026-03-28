@@ -41,7 +41,7 @@ class AppLaunchBusTest {
 
     @Test
     fun `multiple events are delivered in order`() = runTest {
-        val received = mutableListOf<AppLaunchBus.LaunchRequest>()
+        val received = mutableListOf<AppLaunchRequest>()
         val job = launch {
             AppLaunchBus.events.take(3).toList(received)
         }
@@ -64,7 +64,7 @@ class AppLaunchBusTest {
     fun `tryEmit succeeds with buffer capacity`() {
         // Buffer capacity is 8, so 8 events should all succeed without collector
         repeat(8) { i ->
-            val result = AppLaunchBus.requestLaunch("app$i")
+            AppLaunchBus.requestLaunch("app$i")
             // tryEmit returns Unit, but if it fails internally it drops silently
             // We verify by collecting afterwards
         }
@@ -72,11 +72,11 @@ class AppLaunchBusTest {
 
     @Test
     fun `LaunchRequest data class equality`() {
-        val r1 = AppLaunchBus.LaunchRequest("pkg", "cls")
-        val r2 = AppLaunchBus.LaunchRequest("pkg", "cls")
+        val r1 = AppLaunchRequest("pkg", "cls")
+        val r2 = AppLaunchRequest("pkg", "cls")
         assertEquals(r1, r2)
 
-        val r3 = AppLaunchBus.LaunchRequest("pkg", null)
+        val r3 = AppLaunchRequest("pkg", null)
         assertNotEquals(r1, r3)
     }
 }
