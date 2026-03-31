@@ -66,7 +66,8 @@ class MseDecoder {
                 console.log('[MSE] MediaSource ended');
             });
 
-            this.video.src = URL.createObjectURL(this.mediaSource);
+            this._objectUrl = URL.createObjectURL(this.mediaSource);
+            this.video.src = this._objectUrl;
 
             // Show video element, hide canvas (if using WebCodecs/Fallback)
             this.video.style.display = 'block';
@@ -277,6 +278,10 @@ class MseDecoder {
             }
         }
 
+        if (this._objectUrl) {
+            URL.revokeObjectURL(this._objectUrl);
+            this._objectUrl = null;
+        }
         this.video = null;
         this.mediaSource = null;
         this.sourceBuffer = null;

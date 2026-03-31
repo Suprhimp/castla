@@ -36,7 +36,7 @@ class ShizukuSetup {
             com.castla.mirror.BuildConfig.APPLICATION_ID,
             PrivilegedService::class.java.name
         )
-    ).daemon(false).processNameSuffix("privileged").version(102)
+    ).daemon(false).processNameSuffix("privileged").version(107)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -207,6 +207,22 @@ class ShizukuSetup {
             Log.e(TAG, "restartTetheringWithCgnat failed", e)
             "Exception: ${e.message}"
         }
+    }
+
+    /**
+     * Start WiFi tethering (hotspot) via the privileged service.
+     * Returns true if the request was submitted.
+     */
+    fun startWifiTethering(): Boolean {
+        val result = exec("__HOTSPOT_ON__")
+        Log.i(TAG, "startWifiTethering result: $result")
+        return result != null && result.startsWith("OK")
+    }
+
+    fun stopWifiTethering(): Boolean {
+        val result = exec("__HOTSPOT_OFF__")
+        Log.i(TAG, "stopWifiTethering result: $result")
+        return result != null && result.startsWith("OK")
     }
 
     fun release() {

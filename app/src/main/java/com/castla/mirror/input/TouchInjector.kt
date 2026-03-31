@@ -4,7 +4,6 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
-import com.castla.mirror.server.MirrorServer
 import com.castla.mirror.server.TouchEvent
 
 class TouchInjector(private var displayWidth: Int, private var displayHeight: Int) {
@@ -14,7 +13,6 @@ class TouchInjector(private var displayWidth: Int, private var displayHeight: In
         private const val MAX_POINTERS = 10
     }
 
-    private var useShizuku = false
     private var inputManagerInstance: Any? = null
     private var injectMethod: java.lang.reflect.Method? = null
     
@@ -28,11 +26,6 @@ class TouchInjector(private var displayWidth: Int, private var displayHeight: In
     // Cached objects to avoid allocation on every frame
     private val pointerProperties = Array(MAX_POINTERS) { MotionEvent.PointerProperties() }
     private val pointerCoords = Array(MAX_POINTERS) { MotionEvent.PointerCoords() }
-
-    // Fallback variables for Accessibility
-    private var lastDownX = 0f
-    private var lastDownY = 0f
-    private var lastDownTime = 0L
 
     init {
         tryInitShizuku()
@@ -57,11 +50,9 @@ class TouchInjector(private var displayWidth: Int, private var displayHeight: In
             val getInstance = imClass.getMethod("getInstance")
             inputManagerInstance = getInstance.invoke(null)
             injectMethod = imClass.getMethod("injectInputEvent", android.view.InputEvent::class.java, Int::class.javaPrimitiveType)
-            useShizuku = true
             Log.i(TAG, "Shizuku InputManager initialized")
         } catch (e: Exception) {
-            Log.w(TAG, "Shizuku InputManager unavailable, using Accessibility fallback", e)
-            useShizuku = false
+            Log.w(TAG, "Shizuku InputManager unavailable", e)
         }
     }
 
@@ -128,17 +119,12 @@ class TouchInjector(private var displayWidth: Int, private var displayHeight: In
         }
 
         // Fallback: MediaProjection screen mirroring (main display)
-        if (useShizuku) {
-            injectViaShizuku(event, beforeCount, afterCount, pointerId)
-            
-            // Remove pointer AFTER injection
-            if (event.action == "up") {
-                activePointers.remove(pointerId)
-                pointerOrder.remove(pointerId)
-            }
-        } else {
-            // Simplified fallback for AccessibilityService (only handles single touch tap/swipe)
-            injectViaAccessibility(event, absX, absY)
+        injectViaShizuku(event, beforeCount, afterCount, pointerId)
+
+        // Remove pointer AFTER injection
+        if (event.action == "up") {
+            activePointers.remove(pointerId)
+            pointerOrder.remove(pointerId)
         }
     }
 
@@ -195,36 +181,6 @@ class TouchInjector(private var displayWidth: Int, private var displayHeight: In
             Log.e(TAG, "Failed to inject event", e)
         } finally {
             motionEvent.recycle()
-        }
-    }
-
-    private fun injectViaAccessibility(event: TouchEvent, absX: Float, absY: Float) {
-        val service = InputService.instance ?: return
-
-        when (event.action) {
-            "down" -> {
-                lastDownX = absX
-                lastDownY = absY
-                lastDownTime = SystemClock.uptimeMillis()
-            }
-            "up" -> {
-                val dx = Math.abs(absX - lastDownX)
-                val dy = Math.abs(absY - lastDownY)
-                val dt = SystemClock.uptimeMillis() - lastDownTime
-                
-                if (dx < 50 && dy < 50 && dt < 500) {
-                    service.tap(absX, absY)
-                } else {
-                    // It's a swipe
-                    service.swipe(lastDownX, lastDownY, absX, absY, dt.coerceIn(100, 1000))
-                }
-                
-                activePointers.clear()
-                pointerOrder.clear()
-            }
-            "move" -> {
-                // Accessibility doesn't support real-time tracking, it builds the gesture from start to end
-            }
         }
     }
 

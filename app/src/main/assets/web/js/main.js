@@ -431,6 +431,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.body.dataset.layoutMode = streamPolicy.layoutMode;
         playerShell?.classList.remove('browser-split');
         playerShell?.classList.remove('freeform-split');
+        playerShell?.style.removeProperty('--split-left-width');
 
         if (SPLIT_STRATEGY === 'freeform') {
             // Tell server to close split and restore primary fullscreen
@@ -445,7 +446,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         applyActiveFitModes();
-        requestAnimationFrame(() => sendViewportSize());
+        // Force send full viewport immediately (don't rely on CSS transition timing)
+        if (wasActive && controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            const fullWidth = Math.round(window.innerWidth || 1920);
+            const fullHeight = Math.round(window.innerHeight || 1080);
+            console.log(`[Main] Split closed — forcing full viewport ${fullWidth}x${fullHeight}`);
+            controlSocket.send(JSON.stringify({
+                type: 'viewport',
+                pane: 'primary',
+                width: fullWidth,
+                height: fullHeight,
+                fitMode: getEffectivePrimaryFitMode(),
+                layoutMode: 'single'
+            }));
+        }
     }
 
     function applyStreamPolicy(config = {}) {
@@ -578,6 +592,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function submitBubbleInput() {
         if (!bubbleText) return;
+        // Force-finish any ongoing IME composition (e.g. Korean)
+        bubbleText.blur();
         const text = bubbleText.value;
         if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
             if (text) {
@@ -958,7 +974,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     console.log(`[Main] Server resolution changed pane=${pane} server=${msg.width}x${msg.height} fitMode=${fitMode} locked=${describeViewport(lockedViewport)} split=${browserSplitState.active}`);
                 } else if (msg.type === 'showKeyboard') {
                     if (useBubbleInput) {
-                        const anchor = touchHandler?.lastTap || null;
+                        const anchor = secondaryTouchHandler?.lastTap || touchHandler?.lastTap || null;
                         openInputBubble(anchor);
                     } else focusKeyboardProxy();
                 } else if (msg.type === 'hideKeyboard') {
@@ -1132,6 +1148,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         firstFrameReceived = false;
         clearLaunchTimeout();
 
+        // Clear the previous app's last frame immediately so it doesn't
+        // flash during the transition to the new app
+        clearCanvas();
+
         setTimeout(() => {
             if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 const message = {
@@ -1164,12 +1184,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, 50);
     }
 
+    function clearCanvas() {
+        try {
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        } catch (e) { /* canvas may be using webgl */ }
+        const mseVideo = document.getElementById('mse-video');
+        if (mseVideo) mseVideo.style.opacity = '0';
+        canvas.style.opacity = '0';
+    }
+
     function goHome() {
         isLauncherMode = true;
         clearLaunchTimeout();
         closeInputBubble(true);
         blurKeyboardProxy();
         disableBrowserSplit();
+
+        // Immediately clear the canvas to prevent previous app's screen
+        // from being visible when the launcher is shown
+        clearCanvas();
+
         webLauncher.classList.remove('hidden');
         splitDrawer.style.display = 'none';
         splitDrawer.classList.remove('open');
@@ -1238,15 +1275,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         splitToolbar?.classList.remove('visible');
         clearTimeout(splitToolbarTimer);
     }
-    // Show toolbar on tap anywhere on the player shell
-    playerShell?.addEventListener('click', (e) => {
+    // Show toolbar on double-tap in the top zone — touch passes through to app
+    let lastToolbarTapTime = 0;
+    let lastToolbarTapY = 0;
+    const TOOLBAR_TAP_ZONE_HEIGHT = 48;
+    playerShell?.addEventListener('pointerup', (e) => {
         if (!browserSplitState.active) return;
-        // Don't toggle if clicking toolbar buttons
         if (e.target.closest('#split-pane-toolbar')) return;
-        if (splitToolbar?.classList.contains('visible')) {
-            hideSplitToolbar();
+        // Only respond to taps in the top zone
+        const rect = playerShell.getBoundingClientRect();
+        const relY = e.clientY - rect.top;
+        if (relY > TOOLBAR_TAP_ZONE_HEIGHT) return;
+        const now = Date.now();
+        if (now - lastToolbarTapTime < 400 && Math.abs(relY - lastToolbarTapY) < 30) {
+            if (splitToolbar?.classList.contains('visible')) {
+                hideSplitToolbar();
+            } else {
+                showSplitToolbar();
+            }
+            lastToolbarTapTime = 0;
         } else {
-            showSplitToolbar();
+            lastToolbarTapTime = now;
+            lastToolbarTapY = relY;
         }
     });
 

@@ -1,0 +1,368 @@
+=====================================
+SHORT DESCRIPTION (80 char limit)
+=====================================
+
+<en-US>
+Android Auto alternative for Tesla. Extend your phone screen to Tesla browser.
+</en-US>
+
+<ko-KR>
+테슬라 Android Auto 대안. 폰 화면을 테슬라 브라우저로 확장.
+</ko-KR>
+
+<de-DE>
+Android Auto Alternative für Tesla. Erweitere dein Handy auf Teslas Browser.
+</de-DE>
+
+<es-ES>
+Alternativa a Android Auto para Tesla. Extiende tu pantalla al navegador Tesla.
+</es-ES>
+
+<fr-FR>
+Alternative Android Auto pour Tesla. Étendez votre écran au navigateur Tesla.
+</fr-FR>
+
+<ja-JP>
+Tesla用Android Auto代替。スマホ画面をTeslaブラウザに拡張。
+</ja-JP>
+
+<nl-NL>
+Android Auto alternatief voor Tesla. Breid je scherm uit naar Teslas browser.
+</nl-NL>
+
+<no-NO>
+Android Auto-alternativ for Tesla. Utvid mobilskjermen til Teslas nettleser.
+</no-NO>
+
+<zh-CN>
+特斯拉Android Auto替代方案。手机屏幕扩展到特斯拉浏览器。
+</zh-CN>
+
+
+=====================================
+FULL DESCRIPTION (4000 char limit)
+=====================================
+
+<en-US>
+Tesla doesn't support Android Auto — Castla is the solution. Extend your Android phone screen to Tesla's built-in browser in real-time. No extra hardware, no cables needed.
+
+Use Google Maps, Waze, or any navigation app on Tesla's big screen. Stream Spotify, YouTube Music, and more with audio playing through Tesla.
+
+WITH PRO SPLIT VIEW
+Run two apps side by side on Tesla's display. Navigation on the left, YouTube or Netflix on the right — perfect for passengers to enjoy entertainment while the driver navigates. One screen, two apps, zero compromise.
+
+HOW IT WORKS
+1. Connect your phone and Tesla to the same WiFi (or use phone hotspot)
+2. Tap "Start Mirroring" in the app
+3. Open the URL in Tesla's browser
+4. Enter the 4-digit PIN — done!
+
+FEATURES
+• Real-time screen mirroring with H.264 hardware encoding
+• Touch control — operate your phone directly from Tesla's touchscreen
+• Audio streaming to Tesla (Android 10+)
+• Built-in browser for DRM content (YouTube, Netflix)
+• Split View — two apps side by side on Tesla
+• Virtual Display via Shizuku — apps run independently without showing on your phone
+• Bluetooth Tesla auto-detection with one-tap start
+• PIN & QR code secure connection
+• Home screen widget
+• 9 languages supported
+
+FREE vs PRO
+Free: 720p / 30fps, full features. Watch 1 short ad = 10 free sessions.
+PRO (one-time purchase): 1080p / 60fps, Split View, all apps unlocked, ad-free.
+
+REQUIREMENTS
+• Android 8.0+
+• Tesla with web browser (Model S/3/X/Y)
+• Same WiFi or phone hotspot
+</en-US>
+
+<ko-KR>
+테슬라는 안드로이드 오토를 지원하지 않습니다 — Castla가 해결합니다. 안드로이드 폰 화면을 테슬라 내장 브라우저로 실시간 확장하세요. 별도 하드웨어나 케이블이 필요 없습니다.
+
+네이버지도, 티맵, 카카오내비 등 원하는 내비게이션을 테슬라 대화면에서 편하게 사용하세요. 스포티파이, 유튜브 뮤직 등 음악도 테슬라 스피커로 스트리밍됩니다.
+
+PRO 분할 화면
+테슬라 화면에서 두 앱을 나란히 실행하세요. 왼쪽에는 내비게이션, 오른쪽에는 유튜브나 넷플릭스 — 운전자는 길 안내를 보면서 동승자는 영상을 즐길 수 있습니다. 하나의 화면, 두 개의 앱.
+
+사용 방법
+1. 폰과 테슬라를 같은 WiFi에 연결 (또는 폰 핫스팟 사용)
+2. 앱에서 "미러링 시작" 탭
+3. 테슬라 브라우저에서 URL 열기
+4. 4자리 PIN 입력 — 끝!
+
+주요 기능
+• H.264 하드웨어 인코딩 실시간 화면 미러링
+• 터치 컨트롤 — 테슬라 터치스크린에서 폰 직접 조작
+• 테슬라로 오디오 스트리밍 (Android 10+)
+• YouTube, Netflix 등 DRM 콘텐츠 내장 브라우저
+• 분할 화면 — 테슬라에서 두 앱을 나란히 실행
+• Shizuku 가상 디스플레이 — 폰 화면에 표시 없이 앱 독립 실행
+• 블루투스 테슬라 자동 감지 & 원탭 시작
+• PIN & QR 코드 보안 연결
+• 홈 화면 위젯
+• 9개 언어 지원
+
+무료 vs PRO
+무료: 720p / 30fps, 전 기능. 광고 1회 시청 = 10회 무료.
+PRO (일회성 구매): 1080p / 60fps, 분할 화면, 전체 앱, 광고 없음.
+
+요구 사항
+• Android 8.0 이상
+• 웹 브라우저가 있는 테슬라 (Model S/3/X/Y)
+• 같은 WiFi 또는 폰 핫스팟
+</ko-KR>
+
+<de-DE>
+Tesla unterstützt kein Android Auto — Castla ist die Lösung. Erweitere deinen Android-Bildschirm in Echtzeit auf Teslas Browser. Keine zusätzliche Hardware, keine Kabel nötig.
+
+Nutze Google Maps, Waze oder jede Navi-App auf Teslas großem Bildschirm. Streame Spotify, YouTube Music und mehr über Teslas Lautsprecher.
+
+PRO SPLIT VIEW
+Zwei Apps nebeneinander auf Teslas Display. Links Navigation, rechts YouTube oder Netflix — perfekt für Beifahrer, die sich unterhalten lassen, während der Fahrer navigiert.
+
+SO FUNKTIONIERT ES
+1. Handy und Tesla mit demselben WLAN verbinden (oder Hotspot nutzen)
+2. „Mirroring starten" tippen
+3. URL in Teslas Browser öffnen
+4. 4-stellige PIN eingeben — fertig!
+
+FUNKTIONEN
+• Echtzeit-Spiegelung mit H.264-Hardwarekodierung
+• Touch-Steuerung direkt über Teslas Touchscreen
+• Audio-Streaming zu Tesla (Android 10+)
+• Browser für DRM-Inhalte (YouTube, Netflix)
+• Split View — zwei Apps nebeneinander
+• Virtuelles Display über Shizuku
+• Bluetooth Tesla-Erkennung & Ein-Tipp-Start
+• PIN & QR-Code sichere Verbindung
+• Startbildschirm-Widget
+• 9 Sprachen
+
+KOSTENLOS vs PRO
+Kostenlos: 720p / 30fps, alle Funktionen. 1 Werbung = 10 Sitzungen.
+PRO (Einmalkauf): 1080p / 60fps, Split View, alle Apps, werbefrei.
+
+VORAUSSETZUNGEN
+• Android 8.0+
+• Tesla mit Webbrowser (Model S/3/X/Y)
+• Gleiches WLAN oder Hotspot
+</de-DE>
+
+<es-ES>
+Tesla no soporta Android Auto — Castla es la solución. Extiende la pantalla de tu Android al navegador de Tesla en tiempo real. Sin hardware extra, sin cables.
+
+Usa Google Maps, Waze o cualquier app de navegación en la gran pantalla de Tesla. Escucha Spotify, YouTube Music y más a través de los altavoces de Tesla.
+
+VISTA DIVIDIDA PRO
+Dos apps lado a lado en la pantalla de Tesla. Navegación a la izquierda, YouTube o Netflix a la derecha — perfecto para que los pasajeros disfruten mientras el conductor navega.
+
+CÓMO FUNCIONA
+1. Conecta tu teléfono y Tesla al mismo WiFi (o usa hotspot)
+2. Toca "Iniciar Mirroring"
+3. Abre la URL en el navegador de Tesla
+4. Ingresa el PIN de 4 dígitos — ¡listo!
+
+CARACTERÍSTICAS
+• Mirroring en tiempo real con H.264
+• Control táctil desde la pantalla Tesla
+• Audio streaming a Tesla (Android 10+)
+• Navegador para DRM (YouTube, Netflix)
+• Vista dividida — dos apps lado a lado
+• Pantalla virtual vía Shizuku
+• Detección Bluetooth Tesla & un toque
+• PIN & QR conexión segura
+• Widget de inicio
+• 9 idiomas
+
+GRATIS vs PRO
+Gratis: 720p / 30fps, todas las funciones. 1 anuncio = 10 sesiones gratis.
+PRO (compra única): 1080p / 60fps, vista dividida, todas las apps, sin anuncios.
+
+REQUISITOS
+• Android 8.0+
+• Tesla con navegador (Model S/3/X/Y)
+• Misma red WiFi o hotspot
+</es-ES>
+
+<fr-FR>
+Tesla ne supporte pas Android Auto — Castla est la solution. Étendez votre écran Android au navigateur Tesla en temps réel. Aucun matériel, aucun câble nécessaire.
+
+Utilisez Google Maps, Waze ou toute app de navigation sur le grand écran Tesla. Diffusez Spotify, YouTube Music et plus via les haut-parleurs Tesla.
+
+VUE PARTAGÉE PRO
+Deux apps côte à côte sur l'écran Tesla. Navigation à gauche, YouTube ou Netflix à droite — idéal pour que les passagers profitent du divertissement pendant que le conducteur navigue.
+
+COMMENT ÇA MARCHE
+1. Connectez téléphone et Tesla au même WiFi (ou hotspot)
+2. Appuyez sur « Démarrer le Mirroring »
+3. Ouvrez l'URL dans le navigateur Tesla
+4. Entrez le PIN à 4 chiffres — c'est fait !
+
+FONCTIONNALITÉS
+• Mirroring temps réel avec encodage H.264
+• Contrôle tactile depuis l'écran Tesla
+• Audio streaming vers Tesla (Android 10+)
+• Navigateur DRM (YouTube, Netflix)
+• Vue partagée — deux apps côte à côte
+• Écran virtuel via Shizuku
+• Détection Bluetooth Tesla & un tap
+• PIN & QR code sécurisé
+• Widget d'accueil
+• 9 langues
+
+GRATUIT vs PRO
+Gratuit : 720p / 30fps, toutes fonctions. 1 pub = 10 sessions gratuites.
+PRO (achat unique) : 1080p / 60fps, vue partagée, toutes apps, sans pub.
+
+PRÉREQUIS
+• Android 8.0+
+• Tesla avec navigateur (Model S/3/X/Y)
+• Même WiFi ou hotspot
+</fr-FR>
+
+<ja-JP>
+TeslaはAndroid Autoに非対応 — Castlaが解決します。Androidの画面をTeslaブラウザにリアルタイムで拡張。追加ハードウェアもケーブルも不要。
+
+Googleマップ、Waze、Yahoo!カーナビなど好きなナビアプリをTeslaの大画面で使えます。Spotify、YouTube Musicなどの音楽もTeslaスピーカーからストリーミング。
+
+PRO分割表示
+Tesla画面で2つのアプリを並列実行。左にナビ、右にYouTubeやNetflix — ドライバーはナビを見ながら、同乗者は動画を楽しめます。
+
+使い方
+1. スマホとTeslaを同じWiFiに接続（またはホットスポット）
+2.「ミラーリング開始」をタップ
+3. TeslaブラウザでURLを開く
+4. 4桁PIN入力 — 完了！
+
+機能
+• H.264リアルタイムミラーリング
+• Teslaタッチスクリーンからスマホ操作
+• Teslaへ音声ストリーミング（Android 10+）
+• DRMブラウザ（YouTube、Netflix）
+• 分割表示 — 2アプリ並列
+• Shizuku仮想ディスプレイ
+• Bluetooth Tesla自動検出＆ワンタップ
+• PIN＆QRコード安全接続
+• ホームウィジェット
+• 9言語対応
+
+無料 vs PRO
+無料：720p / 30fps、全機能。広告1回＝10回無料。
+PRO（買い切り）：1080p / 60fps、分割表示、全アプリ、広告なし。
+
+要件
+• Android 8.0+
+• ブラウザ搭載Tesla（Model S/3/X/Y）
+• 同一WiFiまたはホットスポット
+</ja-JP>
+
+<nl-NL>
+Tesla ondersteunt geen Android Auto — Castla is de oplossing. Breid je Android-scherm uit naar Teslas browser in real-time. Geen extra hardware, geen kabels nodig.
+
+Gebruik Google Maps, Waze of elke navigatie-app op Teslas grote scherm. Stream Spotify, YouTube Music en meer via Teslas speakers.
+
+PRO GESPLITST SCHERM
+Twee apps naast elkaar op Teslas display. Links navigatie, rechts YouTube of Netflix — perfect voor passagiers om te genieten terwijl de bestuurder navigeert.
+
+HOE HET WERKT
+1. Verbind telefoon en Tesla met hetzelfde WiFi (of hotspot)
+2. Tik op "Mirroring starten"
+3. Open de URL in Teslas browser
+4. Voer 4-cijferige PIN in — klaar!
+
+FUNCTIES
+• Real-time spiegeling met H.264 hardware-encoding
+• Touch-bediening vanaf Teslas touchscreen
+• Audiostreaming naar Tesla (Android 10+)
+• Browser voor DRM-content (YouTube, Netflix)
+• Gesplitst scherm — twee apps naast elkaar
+• Virtueel display via Shizuku
+• Bluetooth Tesla-detectie & één tik
+• PIN & QR-code veilige verbinding
+• Startscherm-widget
+• 9 talen
+
+GRATIS vs PRO
+Gratis: 720p / 30fps, alle functies. 1 advertentie = 10 gratis sessies.
+PRO (eenmalig): 1080p / 60fps, gesplitst scherm, alle apps, advertentievrij.
+
+VEREISTEN
+• Android 8.0+
+• Tesla met browser (Model S/3/X/Y)
+• Zelfde WiFi of hotspot
+</nl-NL>
+
+<no-NO>
+Tesla støtter ikke Android Auto — Castla er løsningen. Utvid Android-skjermen til Teslas nettleser i sanntid. Ingen ekstra maskinvare, ingen kabler nødvendig.
+
+Bruk Google Maps, Waze eller hvilken som helst navigasjonsapp på Teslas store skjerm. Strøm Spotify, YouTube Music og mer gjennom Teslas høyttalere.
+
+PRO DELT VISNING
+To apper side om side på Teslas skjerm. Navigasjon til venstre, YouTube eller Netflix til høyre — perfekt for passasjerer mens sjåføren navigerer.
+
+SLIK FUNGERER DET
+1. Koble telefon og Tesla til samme WiFi (eller hotspot)
+2. Trykk "Start speiling"
+3. Åpne URL i Teslas nettleser
+4. Skriv inn 4-sifret PIN — ferdig!
+
+FUNKSJONER
+• Sanntids speiling med H.264 maskinvarekoding
+• Berøringskontroll fra Teslas skjerm
+• Lydstrømming til Tesla (Android 10+)
+• Nettleser for DRM (YouTube, Netflix)
+• Delt visning — to apper side om side
+• Virtuell skjerm via Shizuku
+• Bluetooth Tesla-gjenkjenning & ett trykk
+• PIN & QR-kode sikker tilkobling
+• Hjemskjerm-widget
+• 9 språk
+
+GRATIS vs PRO
+Gratis: 720p / 30fps, alle funksjoner. 1 annonse = 10 gratis økter.
+PRO (engangskjøp): 1080p / 60fps, delt visning, alle apper, reklamefri.
+
+KRAV
+• Android 8.0+
+• Tesla med nettleser (Model S/3/X/Y)
+• Samme WiFi eller hotspot
+</no-NO>
+
+<zh-CN>
+特斯拉不支持Android Auto——Castla来解决。将安卓手机屏幕实时扩展到特斯拉内置浏览器。无需额外硬件，无需数据线。
+
+在特斯拉大屏上使用高德地图、百度地图或任何导航应用。通过特斯拉音响畅听Spotify、网易云音乐等。
+
+PRO分屏模式
+在特斯拉屏幕上并排运行两个应用。左边导航，右边YouTube或Netflix——驾驶员专注导航，乘客享受娱乐。一块屏幕，两个应用。
+
+使用方法
+1. 将手机和特斯拉连接到同一WiFi（或手机热点）
+2. 点击"开始镜像"
+3. 在特斯拉浏览器中打开网址
+4. 输入4位PIN码——完成！
+
+功能
+• H.264硬件编码实时镜像
+• 触控操作——直接在特斯拉触摸屏操控手机
+• 音频串流到特斯拉（Android 10+）
+• DRM浏览器（YouTube、Netflix）
+• 分屏——两个应用并排
+• Shizuku虚拟显示
+• 蓝牙自动检测特斯拉 & 一键启动
+• PIN和二维码安全连接
+• 主屏幕小组件
+• 支持9种语言
+
+免费 vs PRO
+免费：720p / 30fps，全功能。看1次广告＝10次免费。
+PRO（一次性购买）：1080p / 60fps，分屏，全部应用，无广告。
+
+要求
+• Android 8.0+
+• 带浏览器的特斯拉（Model S/3/X/Y）
+• 相同WiFi或手机热点
+</zh-CN>

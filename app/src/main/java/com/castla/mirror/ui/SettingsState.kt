@@ -7,12 +7,13 @@ import com.castla.mirror.billing.LicenseManager
 enum class MirroringMode { FULL_SCREEN, APP }
 
 data class StreamSettings(
-    val maxResolution: Resolution = Resolution.RES_1080,
+    val maxResolution: Resolution = Resolution.RES_720,
     val fps: Int = 30,
-    val audioEnabled: Boolean = true,
+    val audioEnabled: Boolean = false,
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
     val targetAppPackage: String = "",
-    val targetAppLabel: String = ""
+    val targetAppLabel: String = "",
+    val autoHotspot: Boolean = false
 ) {
     enum class Resolution(val maxHeight: Int, val label: String) {
         RES_720(720, "720p (Normal)"),
@@ -27,14 +28,15 @@ data class StreamSettings(
         private const val KEY_MIRRORING_MODE = "mirroring_mode"
         private const val KEY_TARGET_APP_PACKAGE = "target_app_package"
         private const val KEY_TARGET_APP_LABEL = "target_app_label"
+        private const val KEY_AUTO_HOTSPOT = "auto_hotspot"
 
         val FPS_OPTIONS = listOf(30, 60)
 
         fun load(context: Context): StreamSettings {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val loadedResolution = try {
-                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.RES_1080.name)!!)
-            } catch (_: Exception) { Resolution.RES_1080 }
+                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.RES_720.name)!!)
+            } catch (_: Exception) { Resolution.RES_720 }
             
             // Auto-select 720p if not premium
             val resolution = if (!LicenseManager.isPremiumNow) {
@@ -50,12 +52,13 @@ data class StreamSettings(
             return StreamSettings(
                 maxResolution = resolution,
                 fps = fps,
-                audioEnabled = prefs.getBoolean(KEY_AUDIO, true),
+                audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
                 mirroringMode = try {
                     MirroringMode.valueOf(prefs.getString(KEY_MIRRORING_MODE, MirroringMode.FULL_SCREEN.name)!!)
                 } catch (_: Exception) { MirroringMode.FULL_SCREEN },
                 targetAppPackage = prefs.getString(KEY_TARGET_APP_PACKAGE, "") ?: "",
-                targetAppLabel = prefs.getString(KEY_TARGET_APP_LABEL, "") ?: ""
+                targetAppLabel = prefs.getString(KEY_TARGET_APP_LABEL, "") ?: "",
+                autoHotspot = prefs.getBoolean(KEY_AUTO_HOTSPOT, false)
             )
         }
 
@@ -67,6 +70,7 @@ data class StreamSettings(
                 .putString(KEY_MIRRORING_MODE, settings.mirroringMode.name)
                 .putString(KEY_TARGET_APP_PACKAGE, settings.targetAppPackage)
                 .putString(KEY_TARGET_APP_LABEL, settings.targetAppLabel)
+                .putBoolean(KEY_AUTO_HOTSPOT, settings.autoHotspot)
                 .apply()
         }
     }

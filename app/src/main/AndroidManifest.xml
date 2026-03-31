@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Needed to capture restricted audio usages (navigation guidance, notifications) via AudioPlaybackCapture -->
+    <uses-permission android:name="android.permission.CAPTURE_AUDIO_OUTPUT" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -17,12 +19,17 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- BLE scanning on API < 31 requires location permission -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
 
     <!-- Query all installed apps for VD launcher grid -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <!-- Shizuku -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- Advertising ID for AdMob -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
     <!-- CompanionDeviceManager: Tesla auto-detection -->
     <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
@@ -38,6 +45,11 @@
         android:theme="@style/Theme.Castla"
         android:localeConfig="@xml/locales_config"
         android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- AdMob App ID (replace with your real ID from AdMob console) -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-8785907922784819~1654827242" />
 
         <activity
             android:name=".MainActivity"
@@ -91,18 +103,6 @@
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
-        </service>
-
-        <service
-            android:name=".input.InputService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_config" />
         </service>
 
         <!-- Shizuku provider -->
