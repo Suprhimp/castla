@@ -57,16 +57,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   <header>
     <nav class="nav-bar container">
       <a href={localePath(lang, '/')} class="nav-logo">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-          <defs>
-            <linearGradient id="nav-logo-g" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#FF5252"/>
-              <stop offset="100%" stop-color="#2979FF"/>
-            </linearGradient>
-          </defs>
-          <rect width="32" height="32" rx="8" fill="#0A0A0A"/>
-          <text x="16" y="23" font-family="system-ui" font-size="20" font-weight="bold" fill="url(#nav-logo-g)" text-anchor="middle">C</text>
-        </svg>
+        <img src="/favicon.svg" alt="Castla" width="32" height="32" />
         <span class="gradient-text">Castla</span>
       </a>
 
