@@ -9,10 +9,25 @@ const tr = useTranslations(lang);
 
 <section>
   <div class="container" style="max-width:760px;">
-    <h1 style="font-size:2.4rem; font-weight:800; margin-bottom:12px;">
-      <span class="gradient-text">{tr('setup.title')}</span>
-    </h1>
-    <p class="subtitle">{tr('setup.desc')}</p>
+    <!-- Header with logo -->
+    <div class="setup-header" style="display:flex; align-items:center; gap:14px; margin-bottom:16px;">
+      <div style="width:48px; height:48px; border-radius:14px; background:#0A0A0A; border:1px solid rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+          <defs>
+            <linearGradient id="logo-g" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#FF5252"/>
+              <stop offset="100%" stop-color="#2979FF"/>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="8" fill="#0A0A0A"/>
+          <text x="16" y="23" font-family="system-ui" font-size="20" font-weight="bold" fill="url(#logo-g)" text-anchor="middle">C</text>
+        </svg>
+      </div>
+      <h1 style="font-size:clamp(1.5rem, 5vw, 2.2rem); font-weight:800; line-height:1.2; color:var(--text);">
+        {tr('setup.title')}
+      </h1>
+    </div>
+    <p class="subtitle" style="font-size:clamp(0.9rem, 3vw, 1.05rem); line-height:1.8;">{tr('setup.desc')}</p>
 
     <!-- Step 1 -->
     <div class="glass" style="margin-bottom:24px;">
@@ -21,7 +36,7 @@ const tr = useTranslations(lang);
           <h3>{tr('setup.1.title')}</h3>
           <p>{tr('setup.1.desc')}</p>
           <p style="margin-top:12px;">
-            <a href="https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api" class="btn btn-primary" style="font-size:0.9rem; padding:10px 20px;">
+            <a href="https://github.com/RikkaApps/Shizuku/releases" class="btn btn-primary" style="font-size:0.9rem; padding:10px 20px;">
               {tr('setup.1.btn')}
             </a>
           </p>

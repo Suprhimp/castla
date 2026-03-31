@@ -30,7 +30,7 @@ class VideoStreamSocket(
                 if (closed) break
                 send(data)
                 framesSent++
-                if (framesSent == 1L || framesSent % 100 == 0L) {
+                if (framesSent == 1L || framesSent % 1000 == 0L) {
                     Log.i(TAG, "Sent frame #$framesSent, size=${data.size}")
                 }
             } catch (_: InterruptedException) {

@@ -1,5 +1,6 @@
 package com.castla.mirror.shizuku;
 
+import android.os.ParcelFileDescriptor;
 import android.view.Surface;
 
 interface IPrivilegedService {
@@ -121,4 +122,29 @@ interface IPrivilegedService {
      * This is the scrcpy "screen off" approach.
      */
     void setPhysicalDisplayPower(boolean on) = 19;
+
+    /**
+     * Start capturing ALL system audio via REMOTE_SUBMIX (requires shell uid).
+     * Returns a ParcelFileDescriptor that streams raw PCM Int16 LE, 48kHz stereo.
+     * The caller reads from this pipe. Returns null on failure.
+     */
+    ParcelFileDescriptor startSystemAudioCapture(int sampleRate, int channels) = 20;
+
+    /**
+     * Stop the system audio capture started by startSystemAudioCapture().
+     */
+    void stopSystemAudioCapture() = 21;
+
+    /**
+     * Start WiFi tethering (hotspot) using ConnectivityManager/TetheringManager
+     * reflection from the privileged process (shell uid has TETHER_PRIVILEGED).
+     * Returns true if the request was submitted successfully.
+     */
+    boolean startWifiTethering() = 22;
+
+    /**
+     * Stop WiFi tethering (hotspot).
+     * Returns true if the request was submitted successfully.
+     */
+    boolean stopWifiTethering() = 23;
 }

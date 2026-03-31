@@ -16,6 +16,8 @@ class TouchHandler {
         this.pendingMoves = new Map(); // pointerId -> {action, x, y}
         this.rafId = null;
         this.mouseDown = false;
+        this._pointerIdMap = new Map(); // browser pointerId -> android pointerId (0-31)
+        this._nextPointerId = 0;
 
         // Last tap position (viewport coords) — used by Bubble Composer
         this.lastTap = null;
@@ -25,25 +27,31 @@ class TouchHandler {
         this._view = new DataView(this._buf);
 
         this.bindEvents();
-        this.startRAFLoop();
     }
 
     bindEvents() {
+        // Store bound handlers so we can remove them in destroy()
+        this._handlers = [];
+        const addEvent = (target, type, fn, opts) => {
+            target.addEventListener(type, fn, opts);
+            this._handlers.push({ target, type, fn, opts });
+        };
+
         // Prefer Pointer Events (better coalescing, pressure support)
         if (window.PointerEvent) {
-            this.canvas.addEventListener('pointerdown', (e) => {
+            addEvent(this.canvas, 'pointerdown', (e) => {
                 e.preventDefault();
                 this._onPointer(e, TouchHandler.ACTION_DOWN);
             });
-            this.canvas.addEventListener('pointermove', (e) => {
+            addEvent(this.canvas, 'pointermove', (e) => {
                 e.preventDefault();
                 this._onPointer(e, TouchHandler.ACTION_MOVE);
             });
-            this.canvas.addEventListener('pointerup', (e) => {
+            addEvent(this.canvas, 'pointerup', (e) => {
                 e.preventDefault();
                 this._onPointer(e, TouchHandler.ACTION_UP);
             });
-            this.canvas.addEventListener('pointercancel', (e) => {
+            addEvent(this.canvas, 'pointercancel', (e) => {
                 e.preventDefault();
                 this._onPointer(e, TouchHandler.ACTION_UP);
             });
@@ -51,59 +59,73 @@ class TouchHandler {
             this.canvas.style.touchAction = 'none';
         } else {
             // Fallback: Touch events
-            this.canvas.addEventListener('touchstart', (e) => this._onTouch(e, TouchHandler.ACTION_DOWN), { passive: false });
-            this.canvas.addEventListener('touchmove', (e) => this._onTouch(e, TouchHandler.ACTION_MOVE), { passive: false });
-            this.canvas.addEventListener('touchend', (e) => this._onTouch(e, TouchHandler.ACTION_UP), { passive: false });
-            this.canvas.addEventListener('touchcancel', (e) => this._onTouch(e, TouchHandler.ACTION_UP), { passive: false });
+            addEvent(this.canvas, 'touchstart', (e) => this._onTouch(e, TouchHandler.ACTION_DOWN), { passive: false });
+            addEvent(this.canvas, 'touchmove', (e) => this._onTouch(e, TouchHandler.ACTION_MOVE), { passive: false });
+            addEvent(this.canvas, 'touchend', (e) => this._onTouch(e, TouchHandler.ACTION_UP), { passive: false });
+            addEvent(this.canvas, 'touchcancel', (e) => this._onTouch(e, TouchHandler.ACTION_UP), { passive: false });
         }
 
         // Mouse fallback for desktop testing
         if (!window.PointerEvent) {
-            this.canvas.addEventListener('mousedown', (e) => {
+            addEvent(this.canvas, 'mousedown', (e) => {
                 this.mouseDown = true;
                 this._sendMouse(e, TouchHandler.ACTION_DOWN);
             });
-            this.canvas.addEventListener('mousemove', (e) => {
+            addEvent(this.canvas, 'mousemove', (e) => {
                 if (this.mouseDown) this._sendMouse(e, TouchHandler.ACTION_MOVE);
             });
-            this.canvas.addEventListener('mouseup', (e) => {
+            addEvent(this.canvas, 'mouseup', (e) => {
                 this.mouseDown = false;
                 this._sendMouse(e, TouchHandler.ACTION_UP);
             });
         }
     }
 
-    startRAFLoop() {
-        const tick = () => {
-            // Flush coalesced move events — one per pointer per frame
+    /** Schedule a single rAF flush — only runs when there are pending moves */
+    _scheduleFlush() {
+        if (this.rafId !== null) return; // already scheduled
+        this.rafId = requestAnimationFrame(() => {
+            this.rafId = null;
             for (const [id, data] of this.pendingMoves) {
                 this._sendBinary(data.action, id, data.x, data.y);
             }
             this.pendingMoves.clear();
-            this.rafId = requestAnimationFrame(tick);
-        };
-        this.rafId = requestAnimationFrame(tick);
+        });
+    }
+
+    _mapPointerId(browserId, actionCode) {
+        if (actionCode === TouchHandler.ACTION_DOWN) {
+            if (!this._pointerIdMap.has(browserId)) {
+                this._pointerIdMap.set(browserId, this._nextPointerId % 32);
+                this._nextPointerId++;
+            }
+        }
+        const mapped = this._pointerIdMap.get(browserId) ?? 0;
+        if (actionCode === TouchHandler.ACTION_UP) {
+            this._pointerIdMap.delete(browserId);
+        }
+        return mapped;
     }
 
     _onPointer(event, actionCode) {
         const rect = this.canvas.getBoundingClientRect();
         const coords = this._toNormalized(event.clientX, event.clientY, rect);
+        const pid = this._mapPointerId(event.pointerId, actionCode);
 
         if (actionCode === TouchHandler.ACTION_UP && coords.inBounds) {
             this.lastTap = { clientX: event.clientX, clientY: event.clientY, ts: Date.now() };
         }
 
         if (actionCode === TouchHandler.ACTION_MOVE) {
-            // Coalesce: only store latest position per pointer, sent on next rAF
             if (coords.inBounds) {
-                this.pendingMoves.set(event.pointerId, {
+                this.pendingMoves.set(pid, {
                     action: actionCode, x: coords.x, y: coords.y
                 });
+                this._scheduleFlush();
             }
         } else {
-            // down/up: send immediately
             if (coords.inBounds || actionCode === TouchHandler.ACTION_UP) {
-                this._sendBinary(actionCode, event.pointerId, coords.x, coords.y);
+                this._sendBinary(actionCode, pid, coords.x, coords.y);
             }
         }
     }
@@ -120,14 +142,16 @@ class TouchHandler {
                 this.lastTap = { clientX: touch.clientX, clientY: touch.clientY, ts: Date.now() };
             }
 
+            const tid = this._mapPointerId(touch.identifier, actionCode);
             if (actionCode === TouchHandler.ACTION_MOVE) {
                 if (coords.inBounds) {
-                    this.pendingMoves.set(touch.identifier, {
+                    this.pendingMoves.set(tid, {
                         action: actionCode, x: coords.x, y: coords.y
                     });
+                    this._scheduleFlush();
                 }
             } else if (coords.inBounds || actionCode === TouchHandler.ACTION_UP) {
-                this._sendBinary(actionCode, touch.identifier, coords.x, coords.y);
+                this._sendBinary(actionCode, tid, coords.x, coords.y);
             }
         }
     }
@@ -143,6 +167,7 @@ class TouchHandler {
         if (actionCode === TouchHandler.ACTION_MOVE) {
             if (coords.inBounds) {
                 this.pendingMoves.set(0, { action: actionCode, x: coords.x, y: coords.y });
+                this._scheduleFlush();
             }
         } else if (coords.inBounds || actionCode === TouchHandler.ACTION_UP) {
             this._sendBinary(actionCode, 0, coords.x, coords.y);
@@ -202,6 +227,7 @@ class TouchHandler {
             if (this._logCount++ < 5) console.warn('[Touch] Socket not open, state:', this.controlSocket?.readyState);
             return;
         }
+        if (action !== 2) console.log(`[Touch] ${this.pane} action=${action} id=${id} x=${x.toFixed(3)} y=${y.toFixed(3)}`);
         this._view.setUint8(0, action);
         this._view.setUint8(1, id & 0xFF);
         this._view.setFloat32(2, x, true); // little-endian
@@ -216,5 +242,14 @@ class TouchHandler {
             this.rafId = null;
         }
         this.pendingMoves.clear();
+        // Remove all event listeners
+        if (this._handlers) {
+            for (const h of this._handlers) {
+                h.target.removeEventListener(h.type, h.fn, h.opts);
+            }
+            this._handlers = [];
+        }
+        this._pointerIdMap.clear();
+        this._nextPointerId = 0;
     }
 }

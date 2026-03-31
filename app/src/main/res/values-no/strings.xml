@@ -17,6 +17,11 @@
     <string name="toast_bluetooth_permission_missing">Mangler Bluetooth-tillatelse. Automatisk gjenkjenning fungerer kanskje ikke.</string>
     <string name="toast_tesla_paired_auto_detect">Tesla paret! Automatisk gjenkjenning aktivert.</string>
     <string name="toast_tesla_auto_detect_disabled">Tesla automatisk gjenkjenning deaktivert</string>
+    <string name="title_ble_fallback">BLE Reserveskanner</string>
+    <string name="desc_ble_fallback">Skanner etter Tesla BLE-signaler som reservedeteksjon</string>
+    <string name="toast_ble_scan_enabled">BLE reserveskanner aktivert</string>
+    <string name="toast_ble_scan_disabled">BLE reserveskanner deaktivert</string>
+    <string name="toast_ble_permission_denied">BLE-skannetillatelse kreves</string>
     <string name="toast_requesting_screen_capture">Ber om skjermopptak...</string>
     <string name="toast_error">Feil: %s</string>
 
@@ -30,9 +35,9 @@
     <string name="desc_tesla_auto_detect_on">Du vil få et varsel når Tesla kobler til</string>
     <string name="desc_tesla_auto_detect_off">Få varsel når din Tesla er i nærheten</string>
     <string name="status_streaming_active">Strømming aktiv</string>
+    <string name="status_preparing">Forbereder…</string>
     <string name="status_ready_to_stream">Klar til å strømme</string>
     <string name="title_open_tesla_browser">Åpne Tesla-nettleseren</string>
-    <string name="label_enter_pin">SKRIV INN PIN</string>
     <string name="title_tesla_setup_required">Tesla-oppsett kreves</string>
     <string name="desc_shizuku_install_required">Tesla-nettleseren trenger Shizuku for å koble til.\nTrykk nedenfor for å se hvordan du installerer Shizuku.</string>
     <string name="btn_how_to_install_shizuku">Hvordan installere Shizuku</string>
@@ -40,10 +45,41 @@
     <string name="desc_shizuku_setup_steps">1. Innstillinger &gt; Om telefonen &gt; Programvareinformasjon\n   &gt; Trykk på byggnummeret 7 ganger\n2. Innstillinger &gt; Utvikleralternativer\n   &gt; Trådløs feilsøking &gt; PÅ\n3. Åpne Shizuku &gt; \"Start via trådløs feilsøking\"</string>
     <string name="btn_open_shizuku">Åpne Shizuku</string>
     <string name="status_shizuku_running_setup">Shizuku kjører. Setter opp Tesla-tilkobling...</string>
+    <string name="desc_shizuku_permission_required">Shizuku kjører, men Castla har ikke tillatelse ennå.\nUten tillatelse er kun grunnleggende skjermspeiling tilgjengelig — berøringsinndata og appstart vil ikke fungere.</string>
+    <string name="btn_grant_shizuku_permission">Gi Shizuku-tillatelse</string>
     <string name="btn_stop_mirroring">Stopp speiling</string>
     <string name="btn_start_mirroring">Start speiling</string>
     <string name="title_how_to_use">Slik bruker du det</string>
-    <string name="desc_how_to_use">1. Koble telefon og Tesla til samme WiFi\n2. Trykk på \"Start speiling\" ovenfor\n3. Åpne URL-en i Teslas nettleser\n4. Skriv inn den 4-sifrede PIN-koden\n5. Telefonskjermen din vil vises på Tesla</string>
+    <string name="desc_how_to_use">1. Koble telefon og Tesla til samme WiFi\n2. Trykk på \"Start speiling\" ovenfor\n3. Åpne URL-en i Teslas nettleser\n4. Telefonskjermen din vil vises på Tesla</string>
     <string name="title_network_setup_log">Nettverksoppsettlogg</string>
     <string name="btn_copy">Kopier</string>
+
+    <string name="title_free_mirroring">Gratis speiling</string>
+    <string name="desc_free_credits">%d økter gjenstår</string>
+    <string name="desc_no_credits">Se en annonse for å få 10 gratis økter</string>
+    <string name="btn_watch_ad">Se annonse — Få 10 gratis økter</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_back">Tilbake</string>
+    <string name="settings_title">Innstillinger</string>
+    <string name="settings_stop_streaming_warning">Stopp strømmingen for å endre innstillinger</string>
+    <string name="thermal_warning_light">Enheten er varm — kvaliteten er noe redusert</string>
+    <string name="thermal_warning_moderate">Enheten blir varm — kvaliteten er redusert for å unngå overoppheting</string>
+    <string name="thermal_warning_critical">Enheten er veldig varm — kvaliteten er kraftig redusert</string>
+    <string name="thermal_warning_emergency">Enheten overopphetes — lyd deaktivert, kvalitet på minimum</string>
+    <string name="settings_max_resolution">Maks. oppløsning</string>
+    <string name="settings_frame_rate">Bildefrekvens</string>
+    <string name="settings_audio_experimental">Lyd (Eksperimentell)</string>
+    <string name="settings_stream_device_audio">Strøm enhetslyd</string>
+    <string name="settings_audio_description">Krever Android 10+. Fanger opp systemlyd.</string>
+    <string name="settings_unlock_all_features">Lås opp alle funksjoner</string>
+    <string name="settings_pro_description">1080p, 60fps og mer</string>
+    <string name="settings_upgrade">Oppgrader</string>
+    <string name="settings_current_config">Gjeldende konfigurasjon</string>
+    <string name="settings_full_screen">Fullskjerm</string>
+    <string name="settings_audio_on">, lyd på</string>
+    <string name="settings_auto_bitrate">Automatisk bitrate</string>
+    <string name="settings_app_mode">App: %s</string>
+    <string name="settings_res_720">720p (Normal)</string>
+    <string name="settings_res_1080">1080p (Høy)</string>
 </resources>

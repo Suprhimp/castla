@@ -17,6 +17,11 @@
     <string name="toast_bluetooth_permission_missing">Bluetooth権限がありません。自動検出が機能しない可能性があります。</string>
     <string name="toast_tesla_paired_auto_detect">Teslaがペアリングされました！自動検出が有効です。</string>
     <string name="toast_tesla_auto_detect_disabled">Tesla自動検出が無効化されました</string>
+    <string name="title_ble_fallback">BLEフォールバックスキャナー</string>
+    <string name="desc_ble_fallback">バックアップ検出としてTesla BLE信号をスキャンします</string>
+    <string name="toast_ble_scan_enabled">BLEフォールバックスキャナーが有効になりました</string>
+    <string name="toast_ble_scan_disabled">BLEフォールバックスキャナーが無効になりました</string>
+    <string name="toast_ble_permission_denied">BLEスキャン権限が必要です</string>
     <string name="toast_requesting_screen_capture">画面キャプチャを要求しています...</string>
     <string name="toast_error">エラー: %s</string>
 
@@ -30,9 +35,9 @@
     <string name="desc_tesla_auto_detect_on">Tesla接続時に通知を受け取ります</string>
     <string name="desc_tesla_auto_detect_off">Teslaが近くにあるときに通知を受け取ります</string>
     <string name="status_streaming_active">ストリーミング中</string>
+    <string name="status_preparing">準備中…</string>
     <string name="status_ready_to_stream">ストリーミング準備完了</string>
     <string name="title_open_tesla_browser">Teslaブラウザを開く</string>
-    <string name="label_enter_pin">PINを入力</string>
     <string name="title_tesla_setup_required">Teslaの設定が必要です</string>
     <string name="desc_shizuku_install_required">Teslaブラウザとの接続にはShizukuが必要です。\nインストール方法は下をタップしてください。</string>
     <string name="btn_how_to_install_shizuku">Shizukuのインストール方法</string>
@@ -40,10 +45,41 @@
     <string name="desc_shizuku_setup_steps">1. 設定 &gt; 端末情報 &gt; ソフトウェア情報\n   &gt; ビルド番号を7回タップ\n2. 設定 &gt; 開発者向けオプション\n   &gt; ワイヤレスデバッグ &gt; オン\n3. Shizukuを開く &gt; \"ワイヤレスデバッグで起動\"</string>
     <string name="btn_open_shizuku">Shizukuを開く</string>
     <string name="status_shizuku_running_setup">Shizukuが実行中です。Teslaとの接続をセットアップしています...</string>
+    <string name="desc_shizuku_permission_required">Shizukuは実行中ですが、Castlaにはまだ権限が付与されていません。\n権限がないと、基本的な画面ミラーリングのみ利用可能で、タッチ入力やアプリの起動は動作しません。</string>
+    <string name="btn_grant_shizuku_permission">Shizuku権限を付与</string>
     <string name="btn_stop_mirroring">ミラーリングを停止</string>
     <string name="btn_start_mirroring">ミラーリングを開始</string>
     <string name="title_how_to_use">使い方</string>
-    <string name="desc_how_to_use">1. スマートフォンとTeslaを同じWiFiに接続します\n2. 上の「ミラーリングを開始」をタップします\n3. TeslaのブラウザでURLを開きます\n4. 4桁のPINを入力します\n5. スマートフォンの画面がTeslaに表示されます</string>
+    <string name="desc_how_to_use">1. スマートフォンとTeslaを同じWiFiに接続します\n2. 上の「ミラーリングを開始」をタップします\n3. TeslaのブラウザでURLを開きます\n4. スマートフォンの画面がTeslaに表示されます</string>
     <string name="title_network_setup_log">ネットワーク設定ログ</string>
     <string name="btn_copy">コピー</string>
+
+    <string name="title_free_mirroring">無料ミラーリング</string>
+    <string name="desc_free_credits">残り%d回のセッション</string>
+    <string name="desc_no_credits">広告を視聴して無料セッション10回を獲得</string>
+    <string name="btn_watch_ad">広告を見る — 無料セッション10回を獲得</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_back">戻る</string>
+    <string name="settings_title">設定</string>
+    <string name="settings_stop_streaming_warning">設定を変更するにはストリーミングを停止してください</string>
+    <string name="thermal_warning_light">デバイスが温かくなっています — 画質がわずかに低下しました</string>
+    <string name="thermal_warning_moderate">デバイスが熱くなっています — 過熱防止のため画質を下げました</string>
+    <string name="thermal_warning_critical">デバイスが非常に熱くなっています — 画質を大幅に低下させました</string>
+    <string name="thermal_warning_emergency">デバイスが過熱しています — オーディオ無効化、最低画質に変更</string>
+    <string name="settings_max_resolution">最大解像度</string>
+    <string name="settings_frame_rate">フレームレート</string>
+    <string name="settings_audio_experimental">オーディオ（実験的）</string>
+    <string name="settings_stream_device_audio">デバイスオーディオをストリーミング</string>
+    <string name="settings_audio_description">Android 10以上が必要。システム出力をキャプチャします。</string>
+    <string name="settings_unlock_all_features">すべての機能をロック解除</string>
+    <string name="settings_pro_description">1080p、60fpsなど</string>
+    <string name="settings_upgrade">アップグレード</string>
+    <string name="settings_current_config">現在の設定</string>
+    <string name="settings_full_screen">フルスクリーン</string>
+    <string name="settings_audio_on">、オーディオオン</string>
+    <string name="settings_auto_bitrate">自動ビットレート</string>
+    <string name="settings_app_mode">アプリ: %s</string>
+    <string name="settings_res_720">720p（標準）</string>
+    <string name="settings_res_1080">1080p（高画質）</string>
 </resources>

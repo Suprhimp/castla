@@ -55,14 +55,31 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 </head>
 <body>
   <header>
-    <nav class="container" style="display:flex; align-items:center; justify-content:space-between; padding-top:20px; padding-bottom:20px;">
-      <a href={localePath(lang, '/')} style="font-size:1.4rem; font-weight:800; text-decoration:none;">
+    <nav class="nav-bar container">
+      <a href={localePath(lang, '/')} class="nav-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+          <defs>
+            <linearGradient id="nav-logo-g" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#FF5252"/>
+              <stop offset="100%" stop-color="#2979FF"/>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="8" fill="#0A0A0A"/>
+          <text x="16" y="23" font-family="system-ui" font-size="20" font-weight="bold" fill="url(#nav-logo-g)" text-anchor="middle">C</text>
+        </svg>
         <span class="gradient-text">Castla</span>
       </a>
-      <div style="display:flex; gap:24px; align-items:center; font-size:0.95rem;">
-        <a href={localePath(lang, '/setup')} style="color:var(--text-dim);">{tr('nav.setup')}</a>
-        <a href={localePath(lang, '/guide')} style="color:var(--text-dim);">{tr('nav.guide')}</a>
-        <a href={localePath(lang, '/blog')} style="color:var(--text-dim);">{tr('nav.blog')}</a>
+
+      <!-- Hamburger button (mobile) -->
+      <button class="nav-hamburger" id="nav-toggle" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+
+      <!-- Nav links -->
+      <div class="nav-links" id="nav-links">
+        <a href={localePath(lang, '/setup')}>{tr('nav.setup')}</a>
+        <a href={localePath(lang, '/guide')}>{tr('nav.guide')}</a>
+        <a href={localePath(lang, '/blog')}>{tr('nav.blog')}</a>
 
         <!-- Language switcher -->
         <div class="lang-switcher" style="position:relative;">
@@ -97,6 +114,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   </footer>
 
   <script is:inline>
+    // Hamburger menu toggle
+    document.getElementById('nav-toggle')?.addEventListener('click', () => {
+      const links = document.getElementById('nav-links');
+      const toggle = document.getElementById('nav-toggle');
+      if (links && toggle) {
+        links.classList.toggle('open');
+        toggle.classList.toggle('open');
+      }
+    });
+
+    // Language dropdown
     document.getElementById('lang-btn')?.addEventListener('click', () => {
       const dd = document.getElementById('lang-dropdown');
       if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';

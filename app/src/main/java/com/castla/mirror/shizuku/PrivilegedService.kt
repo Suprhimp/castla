@@ -5,6 +5,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -18,6 +22,8 @@ import java.lang.reflect.Method
  * Creates virtual displays and injects input events for the mirroring pipeline.
  */
 class PrivilegedService : IPrivilegedService.Stub() {
+
+    private val tetheringExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     companion object {
         private const val TAG = "PrivilegedService"
@@ -233,6 +239,10 @@ class PrivilegedService : IPrivilegedService.Stub() {
     }
 
     override fun execCommand(command: String): String {
+        // Handle special internal commands for hotspot control
+        if (command == "__HOTSPOT_ON__") return doStartWifiTethering()
+        if (command == "__HOTSPOT_OFF__") return doStopWifiTethering()
+
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
             val output = process.inputStream.bufferedReader().readText()
@@ -243,6 +253,165 @@ class PrivilegedService : IPrivilegedService.Stub() {
         } catch (e: Exception) {
             Log.e(TAG, "exec failed: $command", e)
             ""
+        }
+    }
+
+    private fun doStartWifiTethering(): String {
+        val log = StringBuilder()
+        log.appendLine("=== startWifiTethering ===")
+
+        // Pre-step: Disable carrier DUN provisioning check
+        try {
+            val r = execCommand("settings put global tether_dun_required 0")
+            log.appendLine("DUN bypass: $r")
+        } catch (_: Exception) {}
+
+        // Method 1: TetheringManager via new instance with correct package name
+        // getSystemService("tethering") caches a TetheringManager with pkg="android",
+        // but TetheringService requires pkg to match UID 2000 ("com.android.shell").
+        // So we create a fresh TetheringManager via its constructor.
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            try {
+                val ctx = shellContext
+                if (ctx == null) {
+                    log.appendLine("shellContext is null!")
+                } else {
+                    val tmObj = createTetheringManager()
+                    log.appendLine("TetheringManager created: ${tmObj?.javaClass?.name}")
+
+                    if (tmObj != null) {
+                        val tmClass = tmObj.javaClass
+
+                        // Build TetheringRequest with entitlement bypass
+                        val requestBuilderClass = Class.forName("android.net.TetheringManager\$TetheringRequest\$Builder")
+                        val builder = requestBuilderClass
+                            .getConstructor(Int::class.javaPrimitiveType)
+                            .newInstance(0) // TETHERING_WIFI = 0
+                        try {
+                            requestBuilderClass.getMethod("setExemptFromEntitlementCheck", Boolean::class.javaPrimitiveType)
+                                .invoke(builder, true)
+                            log.appendLine("setExemptFromEntitlementCheck: OK")
+                        } catch (e: Exception) {
+                            log.appendLine("setExemptFromEntitlementCheck: ${e.message}")
+                        }
+                        try {
+                            requestBuilderClass.getMethod("setShouldShowEntitlementUi", Boolean::class.javaPrimitiveType)
+                                .invoke(builder, false)
+                            log.appendLine("setShouldShowEntitlementUi: OK")
+                        } catch (e: Exception) {
+                            log.appendLine("setShouldShowEntitlementUi: ${e.message}")
+                        }
+                        val request = requestBuilderClass.getMethod("build").invoke(builder)
+                        log.appendLine("TetheringRequest built: ${request.javaClass.name}")
+
+                        // Create StartTetheringCallback proxy
+                        val callbackClass = Class.forName("android.net.TetheringManager\$StartTetheringCallback")
+                        val callback = java.lang.reflect.Proxy.newProxyInstance(
+                            callbackClass.classLoader,
+                            arrayOf(callbackClass)
+                        ) { _, method, args ->
+                            when (method.name) {
+                                "onTetheringStarted" -> Log.i(TAG, "HOTSPOT: started successfully!")
+                                "onTetheringFailed" -> Log.e(TAG, "HOTSPOT: failed, error=${args?.getOrNull(0)}")
+                            }
+                            null
+                        }
+
+                        // Try TetheringRequest overload first
+                        val requestClass = Class.forName("android.net.TetheringManager\$TetheringRequest")
+                        val startMethod = tmClass.methods.find { m ->
+                            m.name == "startTethering" && m.parameterTypes.size == 3 &&
+                                m.parameterTypes[0] == requestClass
+                        }
+                        if (startMethod != null) {
+                            val executor = tetheringExecutor
+                            startMethod.invoke(tmObj, request, executor, callback)
+                            log.appendLine("SUCCESS: startTethering(TetheringRequest) invoked")
+                            Log.i(TAG, log.toString())
+                            return "OK\n$log"
+                        }
+
+                        // Fallback: int overload
+                        val intMethod = tmClass.methods.find { m ->
+                            m.name == "startTethering" && m.parameterTypes.size == 3 &&
+                                m.parameterTypes[0] == Int::class.javaPrimitiveType
+                        }
+                        if (intMethod != null) {
+                            val executor = tetheringExecutor
+                            intMethod.invoke(tmObj, 0, executor, callback)
+                            log.appendLine("SUCCESS: startTethering(int) invoked")
+                            Log.i(TAG, log.toString())
+                            return "OK\n$log"
+                        }
+
+                        log.appendLine("FAIL: no startTethering method found")
+                    }
+                }
+            } catch (e: Exception) {
+                log.appendLine("TetheringManager EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+                val cause = e.cause
+                if (cause != null) log.appendLine("  cause: ${cause.javaClass.simpleName}: ${cause.message}")
+            }
+        }
+
+        log.appendLine("ALL METHODS FAILED")
+        Log.e(TAG, log.toString())
+        return "FAIL\n$log"
+    }
+
+    /**
+     * Create a TetheringManager with correct caller package name (com.android.shell)
+     * instead of using the cached one from getSystemService which reports "android".
+     */
+    private fun createTetheringManager(): Any? {
+        val ctx = shellContext ?: return null
+        if (android.os.Build.VERSION.SDK_INT < 30) return null
+        val tmClass = Class.forName("android.net.TetheringManager")
+        val smClass = Class.forName("android.os.ServiceManager")
+        val getService = smClass.getMethod("getService", String::class.java)
+        val binder = getService.invoke(null, "tethering") as? android.os.IBinder ?: return null
+
+        val constructor = tmClass.declaredConstructors.find { c ->
+            c.parameterTypes.size == 2 && c.parameterTypes[0] == android.content.Context::class.java
+        }
+        return if (constructor != null) {
+            constructor.isAccessible = true
+            constructor.newInstance(ctx, java.util.function.Supplier<android.os.IBinder> { binder })
+        } else {
+            // Fallback: patch the cached instance
+            val tm = ctx.getSystemService("tethering") ?: return null
+            try {
+                val field = tmClass.getDeclaredField("mCallerPackageName")
+                field.isAccessible = true
+                field.set(tm, "com.android.shell")
+            } catch (_: Exception) {}
+            tm
+        }
+    }
+
+    private fun doStopWifiTethering(): String {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            try {
+                val tmObj = createTetheringManager() ?: return "FAIL: no TetheringManager"
+                val stopMethod = tmObj.javaClass.getMethod("stopTethering", Int::class.javaPrimitiveType)
+                stopMethod.invoke(tmObj, 0)
+                Log.i(TAG, "HOTSPOT OFF: TetheringManager.stopTethering() called")
+                return "OK"
+            } catch (e: Exception) {
+                Log.w(TAG, "stopTethering TetheringManager failed", e)
+            }
+        }
+
+        try {
+            val ctx = shellContext ?: return "FAIL: no context"
+            val cm = ctx.getSystemService("connectivity") ?: return "FAIL: no CM"
+            val stopMethod = cm.javaClass.getMethod("stopTethering", Int::class.javaPrimitiveType)
+            stopMethod.invoke(cm, 0)
+            Log.i(TAG, "HOTSPOT OFF: ConnectivityManager.stopTethering() called")
+            return "OK"
+        } catch (e: Exception) {
+            Log.e(TAG, "All stopTethering methods failed", e)
+            return "FAIL: ${e.message}"
         }
     }
 
@@ -414,7 +583,252 @@ class PrivilegedService : IPrivilegedService.Stub() {
     override fun restartTetheringWithCgnat(): String { return "" }
     override fun isAlive(): Boolean = true
 
+    // --- WiFi Tethering (Hotspot) control ---
+
+    override fun startWifiTethering(): Boolean {
+        Log.i(TAG, "startWifiTethering: attempting to enable hotspot")
+
+        // Pre-step: Disable carrier DUN provisioning check (important for Samsung/carrier devices)
+        try {
+            execCommand("settings put global tether_dun_required 0")
+            Log.i(TAG, "Carrier DUN check disabled")
+        } catch (_: Exception) {}
+
+        // Method 1: TetheringManager (Android 11+ / API 30+) — PREFERRED
+        // StartTetheringCallback is an INTERFACE with default methods, so Proxy works.
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            try {
+                val ctx = shellContext
+                if (ctx != null) {
+                    val tmObj = ctx.getSystemService("tethering")
+                    if (tmObj != null) {
+                        val tmClass = tmObj.javaClass
+
+                        // Build TetheringRequest with entitlement bypass
+                        val requestBuilderClass = Class.forName("android.net.TetheringManager\$TetheringRequest\$Builder")
+                        val builder = requestBuilderClass
+                            .getConstructor(Int::class.javaPrimitiveType)
+                            .newInstance(0) // TETHERING_WIFI = 0
+
+                        // Bypass carrier entitlement check (critical for Samsung/carrier-locked devices)
+                        try {
+                            requestBuilderClass.getMethod("setExemptFromEntitlementCheck", Boolean::class.javaPrimitiveType)
+                                .invoke(builder, true)
+                            Log.i(TAG, "setExemptFromEntitlementCheck(true) set")
+                        } catch (_: Exception) {
+                            Log.w(TAG, "setExemptFromEntitlementCheck not available on this version")
+                        }
+                        try {
+                            requestBuilderClass.getMethod("setShouldShowEntitlementUi", Boolean::class.javaPrimitiveType)
+                                .invoke(builder, false)
+                            Log.i(TAG, "setShouldShowEntitlementUi(false) set")
+                        } catch (_: Exception) {}
+
+                        val request = requestBuilderClass.getMethod("build").invoke(builder)
+
+                        val callbackClass = Class.forName("android.net.TetheringManager\$StartTetheringCallback")
+                        val callback = java.lang.reflect.Proxy.newProxyInstance(
+                            callbackClass.classLoader,
+                            arrayOf(callbackClass)
+                        ) { _, method, args ->
+                            when (method.name) {
+                                "onTetheringStarted" -> Log.i(TAG, "TetheringManager: hotspot started successfully!")
+                                "onTetheringFailed" -> Log.e(TAG, "TetheringManager: hotspot failed, error=${args?.getOrNull(0)}")
+                            }
+                            null
+                        }
+
+                        val startMethod = tmClass.methods.find { m ->
+                            m.name == "startTethering" && m.parameterTypes.size == 3
+                        }
+                        if (startMethod != null) {
+                            val executor = tetheringExecutor
+                            startMethod.invoke(tmObj, request, executor, callback)
+                            Log.i(TAG, "startWifiTethering: TetheringManager.startTethering() invoked")
+                            return true
+                        } else {
+                            Log.w(TAG, "startTethering method not found on TetheringManager")
+                        }
+                    } else {
+                        Log.w(TAG, "getSystemService('tethering') returned null")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "TetheringManager approach failed", e)
+            }
+        }
+
+        // Method 2: ConnectivityManager.startTethering (Android 7-10)
+        // OnStartTetheringCallback is abstract class with empty method bodies — ART allows instantiation
+        try {
+            val ctx = shellContext
+            if (ctx != null) {
+                val cm = ctx.getSystemService("connectivity")
+                if (cm != null) {
+                    val callbackClass = Class.forName("android.net.ConnectivityManager\$OnStartTetheringCallback")
+                    val callback = callbackClass.getDeclaredConstructor().let { ctor ->
+                        ctor.isAccessible = true
+                        ctor.newInstance()
+                    }
+                    val startMethod = cm.javaClass.getMethod(
+                        "startTethering",
+                        Int::class.javaPrimitiveType,
+                        Boolean::class.javaPrimitiveType,
+                        callbackClass
+                    )
+                    startMethod.invoke(cm, 0 /* TETHERING_WIFI */, false /* no provisioning UI */, callback)
+                    Log.i(TAG, "startWifiTethering: ConnectivityManager.startTethering() invoked")
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ConnectivityManager approach failed", e)
+        }
+
+        // Method 3: Shell command fallback (Android 11+)
+        try {
+            val result = execCommand("cmd connectivity tethering wifi enable")
+            Log.i(TAG, "startWifiTethering: shell cmd result: $result")
+            return true
+        } catch (e: Exception) {
+            Log.w(TAG, "Shell cmd fallback failed", e)
+        }
+
+        Log.e(TAG, "All tethering start methods exhausted")
+        return false
+    }
+
+    override fun stopWifiTethering(): Boolean {
+        Log.i(TAG, "stopWifiTethering: attempting to disable hotspot")
+
+        // Method 1: TetheringManager.stopTethering (Android 11+)
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            try {
+                val ctx = shellContext
+                if (ctx != null) {
+                    val tmObj = ctx.getSystemService("tethering")
+                    if (tmObj != null) {
+                        val stopMethod = tmObj.javaClass.getMethod(
+                            "stopTethering",
+                            Int::class.javaPrimitiveType
+                        )
+                        stopMethod.invoke(tmObj, 0) // TETHERING_WIFI = 0
+                        Log.i(TAG, "stopWifiTethering: TetheringManager.stopTethering() called")
+                        return true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "TetheringManager stop failed", e)
+            }
+        }
+
+        // Method 2: ConnectivityManager.stopTethering
+        try {
+            val ctx = shellContext
+            if (ctx != null) {
+                val cm = ctx.getSystemService("connectivity")
+                if (cm != null) {
+                    val stopMethod = cm.javaClass.getMethod(
+                        "stopTethering",
+                        Int::class.javaPrimitiveType
+                    )
+                    stopMethod.invoke(cm, 0)
+                    Log.i(TAG, "stopWifiTethering: ConnectivityManager.stopTethering() called")
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ConnectivityManager stop failed", e)
+        }
+
+        // Method 3: Shell fallback
+        try {
+            execCommand("cmd connectivity tethering wifi disable")
+            Log.i(TAG, "stopWifiTethering: shell fallback executed")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "All stop tethering methods failed", e)
+        }
+
+        return false
+    }
+
+    // --- System audio capture via REMOTE_SUBMIX (shell uid has CAPTURE_AUDIO_OUTPUT) ---
+
+    @Volatile
+    private var audioCaptureRunning = false
+    private var audioCaptureThread: Thread? = null
+    private var audioCaptureRecord: AudioRecord? = null
+
+    override fun startSystemAudioCapture(sampleRate: Int, channels: Int): ParcelFileDescriptor? {
+        stopSystemAudioCapture()
+
+        return try {
+            val channelMask = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+            val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
+            val bufSize = maxOf(minBuf * 2, 8192)
+
+            val record = AudioRecord(
+                MediaRecorder.AudioSource.REMOTE_SUBMIX,
+                sampleRate,
+                channelMask,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufSize
+            )
+
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "REMOTE_SUBMIX AudioRecord failed to initialize (state=${record.state})")
+                record.release()
+                return null
+            }
+
+            val pipe = ParcelFileDescriptor.createPipe()
+            val readEnd = pipe[0]
+            val writeEnd = pipe[1]
+
+            record.startRecording()
+            audioCaptureRecord = record
+            audioCaptureRunning = true
+
+            audioCaptureThread = Thread({
+                val pcmBuf = ByteArray(3840) // 20ms at 48kHz stereo 16bit
+                val output = ParcelFileDescriptor.AutoCloseOutputStream(writeEnd)
+                try {
+                    while (audioCaptureRunning) {
+                        val read = record.read(pcmBuf, 0, pcmBuf.size)
+                        if (read > 0) {
+                            output.write(pcmBuf, 0, read)
+                        } else if (read < 0) {
+                            Log.w(TAG, "REMOTE_SUBMIX read error: $read")
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "REMOTE_SUBMIX capture thread ended", e)
+                } finally {
+                    try { output.close() } catch (_: Exception) {}
+                }
+            }, "RemoteSubmix-Capture").also { it.start() }
+
+            Log.i(TAG, "REMOTE_SUBMIX audio capture started: ${sampleRate}Hz, ${channels}ch")
+            readEnd
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start REMOTE_SUBMIX audio capture", e)
+            null
+        }
+    }
+
+    override fun stopSystemAudioCapture() {
+        audioCaptureRunning = false
+        try { audioCaptureRecord?.stop() } catch (_: Exception) {}
+        audioCaptureThread?.join(2000)
+        audioCaptureThread = null
+        try { audioCaptureRecord?.release() } catch (_: Exception) {}
+        audioCaptureRecord = null
+    }
+
     override fun destroy() {
+        stopSystemAudioCapture()
         virtualDisplays.values.forEach { it.release() }
         virtualDisplays.clear()
         virtualDisplayNames.clear()

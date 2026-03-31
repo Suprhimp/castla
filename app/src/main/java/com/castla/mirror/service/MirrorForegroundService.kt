@@ -43,6 +43,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -61,9 +63,15 @@ class MirrorForegroundService : Service() {
         const val EXTRA_MIRRORING_MODE = "mirroring_mode"
         const val EXTRA_TARGET_PACKAGE = "target_package"
 
-        @Volatile
-        var isServiceRunning = false
-        
+        /** Observable service running state – UI can collect this to stay in sync. */
+        private val _serviceRunningFlow = MutableStateFlow(false)
+        val serviceRunningFlow: StateFlow<Boolean> = _serviceRunningFlow
+
+
+        var isServiceRunning: Boolean
+            get() = _serviceRunningFlow.value
+            set(value) { _serviceRunningFlow.value = value }
+
         @JvmStatic
         var instance: MirrorForegroundService? = null
             private set
@@ -123,10 +131,18 @@ class MirrorForegroundService : Service() {
     private var targetBitrate: Int = 4_000_000
     private var lastCongestionTimeMs = 0L
     private var abrJob: Job? = null
+    // Thermal throttling: stores original bitrate before thermal reduction for restoration
+    private var preThermalTargetBitrate: Int = 0
+    // Thermal fps/resolution overrides — applied by rebuildPipeline when non-null
+    private var thermalFpsOverride: Int? = null
+    private var thermalMaxHeight: Int? = null
     
     // WakeLocks to keep streaming alive when screen is off
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+
+    // Deferred pipeline state: heavy capture/encoding starts only when browser connects
+    private var pendingAudioEnabled = false
 
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
     private var screenOffReceiver: BroadcastReceiver? = null
@@ -135,6 +151,10 @@ class MirrorForegroundService : Service() {
 
     val isRunning: Boolean
         get() = mirrorServer != null
+
+    /** Current thermal throttle level exposed to the UI. 0 = normal, higher = hotter. */
+    private val _thermalStatus = MutableStateFlow(0)
+    val thermalStatus: StateFlow<Int> = _thermalStatus
 
     fun setBrowserConnectionListener(listener: ((Boolean) -> Unit)?) {
         browserConnectionListener = listener
@@ -186,38 +206,85 @@ class MirrorForegroundService : Service() {
     
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private fun handleThermalStatusChange(status: Int) {
+        _thermalStatus.value = status
+
+        // Save original bitrate on first thermal event for later restoration
+        if (preThermalTargetBitrate == 0 && targetBitrate > 0) {
+            preThermalTargetBitrate = targetBitrate
+        }
+
         when (status) {
-            PowerManager.THERMAL_STATUS_SEVERE,
             PowerManager.THERMAL_STATUS_CRITICAL,
             PowerManager.THERMAL_STATUS_EMERGENCY -> {
-                Log.w(TAG, "Thermal status CRITICAL ($status) - Throttling encoder heavily")
-                val newBitrate = (currentBitrate * 0.5).toInt().coerceAtLeast(500_000)
-                if (currentBitrate > newBitrate) {
-                    currentBitrate = newBitrate
-                    targetBitrate = newBitrate
-                    videoEncoder?.setBitrate(currentBitrate)
+                // CRITICAL+ — the device is dangerously hot. Stop mirroring entirely
+                // to prevent a system-level thermal shutdown / forced reboot.
+                Log.e(TAG, "Thermal status CRITICAL/EMERGENCY ($status) — auto-stopping mirroring")
+                requestStopAsync("thermal_critical_$status")
+            }
+            PowerManager.THERMAL_STATUS_SEVERE -> {
+                Log.w(TAG, "Thermal status SEVERE ($status) - Throttling encoder heavily + fps/resolution")
+                val newBitrate = (preThermalTargetBitrate * 0.4).toInt().coerceAtLeast(500_000)
+                currentBitrate = newBitrate
+                targetBitrate = newBitrate
+                videoEncoder?.setBitrate(currentBitrate)
+                jpegEncoder?.setFps(8)
+                // Stop audio on SEVERE to reduce CPU load
+                Log.w(TAG, "Thermal SEVERE — stopping audio capture to reduce CPU load")
+                try { audioCapture?.stop() } catch (_: Exception) {}
+                audioCapture = null
+                restoreMediaVolume()
+                // Drop fps to 15 and cap resolution at 720p
+                thermalFpsOverride = 15
+                thermalMaxHeight = 720
+                if (browserConnected) {
+                    serviceScope.launch { rebuildPipeline(currentWidth, currentHeight, force = true) }
                 }
-                jpegEncoder?.setFps(10)
             }
             PowerManager.THERMAL_STATUS_MODERATE -> {
-                Log.w(TAG, "Thermal status MODERATE ($status) - Throttling encoder slightly")
-                val newBitrate = (currentBitrate * 0.7).toInt().coerceAtLeast(1_000_000)
-                if (currentBitrate > newBitrate) {
-                    currentBitrate = newBitrate
-                    videoEncoder?.setBitrate(currentBitrate)
+                Log.w(TAG, "Thermal status MODERATE ($status) - Throttling encoder + fps drop to 20")
+                val newBitrate = (preThermalTargetBitrate * 0.6).toInt().coerceAtLeast(500_000)
+                currentBitrate = newBitrate
+                targetBitrate = newBitrate
+                videoEncoder?.setBitrate(currentBitrate)
+                jpegEncoder?.setFps(12)
+                // Drop fps to 20
+                thermalFpsOverride = 20
+                thermalMaxHeight = null
+                if (browserConnected) {
+                    serviceScope.launch { rebuildPipeline(currentWidth, currentHeight, force = true) }
                 }
-                jpegEncoder?.setFps(15)
             }
-            PowerManager.THERMAL_STATUS_NONE,
             PowerManager.THERMAL_STATUS_LIGHT -> {
-                Log.i(TAG, "Thermal status NORMAL ($status) - Conditions are good")
-                jpegEncoder?.setFps(15)
+                Log.i(TAG, "Thermal status LIGHT ($status) - Preemptive throttling")
+                val newBitrate = (preThermalTargetBitrate * 0.85).toInt().coerceAtLeast(500_000)
+                currentBitrate = newBitrate
+                targetBitrate = newBitrate
+                videoEncoder?.setBitrate(currentBitrate)
+                // Clear fps/resolution overrides at LIGHT
+                thermalFpsOverride = null
+                thermalMaxHeight = null
+            }
+            PowerManager.THERMAL_STATUS_NONE -> {
+                Log.i(TAG, "Thermal status NONE ($status) - Restoring full bitrate and fps")
+                thermalFpsOverride = null
+                thermalMaxHeight = null
+                if (preThermalTargetBitrate > 0) {
+                    targetBitrate = preThermalTargetBitrate
+                    currentBitrate = preThermalTargetBitrate
+                    videoEncoder?.setBitrate(currentBitrate)
+                    jpegEncoder?.setFps(15)
+                    // Rebuild to restore original fps/resolution
+                    if (browserConnected) {
+                        serviceScope.launch { rebuildPipeline(currentWidth, currentHeight, force = true) }
+                    }
+                }
             }
         }
     }
 
     private fun acquireWakeLocks() {
         try {
+            releaseWakeLocks() // Release any existing locks first to prevent leaks
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             // Use wake lock with timeout (e.g. 4 hours) as safety mechanism
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Castla::StreamingWakeLock").apply {
@@ -229,7 +296,7 @@ class MirrorForegroundService : Service() {
             @Suppress("DEPRECATION")
             wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Castla::StreamingWifiLock").apply {
                 setReferenceCounted(false)
-                acquire()
+                acquire() // WiFi lock doesn't support timeout
             }
             Log.i(TAG, "WakeLocks acquired (CPU & WiFi will stay awake)")
         } catch (e: Exception) {
@@ -280,14 +347,16 @@ class MirrorForegroundService : Service() {
                     }
                 }
 
-                // OTT bitrate boost: 1.5x (cap 15Mbps), debounced 500ms
+                // OTT bitrate boost: 1.2x (cap 15Mbps), debounced 500ms, disabled under thermal
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (request.isVideoApp != isCurrentAppVideo && now - lastBitrateChangeMs > 500) {
                     isCurrentAppVideo = request.isVideoApp
                     lastBitrateChangeMs = now
                     
                     val baseTargetBitrate = (4_000_000L * currentWidth * currentHeight / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
-                    targetBitrate = if (isCurrentAppVideo) minOf((baseTargetBitrate * 1.5).toInt(), 15_000_000) else baseTargetBitrate
+                    // Video boost capped at 1.2x; disabled entirely when thermal status >= LIGHT
+                    val thermalActive = _thermalStatus.value >= PowerManager.THERMAL_STATUS_LIGHT
+                    targetBitrate = if (isCurrentAppVideo && !thermalActive) minOf((baseTargetBitrate * 1.2).toInt(), 15_000_000) else baseTargetBitrate
                     
                     if (currentBitrate > targetBitrate || (now - lastCongestionTimeMs > 2000)) {
                          currentBitrate = targetBitrate
@@ -367,7 +436,6 @@ class MirrorForegroundService : Service() {
 
         Thread {
             performCleanup(reason)
-            cleanupCompleted = true
             mainHandler.post {
                 MirrorWidgetProvider.updateAllWidgets(this)
                 stopSelf()
@@ -376,27 +444,15 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onPhoneScreenOff() {
-        // scrcpy approach: turn off physical display panel via SurfaceControl
-        // while keeping the device awake. VD keeps rendering because device never sleeps.
-        stopVdKeepAlive()
-        physicalDisplayOff = true
-        vdKeepAliveJob = serviceScope.launch(Dispatchers.IO) {
-            // Turn off physical display panel (device stays awake, VD keeps rendering)
-            virtualDisplayManager?.setPhysicalDisplayPower(false)
-            Log.i(TAG, "Physical display panel turned OFF, VD continues rendering")
-        }
+        // Physical display power-off is DISABLED by default — it caused recovery
+        // difficulties when cleanup failed, and users reported the phone appearing
+        // to have shut down.  The VD keeps rendering via the partial wake-lock
+        // without needing to cut physical panel power.
+        Log.i(TAG, "Screen OFF detected — VD continues via wake-lock (display power-off disabled)")
     }
 
     private fun onPhoneScreenOn() {
-        // Physical screen turned on (user pressed power button or unlocked)
-        // Restore physical display power if we turned it off
-        if (physicalDisplayOff) {
-            physicalDisplayOff = false
-            serviceScope.launch(Dispatchers.IO) {
-                virtualDisplayManager?.setPhysicalDisplayPower(true)
-                Log.i(TAG, "Physical display panel restored to ON")
-            }
-        }
+        Log.i(TAG, "Screen ON detected")
         stopVdKeepAlive()
     }
 
@@ -405,10 +461,29 @@ class MirrorForegroundService : Service() {
         vdKeepAliveJob = null
     }
 
+    @Synchronized
     private fun performCleanup(reason: String) {
+        if (cleanupCompleted) {
+            Log.i(TAG, "Cleanup already completed, skipping: $reason")
+            return
+        }
+        cleanupCompleted = true // set immediately under lock to prevent reentrant race
         Log.i(TAG, "Performing cleanup: $reason")
         isServiceRunning = false
         instance = null
+
+        // Physical display power-off is disabled by default, so physicalDisplayOff
+        // should always be false. Safety net in case it was re-enabled experimentally.
+        if (physicalDisplayOff) {
+            physicalDisplayOff = false
+            try {
+                virtualDisplayManager?.setPhysicalDisplayPower(true)
+                Log.i(TAG, "Physical display restored to ON during cleanup")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restore physical display", e)
+            }
+        }
+
         try { screenOffReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
         screenOffReceiver = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -417,22 +492,23 @@ class MirrorForegroundService : Service() {
                 thermalListener?.let { pm.removeThermalStatusListener(it) }
             } catch (_: Exception) {}
         }
-        // Restore physical display if we turned it off
-        if (physicalDisplayOff) {
-            try { virtualDisplayManager?.setPhysicalDisplayPower(true) } catch (_: Exception) {}
-            physicalDisplayOff = false
-        }
         releaseWakeLocks()
         stopVdKeepAlive()
-        dismissSplitPresentation(clearState = true)
-        releaseSecondaryPipeline(clearState = true)
+
+        // Stop audio capture FIRST to prevent AudioCapture-Opus thread crash.
+        // If the app crashes while VD is alive, system_server tries to launch home
+        // on the orphaned VD and hits a NPE → phone reboots.
+        try { audioCapture?.stop() } catch (_: Exception) {}
+        audioCapture = null
+
         try { resizeJob?.cancel() } catch (_: Exception) {}
         try { abrJob?.cancel() } catch (_: Exception) {}
         try { serviceScope.cancel() } catch (_: Exception) {}
         try { compositionDispatcher.close() } catch (_: Exception) {}
-        try { audioCapture?.stop() } catch (_: Exception) {}
         restoreMediaVolume()
 
+        dismissSplitPresentation(clearState = true)
+        releaseSecondaryPipeline(clearState = true)
         try { removeAllVdTasks() } catch (e: Exception) { Log.w(TAG, "Failed to remove VD tasks", e) }
         try { virtualDisplayManager?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release virtual display manager", e) }
         try { shizukuSetup?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release shizuku setup", e) }
@@ -442,7 +518,6 @@ class MirrorForegroundService : Service() {
         try { touchInjector?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release touch injector", e) }
         try { mirrorServer?.stop() } catch (e: Exception) { Log.w(TAG, "Failed to stop mirror server", e) }
 
-        audioCapture = null
         virtualDisplayManager = null
         shizukuSetup = null
         screenCapture = null
@@ -455,7 +530,7 @@ class MirrorForegroundService : Service() {
     private fun startAbrLoop() {
         abrJob?.cancel()
         abrJob = serviceScope.launch {
-            while (true) {
+            while (isServiceRunning && browserConnected) {
                 kotlinx.coroutines.delay(2000)
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (now - lastCongestionTimeMs >= 2000 && currentBitrate < targetBitrate) {
@@ -474,8 +549,7 @@ class MirrorForegroundService : Service() {
         audioEnabled: Boolean
     ) {
         try {
-            acquireWakeLocks()
-            
+            // Only initialize projection and server — defer encoder/capture until browser connects
             screenCapture = ScreenCaptureManager(this).also {
                 it.initProjection(resultCode, data)
             }
@@ -483,133 +557,96 @@ class MirrorForegroundService : Service() {
             val rawWidth = screenCapture!!.captureWidth
             val rawHeight = screenCapture!!.captureHeight
             val effectiveMaxHeight = effectiveMaxHeightForRequest(rawHeight)
-            
+
             var width = rawWidth
             var height = rawHeight
-            
+
             if (height > effectiveMaxHeight) {
                 val scale = effectiveMaxHeight.toFloat() / height
                 height = effectiveMaxHeight
                 width = (width * scale).toInt()
             }
-            
+
             width = (width + 15) and 15.inv()
             height = (height + 15) and 15.inv()
-            
+
             currentWidth = width
             currentHeight = height
             currentFps = fps
-            
-            val baseTargetBitrate = (4_000_000L * width * height / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
-            targetBitrate = baseTargetBitrate
-            currentBitrate = targetBitrate
-            
-            startAbrLoop()
+            pendingAudioEnabled = audioEnabled
 
-            videoEncoder = VideoEncoder(width, height, currentBitrate, fps).also { encoder ->
-                val surface = encoder.createInputSurface()
-                currentEncoderSurface = surface
+            touchInjector = TouchInjector(width, height)
 
-                touchInjector = TouchInjector(width, height)
-
-                mirrorServer = MirrorServer(this).also { server ->
-                    server.setKeyframeRequester("primary") { encoder.requestKeyFrame() }
-                    server.setNetworkCongestionListener { onNetworkCongestion() }
-                    server.setTouchListener { event ->
-                        if (event.pane == "secondary") {
-                            secondaryTouchInjector?.onTouchEvent(event)
-                        } else {
-                            touchInjector?.onTouchEvent(event)
-                            if (event.action == "up") checkImeAndNotifyBrowser()
-                        }
-                    }
-                    server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
-                    server.setViewportChangeListener { pane, w, h, layoutMode ->
-                        singleVdSplit = layoutMode == "browser_only_split" || layoutMode == "freeform_split"
-                        if (pane == "secondary") {
-                            if (singleVdSplit) {
-                                Log.d(TAG, "Ignoring secondary viewport in single-VD split mode")
-                            } else {
-                                onSecondaryViewportChange(w, h)
-                            }
-                        } else {
-                            onViewportChange(w, h)
-                        }
-                    }
-                    server.setTextInputListener { text -> injectText(text) }
-                    server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
-                    server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
-                    server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
-                    server.setGoHomeListener {
-                        Log.i(TAG, "Navigating to home requested by Web Launcher")
-                        dismissSplitPresentation(clearState = true)
-                        if (!singleVdSplit) {
-                            releaseSecondaryPipeline(clearState = true)
-                        }
-                        virtualDisplayManager?.launchHomeOnDisplay()
-                        currentVdApp = "HOME"
-                        currentWebUrl = null
-                        clearSplitState()
-                    }
-                    server.setAppLaunchListener { pkgName, componentName, splitMode, pane ->
-                        launchAppFromWebLauncher(pkgName, componentName, splitMode, pane)
-                    }
-
-                    server.setCloseSplitListener {
-                        Log.i(TAG, "Close split requested — restoring primary fullscreen")
-                        closeFreeformSplit()
-                    }
-
-                    server.setBrowserConnectionListener { connected ->
-                        if (connected && !browserConnected) {
-                            browserConnected = true
-                            onBrowserConnected()
-                        } else if (!connected && browserConnected) {
-                            browserConnected = false
-                            onBrowserDisconnected()
-                        }
-                        browserConnectionListener?.invoke(connected)
-                    }
-
-                    server.start(0)
-                    Log.i(TAG, "Server started on port ${MirrorServer.DEFAULT_PORT}")
-                }
-
-                encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
-                encoder.start { frameData, isKeyFrame ->
-                    mirrorServer?.broadcastFrame(frameData, isKeyFrame)
-                }
-
-                trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
-                    if (shizukuActive) {
-                        currentVdApp = "HOME"
+            mirrorServer = MirrorServer(this).also { server ->
+                server.setNetworkCongestionListener { onNetworkCongestion() }
+                server.setTouchListener { event ->
+                    if (event.pane == "secondary") {
+                        secondaryTouchInjector?.onTouchEvent(event)
                     } else {
-                        try {
-                            screenCapture?.startCapture(surface, width, height)
-                            Log.i(TAG, "Fallback: MediaProjection mirroring at ${width}x${height}")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "MediaProjection fallback failed", e)
-                        }
+                        touchInjector?.onTouchEvent(event)
+                    }
+                    if (event.action == "up") {
+                        lastTouchPane = event.pane
+                        checkImeAndNotifyBrowser()
                     }
                 }
-            }
-
-            if (audioEnabled && AudioCapture.isSupported()) {
-                val projection = screenCapture?.getMediaProjection()
-                if (projection != null) {
-                    muteMediaVolume()
-                    audioCapture = AudioCapture(projection).also { audio ->
-                        audio.start { audioData ->
-                            mirrorServer?.broadcastAudio(audioData)
+                server.setCodecModeListener { mode -> onCodecModeRequest(mode) }
+                server.setViewportChangeListener { pane, w, h, layoutMode ->
+                    singleVdSplit = layoutMode == "browser_only_split" || layoutMode == "freeform_split"
+                    if (pane == "secondary") {
+                        if (singleVdSplit) {
+                            Log.d(TAG, "Ignoring secondary viewport in single-VD split mode")
+                        } else {
+                            onSecondaryViewportChange(w, h)
                         }
+                    } else {
+                        onViewportChange(w, h)
                     }
-                    Log.i(TAG, "Audio capture enabled")
-                } else {
-                    Log.w(TAG, "Audio requested but MediaProjection not available")
                 }
+                server.setTextInputListener { text -> injectText(text) }
+                server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
+                server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
+                server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
+                server.setGoHomeListener {
+                    Log.i(TAG, "Navigating to home requested by Web Launcher")
+                    val previousApp = currentVdApp
+                    dismissSplitPresentation(clearState = true)
+                    if (!singleVdSplit) {
+                        releaseSecondaryPipeline(clearState = true)
+                    }
+                    // Force-stop BEFORE going home so the old app's screen
+                    // is removed before the home animation starts
+                    forceStopAppIfNeeded(previousApp)
+                    virtualDisplayManager?.launchHomeOnDisplay()
+                    currentVdApp = "HOME"
+                    currentWebUrl = null
+                    clearSplitState()
+                }
+                server.setAppLaunchListener { pkgName, componentName, splitMode, pane ->
+                    launchAppFromWebLauncher(pkgName, componentName, splitMode, pane)
+                }
+
+                server.setCloseSplitListener {
+                    Log.i(TAG, "Close split requested — restoring primary fullscreen")
+                    closeFreeformSplit()
+                }
+
+                server.setBrowserConnectionListener { connected ->
+                    if (connected && !browserConnected) {
+                        browserConnected = true
+                        onBrowserConnected()
+                    } else if (!connected && browserConnected) {
+                        browserConnected = false
+                        onBrowserDisconnected()
+                    }
+                    browserConnectionListener?.invoke(connected)
+                }
+
+                server.start(0)
+                Log.i(TAG, "Server started on port ${MirrorServer.DEFAULT_PORT} — waiting for browser")
             }
 
-            Log.i(TAG, "Pipeline started: ${width}x${height}, audio=${audioEnabled}")
+            Log.i(TAG, "Pipeline initialized (idle): ${width}x${height}, audio=$audioEnabled")
             MirrorWidgetProvider.updateAllWidgets(this)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start pipeline", e)
@@ -665,6 +702,9 @@ class MirrorForegroundService : Service() {
         secondaryTouchInjector = null
         if (clearState) {
             clearSecondaryState()
+            clearSplitState()
+            // Trigger primary VD resize to fullscreen on next viewport update
+            Log.i(TAG, "Secondary pipeline released — primary will resize to fullscreen on next viewport")
         }
     }
 
@@ -915,11 +955,31 @@ class MirrorForegroundService : Service() {
                 Log.i(TAG, "Removed task ${task.taskId} from display $displayId")
             }
 
-            // 5. Brief delay to let framework process
-            Thread.sleep(300)
             Log.i(TAG, "Cleaned up display $displayId: ${packagesToStop.size} force-stopped, ${tasks.size} tasks removed")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to clean up display $displayId", e)
+        }
+    }
+
+    /**
+     * Force-stop a previously running app when navigating home.
+     * Skips system apps, launchers, and our own package.
+     */
+    private fun forceStopAppIfNeeded(packageName: String) {
+        if (packageName.isBlank()
+            || packageName == "HOME"
+            || packageName == "com.android.settings"
+            || packageName.startsWith("com.android.launcher")
+            || packageName.startsWith("com.sec.android.app.launcher")
+            || packageName == applicationContext.packageName
+        ) return
+
+        try {
+            val service = virtualDisplayManager?.getPrivilegedService() ?: return
+            service.execCommand("am force-stop $packageName")
+            Log.i(TAG, "Force-stopped previous app: $packageName")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to force-stop $packageName", e)
         }
     }
 
@@ -1008,8 +1068,14 @@ class MirrorForegroundService : Service() {
 
     private fun launchFullscreenWebTarget(activityClassName: String, displayId: Int, url: String) {
         clearSplitState()
+        // Force-stop the previous app to prevent screen flash during transition
+        val previousApp = currentVdApp
+        val newTarget = internalComponentName(activityClassName)
+        if (previousApp != newTarget) {
+            forceStopAppIfNeeded(previousApp)
+        }
         launchInternalActivity(activityClassName, displayId, url, splitMode = false)
-        currentVdApp = internalComponentName(activityClassName)
+        currentVdApp = newTarget
         currentWebUrl = url
         currentWebSplitMode = false
     }
@@ -1030,6 +1096,12 @@ class MirrorForegroundService : Service() {
     private fun launchFullscreenStandardTarget(launchTarget: String) {
         clearSplitState()
         val resolvedTarget = normalizeLaunchTarget(launchTarget)
+        // Force-stop the previous app first to prevent its screen from flashing
+        // during the transition to the new app
+        val previousApp = currentVdApp
+        if (previousApp != resolvedTarget) {
+            forceStopAppIfNeeded(previousApp)
+        }
         virtualDisplayManager?.launchAppOnDisplay(resolvedTarget)
         currentVdApp = resolvedTarget
         currentWebUrl = null
@@ -1390,7 +1462,9 @@ class MirrorForegroundService : Service() {
 
             isCurrentAppVideo = true
             val baseTargetBitrate = (4_000_000L * currentWidth * currentHeight / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
-            targetBitrate = minOf((baseTargetBitrate * 1.5).toInt(), 15_000_000)
+            // Video boost capped at 1.2x; disabled entirely when thermal status >= LIGHT
+            val thermalActive = _thermalStatus.value >= PowerManager.THERMAL_STATUS_LIGHT
+            targetBitrate = if (!thermalActive) minOf((baseTargetBitrate * 1.2).toInt(), 15_000_000) else baseTargetBitrate
             if (currentBitrate > targetBitrate || (android.os.SystemClock.elapsedRealtime() - lastCongestionTimeMs > 2000)) {
                  currentBitrate = targetBitrate
                  videoEncoder?.setBitrate(currentBitrate)
@@ -1413,7 +1487,7 @@ class MirrorForegroundService : Service() {
         
         if (currentCodecMode == "mjpeg") {
             touchInjector?.onTouchEvent(com.castla.mirror.server.TouchEvent("down", 0.5f, 0.5f, 99))
-            kotlinx.coroutines.GlobalScope.launch {
+            serviceScope.launch {
                 kotlinx.coroutines.delay(50)
                 touchInjector?.onTouchEvent(com.castla.mirror.server.TouchEvent("up", 0.5f, 0.5f, 99))
             }
@@ -1497,12 +1571,80 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onBrowserConnected() {
-        Log.i(TAG, "Browser connected — resuming pipeline")
         acquireWakeLocks()
-        
-        serviceScope.launch {
-            rebuildPipeline(currentWidth, currentHeight, force = true)
+
+        if (videoEncoder != null) {
+            // Reconnection — rebuild existing pipeline and restart audio
+            Log.i(TAG, "Browser reconnected — rebuilding pipeline")
+            serviceScope.launch {
+                rebuildPipeline(currentWidth, currentHeight, force = true)
+            }
+            startAudioCapture()
+            return
         }
+
+        // First connection — start encoder, VD, audio, ABR
+        Log.i(TAG, "Browser connected — starting active pipeline")
+        val width = currentWidth
+        val height = currentHeight
+        val fps = thermalFpsOverride ?: currentFps
+
+        val baseTargetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(width, height)
+        targetBitrate = baseTargetBitrate
+        currentBitrate = targetBitrate
+        preThermalTargetBitrate = targetBitrate
+
+        startAbrLoop()
+
+        videoEncoder = VideoEncoder(width, height, currentBitrate, fps).also { encoder ->
+            val surface = encoder.createInputSurface()
+            currentEncoderSurface = surface
+
+            mirrorServer?.setKeyframeRequester("primary") { encoder.requestKeyFrame() }
+
+            encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
+            encoder.start { frameData, isKeyFrame ->
+                mirrorServer?.broadcastFrame(frameData, isKeyFrame)
+            }
+
+            trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
+                if (shizukuActive) {
+                    screenCapture?.stopCapture()
+                    currentVdApp = "HOME"
+                } else {
+                    try {
+                        screenCapture?.startCapture(surface, width, height)
+                        Log.w(TAG, "Fallback: MediaProjection mirroring at ${width}x${height} (raw phone screen)")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "MediaProjection fallback failed", e)
+                    }
+                }
+            }
+        }
+
+        startAudioCapture()
+    }
+
+    private fun startAudioCapture() {
+        if (!pendingAudioEnabled || !AudioCapture.isSupported()) return
+        // Guard against duplicate start — stop existing instance first
+        if (audioCapture != null) {
+            try { audioCapture?.stop() } catch (_: Exception) {}
+            audioCapture = null
+            restoreMediaVolume()
+        }
+        val projection = screenCapture?.getMediaProjection() ?: run {
+            Log.w(TAG, "Audio requested but MediaProjection not available")
+            return
+        }
+        tryGrantAudioCapturePermission()
+        muteMediaVolume()
+        audioCapture = AudioCapture(projection, shizukuSetup?.privilegedService).also { audio ->
+            audio.start { audioData ->
+                mirrorServer?.broadcastAudio(audioData)
+            }
+        }
+        Log.i(TAG, "Audio capture enabled")
     }
 
     private fun restoreCurrentVdContent() {
@@ -1548,7 +1690,7 @@ class MirrorForegroundService : Service() {
             audioCapture = null
 
             val projection = screenCapture?.getMediaProjection() ?: return@launch
-            audioCapture = AudioCapture(projection).also { audio ->
+            audioCapture = AudioCapture(projection, shizukuSetup?.privilegedService).also { audio ->
                 audio.startPcmOnly { audioData ->
                     mirrorServer?.broadcastAudio(audioData)
                 }
@@ -1571,16 +1713,31 @@ class MirrorForegroundService : Service() {
         jpegEncoder?.release()
         jpegEncoder = null
         currentEncoderSurface = null
-        
+
+        try { audioCapture?.stop() } catch (_: Exception) {}
+        audioCapture = null
+        restoreMediaVolume()
+
+        abrJob?.cancel()
+        abrJob = null
+
         releaseWakeLocks()
-        
+
         browserConnected = false
     }
 
+    private fun activeInputDisplayId(): Int {
+        return if (lastTouchPane == "secondary" && secondaryDisplayId >= 0) {
+            secondaryDisplayId
+        } else {
+            virtualDisplayManager?.getDisplayId() ?: -1
+        }
+    }
+
     private fun injectText(text: String) {
-        serviceScope.launch(compositionDispatcher) { 
+        serviceScope.launch(compositionDispatcher) {
             try {
-                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val displayId = activeInputDisplayId()
                 val service = shizukuSetup?.privilegedService
                 if (service != null) {
                     service.injectText(text, displayId)
@@ -1589,6 +1746,7 @@ class MirrorForegroundService : Service() {
         }
     }
 
+    private var lastTouchPane = "primary"
     private var lastImeState = false
     private var lastImeCheckTime = 0L
     private var imeCheckSuspendUntil = 0L
@@ -1654,7 +1812,7 @@ class MirrorForegroundService : Service() {
     private fun injectCompositionUpdate(backspaces: Int, text: String) {
         serviceScope.launch(compositionDispatcher) {
             try {
-                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val displayId = activeInputDisplayId()
                 shizukuSetup?.privilegedService?.injectComposingText(backspaces, text, displayId)
             } catch (e: Exception) {}
         }
@@ -1663,7 +1821,7 @@ class MirrorForegroundService : Service() {
     private fun injectKeyEvent(keyCode: Int) {
         serviceScope.launch(Dispatchers.IO) {
             try {
-                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val displayId = activeInputDisplayId()
                 val cmd = if (displayId > 0) "input -d $displayId keyevent $keyCode" else "input keyevent $keyCode"
                 shizukuSetup?.privilegedService?.execCommand(cmd)
             } catch (e: Exception) {}
@@ -1690,11 +1848,14 @@ class MirrorForegroundService : Service() {
     }
 
     private fun effectiveMaxHeightForRequest(requestedHeight: Int, isSecondaryPane: Boolean = false): Int {
-        return when {
+        val baseMax = when {
             shouldUseRequestedHeightForSplit(isSecondaryPane) -> requestedHeight
             LicenseManager.isPremiumNow -> currentMaxHeight
             else -> 720
         }
+        // Apply thermal resolution cap if active
+        val thermalCap = thermalMaxHeight
+        return if (thermalCap != null) minOf(baseMax, thermalCap) else baseMax
     }
 
     private suspend fun rebuildPipeline(newWidth: Int, newHeight: Int, force: Boolean = false) {
@@ -1745,7 +1906,7 @@ class MirrorForegroundService : Service() {
                 videoEncoder?.release()
                 videoEncoder = null
 
-                val encoder = VideoEncoder(width, height, currentBitrate, currentFps)
+                val encoder = VideoEncoder(width, height, currentBitrate, thermalFpsOverride ?: currentFps)
                 val encoderSurface = encoder.createInputSurface()
                 currentEncoderSurface = encoderSurface
                 videoEncoder = encoder
@@ -1778,11 +1939,29 @@ class MirrorForegroundService : Service() {
                         }
                         restoreCurrentVdContent()
                     } else {
-                        screenCapture?.reconfigure(surface, width, height)
+                        // Retry once before considering MediaProjection fallback
+                        Log.w(TAG, "VD creation failed during rebuild — retrying once")
+                        virtualDisplayManager?.createVirtualDisplay(width, height, dpi, surface)
+                        if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                            touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                                virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                            }
+                            restoreCurrentVdContent()
+                        } else {
+                            Log.e(TAG, "VD creation failed after retry — NOT falling back to MediaProjection to prevent raw phone screen leak")
+                        }
                     }
                 }
             } else {
-                screenCapture?.reconfigure(surface, width, height)
+                // Shizuku not bound — try rebinding before falling back
+                Log.w(TAG, "Shizuku not bound during rebuild — attempting rebind")
+                trySetupVirtualDisplay(width, height, surface) { success ->
+                    if (!success) {
+                        Log.e(TAG, "Shizuku rebind failed — NOT falling back to MediaProjection to prevent raw phone screen leak")
+                    } else {
+                        Log.i(TAG, "Shizuku rebound successfully during rebuild")
+                    }
+                }
             }
 
             currentWidth = width
@@ -1827,9 +2006,33 @@ class MirrorForegroundService : Service() {
                     }
                     restoreCurrentVdContent()
                 } else {
-                    screenCapture?.reconfigure(surface, currentWidth, currentHeight)
+                    // Do NOT fall back to MediaProjection here — it would mirror the
+                    // raw phone screen (showing the Castla UI) instead of virtual
+                    // display content.  Retry VD creation once before giving up.
+                    Log.w(TAG, "MJPEG VD recreation failed — retrying once")
+                    virtualDisplayManager?.createVirtualDisplay(currentWidth, currentHeight, 160, surface)
+                    if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                        touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                            virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                        }
+                        restoreCurrentVdContent()
+                    } else {
+                        Log.e(TAG, "MJPEG VD recreation failed after retry — NOT falling back to MediaProjection")
+                    }
+                }
+            } else if (virtualDisplayManager?.isBound() == true) {
+                // Shizuku is bound but no VD yet — create one instead of falling back
+                virtualDisplayManager?.createVirtualDisplay(currentWidth, currentHeight, 160, surface)
+                if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                    touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
+                        virtualDisplayManager?.injectInput(action, x, y, pointerId)
+                    }
+                    restoreCurrentVdContent()
+                } else {
+                    Log.e(TAG, "MJPEG VD creation failed — NOT falling back to MediaProjection")
                 }
             } else {
+                // Shizuku not available at all — MediaProjection is the only option
                 screenCapture?.reconfigure(surface, currentWidth, currentHeight)
             }
             if (!singleVdSplit && secondaryWidth > 0 && secondaryHeight > 0) {
@@ -1839,34 +2042,105 @@ class MirrorForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        Log.i(TAG, "Stopping pipeline")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            thermalListener?.let { pm.removeThermalStatusListener(it) }
-        }
-        if (!cleanupCompleted) {
-            performCleanup("onDestroy")
-            cleanupCompleted = true
-        }
+        Log.i(TAG, "onDestroy called")
+        // Thermal listener removal is handled inside performCleanup — do NOT
+        // remove it here to avoid "Listener was not added" IllegalArgumentException.
+        performCleanup("onDestroy") // no-ops if already completed (guard inside)
         MirrorWidgetProvider.updateAllWidgets(this)
         super.onDestroy()
     }
 
+    /**
+     * Grant CAPTURE_AUDIO_OUTPUT permission via Shizuku (ADB-level) so that
+     * AudioPlaybackCapture can capture restricted usages like navigation guidance.
+     */
+    private fun tryGrantAudioCapturePermission() {
+        try {
+            val setup = shizukuSetup
+            if (setup != null && setup.isAvailable() && setup.hasPermission()) {
+                val pkg = packageName
+                // appops is the most reliable way to grant this at ADB level
+                val result = setup.exec("appops set $pkg CAPTURE_AUDIO_OUTPUT allow")
+                Log.i(TAG, "CAPTURE_AUDIO_OUTPUT grant via appops: $result")
+                // Also try pm grant as fallback
+                val result2 = setup.exec("pm grant $pkg android.permission.CAPTURE_AUDIO_OUTPUT")
+                Log.i(TAG, "CAPTURE_AUDIO_OUTPUT grant via pm: $result2")
+            } else {
+                Log.w(TAG, "Shizuku not available for audio capture permission grant")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to grant CAPTURE_AUDIO_OUTPUT", e)
+        }
+    }
+
+    // Saved volumes for all streams we mute (stream type -> saved volume)
+    private val savedVolumes = mutableMapOf<Int, Int>()
+
     private fun muteMediaVolume() {
         try {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            savedMediaVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-        } catch (e: Exception) {}
+            // Mute all streams that could carry navigation/media/notification audio
+            val streamsToMute = intArrayOf(
+                AudioManager.STREAM_MUSIC,        // 3 - media, also navigation on most devices
+                AudioManager.STREAM_NOTIFICATION,  // 5 - notifications
+                AudioManager.STREAM_SYSTEM,        // 1 - system sounds
+                AudioManager.STREAM_DTMF,          // 8 - DTMF tones
+            )
+            for (stream in streamsToMute) {
+                try {
+                    val current = am.getStreamVolume(stream)
+                    if (current > 0) {
+                        savedVolumes[stream] = current
+                        am.setStreamVolume(stream, 0, 0)
+                    }
+                } catch (_: Exception) {}
+            }
+            // Legacy compat
+            savedMediaVolume = savedVolumes[AudioManager.STREAM_MUSIC] ?: -1
+
+            // Use Shizuku to force-mute via shell — catches navigation guidance audio
+            // that bypasses normal stream volume controls
+            try {
+                val setup = shizukuSetup
+                if (setup != null && setup.isAvailable() && setup.hasPermission()) {
+                    // Force mute all audio output via media commands
+                    for (stream in streamsToMute) {
+                        setup.exec("media volume --show --stream $stream --set 0")
+                    }
+                    Log.i(TAG, "Shizuku force-muted all audio streams")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Shizuku stream mute failed", e)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "muteMediaVolume failed", e)
+        }
     }
 
     private fun restoreMediaVolume() {
-        if (savedMediaVolume < 0) return
         try {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, savedMediaVolume, 0)
+            for ((stream, volume) in savedVolumes) {
+                try {
+                    am.setStreamVolume(stream, volume, 0)
+                } catch (_: Exception) {}
+            }
+
+            // Also restore via Shizuku
+            try {
+                val setup = shizukuSetup
+                if (setup != null && setup.isAvailable() && setup.hasPermission()) {
+                    for ((stream, volume) in savedVolumes) {
+                        setup.exec("media volume --show --stream $stream --set $volume")
+                    }
+                }
+            } catch (_: Exception) {}
+
+            savedVolumes.clear()
             savedMediaVolume = -1
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "restoreMediaVolume failed", e)
+        }
     }
 
     private fun createNotificationChannel() {

@@ -30,8 +30,9 @@ android {
         applicationId = "com.castla.mirror"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 8
+        versionName = "1.0.7"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     flavorDimensions += "distribution"
@@ -97,7 +98,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
 
     // Compose
-    implementation(platform("androidx.compose:compose-bom:2024.01.00"))
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
@@ -106,6 +107,9 @@ dependencies {
 
     // Google Play Billing (one-time in-app purchase)
     implementation("com.android.billingclient:billing-ktx:7.0.0")
+
+    // Google AdMob
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
 
     // Google Play In-App Updates (playstore flavor only)
     "playstoreImplementation"("com.google.android.play:app-update:2.1.0")
@@ -124,4 +128,10 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.11.1")
     testImplementation("androidx.test:core:1.5.0")
     testImplementation("androidx.test.ext:junit:1.1.5")
+
+    // Android Instrumented Tests (스크린샷 자동화용)
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation("androidx.test:rules:1.5.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
