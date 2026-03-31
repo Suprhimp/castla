@@ -35,14 +35,14 @@ object StreamMath {
     fun calculateBaseBitrate(width: Int, height: Int): Int {
         val pixels = width.toLong() * height
         val basePixels = 1280L * 720
-        return ((4_000_000L * pixels) / basePixels).toInt().coerceIn(1_000_000, 15_000_000)
+        return ((3_000_000L * pixels) / basePixels).toInt().coerceIn(1_000_000, 8_000_000)
     }
 
     /**
      * Calculates OTT boosted bitrate (1.5x)
      */
     fun calculateVideoAppBitrate(baseBitrate: Int): Int {
-        return minOf((baseBitrate * 1.5).toInt(), 15_000_000)
+        return minOf((baseBitrate * 1.25).toInt(), 8_000_000)
     }
 
     /**

@@ -6,6 +6,9 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
 /**
@@ -38,6 +41,10 @@ class TunTcpRelay(
     private val tunIn = FileInputStream(tunFd)
     private val tunOut = FileOutputStream(tunFd)
     private val writeLock = Any()
+    private val relayThreadCounter = AtomicInteger(0)
+    private val relayExecutor: ExecutorService = Executors.newFixedThreadPool(8) { r ->
+        Thread(r, "relay-pool-${relayThreadCounter.incrementAndGet()}").apply { isDaemon = true }
+    }
 
     @Volatile
     var running = true
@@ -84,6 +91,7 @@ class TunTcpRelay(
 
     fun stop() {
         running = false
+        relayExecutor.shutdownNow()
         cleanup()
     }
 
@@ -120,8 +128,6 @@ class TunTcpRelay(
         val payLen = minOf(ipTotalLen - ihl - dataOff, len - payStart).coerceAtLeast(0)
 
         val key = Key(srcIp, srcPort, dstIp, dstPort)
-
-        Log.d(TAG, "← ${ipStr(srcIp)}:$srcPort → :$dstPort ${flagStr(flags)} seq=$seq ack=$ackNum data=$payLen")
 
         when {
             flags and RST != 0 -> {
@@ -171,10 +177,8 @@ class TunTcpRelay(
 
             Log.i(TAG, "SYN-ACK → ${ipStr(key.srcIp)}:${key.srcPort}")
 
-            // Reader thread: NanoHTTPD responses → TUN
-            Thread({
-                readLocal(s)
-            }, "relay-${key.srcPort}").apply { isDaemon = true; start() }
+            // Reader: NanoHTTPD responses → TUN (bounded thread pool)
+            relayExecutor.execute { readLocal(s) }
 
         } catch (e: Exception) {
             Log.e(TAG, "Local connect failed: ${e.message}")

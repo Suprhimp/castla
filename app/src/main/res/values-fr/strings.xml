@@ -17,6 +17,11 @@
     <string name="toast_bluetooth_permission_missing">Autorisation Bluetooth manquante. La détection automatique peut ne pas fonctionner.</string>
     <string name="toast_tesla_paired_auto_detect">Tesla couplée ! Détection automatique activée.</string>
     <string name="toast_tesla_auto_detect_disabled">Détection automatique Tesla désactivée</string>
+    <string name="title_ble_fallback">Scanner BLE de secours</string>
+    <string name="desc_ble_fallback">Recherche les signaux BLE Tesla en détection de secours</string>
+    <string name="toast_ble_scan_enabled">Scanner BLE de secours activé</string>
+    <string name="toast_ble_scan_disabled">Scanner BLE de secours désactivé</string>
+    <string name="toast_ble_permission_denied">Autorisation de scan BLE requise</string>
     <string name="toast_requesting_screen_capture">Demande de capture d\'écran...</string>
     <string name="toast_error">Erreur : %s</string>
 
@@ -30,9 +35,9 @@
     <string name="desc_tesla_auto_detect_on">Vous recevrez une notification lorsque Tesla se connectera</string>
     <string name="desc_tesla_auto_detect_off">Soyez averti lorsque votre Tesla est à proximité</string>
     <string name="status_streaming_active">Streaming actif</string>
+    <string name="status_preparing">Préparation…</string>
     <string name="status_ready_to_stream">Prêt pour le streaming</string>
     <string name="title_open_tesla_browser">Ouvrir le navigateur Tesla</string>
-    <string name="label_enter_pin">ENTRER LE CODE PIN</string>
     <string name="title_tesla_setup_required">Configuration Tesla requise</string>
     <string name="desc_shizuku_install_required">Le navigateur Tesla a besoin de Shizuku pour se connecter.\nAppuyez ci-dessous pour voir comment installer Shizuku.</string>
     <string name="btn_how_to_install_shizuku">Comment installer Shizuku</string>
@@ -40,10 +45,41 @@
     <string name="desc_shizuku_setup_steps">1. Paramètres &gt; À propos du téléphone &gt; Infos sur le logiciel\n   &gt; Appuyez 7 fois sur le numéro de version\n2. Paramètres &gt; Options pour les développeurs\n   &gt; Débogage sans fil &gt; ACTIVÉ\n3. Ouvrez Shizuku &gt; \"Démarrer via le débogage sans fil\"</string>
     <string name="btn_open_shizuku">Ouvrir Shizuku</string>
     <string name="status_shizuku_running_setup">Shizuku est en cours d\'exécution. Configuration de la connexion Tesla...</string>
+    <string name="desc_shizuku_permission_required">Shizuku est en cours d\'exécution, mais Castla n\'a pas encore l\'autorisation.\nSans autorisation, seule la mise en miroir de base est disponible — la saisie tactile et le lancement d\'applications ne fonctionneront pas.</string>
+    <string name="btn_grant_shizuku_permission">Accorder l\'autorisation Shizuku</string>
     <string name="btn_stop_mirroring">Arrêter la mise en miroir</string>
     <string name="btn_start_mirroring">Démarrer la mise en miroir</string>
     <string name="title_how_to_use">Comment utiliser</string>
-    <string name="desc_how_to_use">1. Connectez le téléphone et Tesla au même WiFi\n2. Appuyez sur \"Démarrer la mise en miroir\" ci-dessus\n3. Ouvrez l\'URL dans le navigateur de Tesla\n4. Entrez le code PIN à 4 chiffres\n5. L\'écran de votre téléphone apparaîtra sur Tesla</string>
+    <string name="desc_how_to_use">1. Connectez le téléphone et Tesla au même WiFi\n2. Appuyez sur \"Démarrer la mise en miroir\" ci-dessus\n3. Ouvrez l\'URL dans le navigateur de Tesla\n4. L\'écran de votre téléphone apparaîtra sur Tesla</string>
     <string name="title_network_setup_log">Journal de configuration réseau</string>
     <string name="btn_copy">Copier</string>
+
+    <string name="title_free_mirroring">Mise en miroir gratuite</string>
+    <string name="desc_free_credits">%d sessions restantes</string>
+    <string name="desc_no_credits">Regardez une publicité pour obtenir 10 sessions gratuites</string>
+    <string name="btn_watch_ad">Regarder une pub — Obtenir 10 sessions gratuites</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_back">Retour</string>
+    <string name="settings_title">Paramètres</string>
+    <string name="settings_stop_streaming_warning">Arrêtez le streaming pour modifier les paramètres</string>
+    <string name="thermal_warning_light">L\'appareil est chaud — qualité légèrement réduite</string>
+    <string name="thermal_warning_moderate">L\'appareil chauffe — qualité réduite pour éviter la surchauffe</string>
+    <string name="thermal_warning_critical">L\'appareil est très chaud — qualité fortement réduite</string>
+    <string name="thermal_warning_emergency">L\'appareil surchauffe — audio désactivé, qualité au minimum</string>
+    <string name="settings_max_resolution">Résolution max.</string>
+    <string name="settings_frame_rate">Fréquence d\'images</string>
+    <string name="settings_audio_experimental">Audio (Expérimental)</string>
+    <string name="settings_stream_device_audio">Diffuser l\'audio de l\'appareil</string>
+    <string name="settings_audio_description">Nécessite Android 10+. Capture la sortie système.</string>
+    <string name="settings_unlock_all_features">Débloquer toutes les fonctionnalités</string>
+    <string name="settings_pro_description">1080p, 60fps et plus</string>
+    <string name="settings_upgrade">Mettre à niveau</string>
+    <string name="settings_current_config">Configuration actuelle</string>
+    <string name="settings_full_screen">Plein écran</string>
+    <string name="settings_audio_on">, audio activé</string>
+    <string name="settings_auto_bitrate">Débit automatique</string>
+    <string name="settings_app_mode">App : %s</string>
+    <string name="settings_res_720">720p (Normal)</string>
+    <string name="settings_res_1080">1080p (Élevé)</string>
 </resources>

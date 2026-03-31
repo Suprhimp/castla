@@ -64,13 +64,13 @@ class VideoEncoder(
             // Low latency hints
             setInteger(MediaFormat.KEY_LATENCY, 0)
             
-            // Push hardware encoder to max operating rate for absolute minimum encoding delay
+            // Set operating rate to actual target fps so SoC DVFS can clock down when idle
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                setInteger(MediaFormat.KEY_OPERATING_RATE, 120)
+                setInteger(MediaFormat.KEY_OPERATING_RATE, fps)
             }
             
-            // Repeat last frame if no new input for 100ms — ensures output even on static screens
-            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000) // microseconds
+            // Repeat last frame if no new input for 1s — reduces idle encoder/Wi-Fi load on static screens
+            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 1_000_000) // microseconds
             setInteger(MediaFormat.KEY_PRIORITY, 0) // real-time priority
             setInteger("max-bframes", 0) // Explicit B-frame disable (Samsung quirk safety)
         }
@@ -104,7 +104,6 @@ class VideoEncoder(
 
                 try {
                     val buffer = codec.getOutputBuffer(index) ?: return
-                    Log.d(TAG, "Output buffer: size=${info.size} flags=0x${info.flags.toString(16)}")
 
                     if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
                         // Extract SPS/PPS and send as separate config message

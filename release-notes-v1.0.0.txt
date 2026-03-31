@@ -1,0 +1,152 @@
+<en-US>
+Castla — Mirror Android to Tesla in real-time.
+
+- H.264 low-latency mirroring
+- Touch control from Tesla
+- Audio streaming (Android 10+)
+- Virtual Display via Shizuku
+- DRM browser (YouTube, Netflix)
+- Split View: two apps side by side
+- Bluetooth Tesla detection & one-tap start
+- PIN & QR secure setup
+- Home widget
+
+PRO (one-time): 1080p, 60fps, no ads.
+Free: 720p/30fps. Watch 1 ad = 10 free sessions!
+</en-US>
+
+<ko-KR>
+Castla — 안드로이드를 테슬라에 실시간 미러링.
+
+- H.264 저지연 미러링
+- 테슬라 터치로 폰 조작
+- 오디오 스트리밍 (Android 10+)
+- Shizuku 가상 디스플레이
+- DRM 브라우저 (YouTube, Netflix)
+- 분할 화면: 두 앱 나란히
+- 블루투스 감지 & 원탭 시작
+- PIN & QR 간편 연결
+- 홈 위젯
+
+PRO (일회성): 1080p, 60fps, 광고 없음.
+무료: 720p/30fps. 광고 1회 = 10회 무료!
+</ko-KR>
+
+<de-DE>
+Castla — Android auf Tesla in Echtzeit spiegeln.
+
+- H.264 Low-Latency-Mirroring
+- Touch-Steuerung über Tesla
+- Audio-Streaming (Android 10+)
+- Virtuelles Display via Shizuku
+- DRM-Browser (YouTube, Netflix)
+- Split View: zwei Apps nebeneinander
+- Bluetooth Tesla-Erkennung & Ein-Tipp
+- PIN & QR-Code Setup
+- Startbildschirm-Widget
+
+PRO (Einmalkauf): 1080p, 60fps, werbefrei.
+Kostenlos: 720p/30fps. 1 Werbung = 10 Sitzungen!
+</de-DE>
+
+<es-ES>
+Castla — Android a Tesla en tiempo real.
+
+- Mirroring H.264 baja latencia
+- Control táctil desde Tesla
+- Audio streaming (Android 10+)
+- Pantalla virtual vía Shizuku
+- Navegador DRM (YouTube, Netflix)
+- Vista dividida: dos apps lado a lado
+- Detección Bluetooth Tesla & un toque
+- PIN & QR conexión segura
+- Widget de inicio
+
+PRO (compra única): 1080p, 60fps, sin anuncios.
+Gratis: 720p/30fps. 1 anuncio = 10 sesiones gratis!
+</es-ES>
+
+<fr-FR>
+Castla — Android sur Tesla en temps réel.
+
+- Mirroring H.264 faible latence
+- Contrôle tactile depuis Tesla
+- Audio streaming (Android 10+)
+- Écran virtuel via Shizuku
+- Navigateur DRM (YouTube, Netflix)
+- Vue partagée : deux apps côte à côte
+- Détection Bluetooth Tesla & un tap
+- PIN & QR code sécurisé
+- Widget d'accueil
+
+PRO (achat unique) : 1080p, 60fps, sans pub.
+Gratuit : 720p/30fps. 1 pub = 10 sessions gratuites !
+</fr-FR>
+
+<ja-JP>
+Castla — AndroidをTeslaにリアルタイムミラーリング。
+
+- H.264低遅延ミラーリング
+- Teslaタッチで操作
+- 音声ストリーミング (Android 10+)
+- Shizuku仮想ディスプレイ
+- DRMブラウザ (YouTube, Netflix)
+- 分割：2アプリ並列
+- Bluetooth検出＆ワンタップ開始
+- PIN＆QR簡単接続
+- ホームウィジェット
+
+PRO（買い切り）：1080p、60fps、広告なし。
+無料：720p/30fps。広告1回＝10回無料！
+</ja-JP>
+
+<nl-NL>
+Castla — Spiegel Android naar Tesla in real-time.
+
+- H.264 low-latency mirroring
+- Bediening vanaf Tesla-touchscreen
+- Audiostreaming (Android 10+)
+- Virtueel display via Shizuku
+- DRM-browser (YouTube, Netflix)
+- Gesplitst: twee apps naast elkaar
+- Bluetooth Tesla-detectie & één tik
+- PIN & QR-code setup
+- Startscherm-widget
+
+PRO (eenmalig): 1080p, 60fps, geen ads.
+Gratis: 720p/30fps. 1 ad = 10 gratis sessies!
+</nl-NL>
+
+<no-NO>
+Castla — Speil Android til Tesla i sanntid.
+
+- H.264 lav forsinkelse mirroring
+- Berøring fra Tesla-skjermen
+- Lydstrømming (Android 10+)
+- Virtuell skjerm via Shizuku
+- DRM-nettleser (YouTube, Netflix)
+- Delt visning: to apper side om side
+- Bluetooth Tesla-gjenkjenning & ett trykk
+- PIN & QR-kode oppsett
+- Hjemskjerm-widget
+
+PRO (engangskjøp): 1080p, 60fps, reklamefri.
+Gratis: 720p/30fps. 1 annonse = 10 gratis økter!
+</no-NO>
+
+<zh-CN>
+Castla — 安卓实时镜像到特斯拉。
+
+- H.264低延迟镜像
+- 特斯拉触屏操控
+- 音频串流 (Android 10+)
+- Shizuku虚拟显示
+- DRM浏览器 (YouTube, Netflix)
+- 分屏：两个应用并排
+- 蓝牙检测 & 一键开始
+- PIN & 二维码快速连接
+- 主屏幕小组件
+
+PRO（一次性）：1080p、60fps、无广告。
+免费：720p/30fps。看1次广告＝10次免费！
+</zh-CN>

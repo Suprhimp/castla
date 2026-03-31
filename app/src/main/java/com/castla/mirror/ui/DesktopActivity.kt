@@ -3,10 +3,15 @@ package com.castla.mirror.ui
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
@@ -399,7 +404,7 @@ class DesktopActivity : Activity() {
         }
         val resolveInfos = pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
 
-        return resolveInfos
+        val realApps = resolveInfos
             .filter { it.activityInfo.packageName != packageName }
             .sortedBy { it.loadLabel(pm).toString().lowercase() }
             .map { ri ->
@@ -411,6 +416,99 @@ class DesktopActivity : Activity() {
                 )
                 info.copy(category = classifyApp(info))
             }
+
+        // Add demo apps on emulator for richer screenshots
+        if (isEmulator()) {
+            return (realApps + getDemoApps()).distinctBy { it.packageName }
+        }
+        return realApps
+    }
+
+    private fun isEmulator(): Boolean {
+        return Build.FINGERPRINT.contains("generic") ||
+                Build.FINGERPRINT.contains("emulator") ||
+                Build.MODEL.contains("Emulator") ||
+                Build.MODEL.contains("Android SDK") ||
+                Build.PRODUCT.contains("sdk") ||
+                Build.PRODUCT.contains("emulator")
+    }
+
+    private fun getDemoApps(): List<AppInfo> {
+        // Read locale from system property (more reliable on emulator than Configuration)
+        val sysProp = try {
+            @Suppress("DEPRECATION")
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, "persist.sys.locale", "") as String
+        } catch (_: Exception) { "" }
+        val locale = if (sysProp.isNotEmpty()) {
+            sysProp.split("-", "_").firstOrNull() ?: "en"
+        } else {
+            resources.configuration.locales[0]?.language ?: "en"
+        }
+
+        // Navigation apps vary by locale
+        val navApps = when (locale) {
+            "ko" -> listOf(
+                Triple("com.skt.tmap.ku", "T Map", "tmap.png"),
+                Triple("com.locnall.KimGiSa", "Kakao Navi", "kakao_navi.png"),
+                Triple("com.nhn.android.nmap", "Naver Map", "naver_map.png"),
+            )
+            "ja" -> listOf(
+                Triple("com.waze", "Waze", "waze.png"),
+                Triple("com.sygic.aura", "Sygic", "sygic.png"),
+            )
+            "zh" -> listOf(
+                Triple("com.baidu.BaiduMap", "百度地图", "baidu_maps.png"),
+                Triple("com.autonavi.minimap", "高德地图", "amap.png"),
+            )
+            else -> listOf(
+                Triple("com.waze", "Waze", "waze.png"),
+                Triple("com.sygic.aura", "Sygic", "sygic.png"),
+            )
+        }
+
+        // Video & Music are universal
+        val videoApps = listOf(
+            Triple("com.netflix.mediaclient", "Netflix", "netflix.png"),
+            Triple("com.disney.disneyplus", "Disney+", "disney_plus.png"),
+            Triple("com.amazon.avod", "Prime Video", "prime_video.png"),
+        )
+        val musicApps = listOf(
+            Triple("com.spotify.music", "Spotify", "spotify.png"),
+            Triple("com.apple.android.music", "Apple Music", "apple_music.png"),
+            Triple("com.iloen.melon", "Melon", "melon.png"),
+        )
+
+        val result = mutableListOf<AppInfo>()
+        for ((pkg, label, iconFile) in navApps) {
+            loadDemoIcon(iconFile)?.let { icon ->
+                result.add(AppInfo(pkg, "$pkg.MainActivity", label, icon, AppCategory.NAVIGATION))
+            }
+        }
+        for ((pkg, label, iconFile) in videoApps) {
+            loadDemoIcon(iconFile)?.let { icon ->
+                result.add(AppInfo(pkg, "$pkg.MainActivity", label, icon, AppCategory.VIDEO))
+            }
+        }
+        for ((pkg, label, iconFile) in musicApps) {
+            loadDemoIcon(iconFile)?.let { icon ->
+                result.add(AppInfo(pkg, "$pkg.MainActivity", label, icon, AppCategory.MUSIC))
+            }
+        }
+        return result
+    }
+
+    private fun loadDemoIcon(filename: String): Drawable? {
+        return try {
+            val stream = assets.open("demo_icons/$filename")
+            val bitmap = BitmapFactory.decodeStream(stream)
+            stream.close()
+            if (bitmap != null) BitmapDrawable(resources, bitmap) else null
+        } catch (e: Exception) {
+            Log.w("DesktopActivity", "Failed to load demo icon: $filename", e)
+            null
+        }
     }
 
     private data class AppInfo(

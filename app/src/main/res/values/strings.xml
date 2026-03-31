@@ -17,6 +17,11 @@
     <string name="toast_bluetooth_permission_missing">Bluetooth permission missing. Auto-detect may not work.</string>
     <string name="toast_tesla_paired_auto_detect">Tesla paired! Auto-detect enabled.</string>
     <string name="toast_tesla_auto_detect_disabled">Tesla auto-detect disabled</string>
+    <string name="title_ble_fallback">BLE Fallback Scanner</string>
+    <string name="desc_ble_fallback">Scans for Tesla BLE signals as backup detection</string>
+    <string name="toast_ble_scan_enabled">BLE fallback scanner enabled</string>
+    <string name="toast_ble_scan_disabled">BLE fallback scanner disabled</string>
+    <string name="toast_ble_permission_denied">BLE scan permission required</string>
     <string name="toast_requesting_screen_capture">Requesting screen capture...</string>
     <string name="toast_error">Error: %s</string>
 
@@ -30,9 +35,9 @@
     <string name="desc_tesla_auto_detect_on">You\'ll get a notification when Tesla connects</string>
     <string name="desc_tesla_auto_detect_off">Get notified when your Tesla is nearby</string>
     <string name="status_streaming_active">Streaming Active</string>
+    <string name="status_preparing">Preparing…</string>
     <string name="status_ready_to_stream">Ready to Stream</string>
     <string name="title_open_tesla_browser">Open Tesla Browser</string>
-    <string name="label_enter_pin">ENTER PIN</string>
     <string name="title_tesla_setup_required">Tesla Setup Required</string>
     <string name="desc_shizuku_install_required">Tesla browser needs Shizuku to connect.\nTap below to see how to install Shizuku.</string>
     <string name="btn_how_to_install_shizuku">How to Install Shizuku</string>
@@ -45,7 +50,45 @@
     <string name="btn_stop_mirroring">Stop Mirroring</string>
     <string name="btn_start_mirroring">Start Mirroring</string>
     <string name="title_how_to_use">How to use</string>
-    <string name="desc_how_to_use">1. Connect phone and Tesla to the same WiFi\n2. Tap \"Start Mirroring\" above\n3. Open the URL in Tesla\'s browser\n4. Enter the 4-digit PIN\n5. Your phone screen will appear on Tesla</string>
+    <string name="desc_how_to_use">1. Connect phone and Tesla to the same WiFi\n2. Tap \"Start Mirroring\" above\n3. Open the URL in Tesla\'s browser\n4. Your phone screen will appear on Tesla</string>
     <string name="title_network_setup_log">Network Setup Log</string>
     <string name="btn_copy">Copy</string>
+
+    <string name="title_free_mirroring">Free Mirroring</string>
+    <string name="desc_free_credits">%d sessions remaining</string>
+    <string name="desc_no_credits">Watch an ad to get 10 free sessions</string>
+    <string name="btn_watch_ad">Watch Ad — Get 10 Free Sessions</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_back">Back</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_stop_streaming_warning">Stop streaming to change settings</string>
+    <string name="thermal_warning_light">Device is warm — quality slightly reduced</string>
+    <string name="thermal_warning_moderate">Device is getting hot — quality reduced to prevent overheating</string>
+    <string name="thermal_warning_critical">Device is very hot — quality heavily reduced</string>
+    <string name="thermal_warning_emergency">Device is overheating — audio disabled, quality at minimum</string>
+    <string name="settings_max_resolution">Max Resolution</string>
+    <string name="settings_frame_rate">Frame Rate</string>
+    <string name="settings_audio_experimental">Audio (Experimental)</string>
+    <string name="settings_stream_device_audio">Stream device audio</string>
+    <string name="settings_audio_description">Requires Android 10+. Captures system output.</string>
+    <string name="settings_unlock_all_features">Unlock all features</string>
+    <string name="settings_pro_description">1080p, 60fps, and more</string>
+    <string name="settings_upgrade">Upgrade</string>
+    <string name="settings_current_config">Current Configuration</string>
+    <string name="settings_full_screen">Full Screen</string>
+    <string name="settings_audio_on">, audio on</string>
+    <string name="settings_auto_bitrate">Auto Bitrate</string>
+    <string name="settings_app_mode">App: %s</string>
+    <string name="settings_res_720">720p (Normal)</string>
+    <string name="settings_res_1080">1080p (High)</string>
+
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">Auto Hotspot</string>
+    <string name="settings_auto_hotspot_title">Auto-toggle hotspot</string>
+    <string name="settings_auto_hotspot_description">Automatically turn on hotspot when mirroring starts, and turn it off when mirroring stops. Requires Shizuku.</string>
+    <string name="toast_hotspot_enabling">Enabling hotspot...</string>
+    <string name="toast_hotspot_enabled">Hotspot enabled</string>
+    <string name="toast_hotspot_failed">Failed to enable hotspot. Check Shizuku is running.</string>
+    <string name="toast_hotspot_disabled">Hotspot disabled</string>
 </resources>

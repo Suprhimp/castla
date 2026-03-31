@@ -1,3 +1,5 @@
+gradle.startParameter.isOffline = false
+
 pluginManagement {
     repositories {
         gradlePluginPortal()

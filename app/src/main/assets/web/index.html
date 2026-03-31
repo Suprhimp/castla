@@ -570,6 +570,21 @@
             background: rgba(255,255,255,0.35);
             box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
         }
+        #split-toolbar-tap-zone {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 30%;
+            width: 40%;
+            height: 48px;
+            z-index: 230;
+            cursor: pointer;
+            pointer-events: none;
+        }
+        #player-shell.browser-split #split-toolbar-tap-zone,
+        #player-shell.freeform-split #split-toolbar-tap-zone {
+            display: block;
+        }
         #split-pane-toolbar {
             position: absolute;
             top: 12px;
@@ -699,6 +714,7 @@
                     </div>
                 </div>
             </div>
+            <div id="split-toolbar-tap-zone"></div>
             <div id="split-pane-toolbar">
                 <button class="split-pane-btn split-ratio-btn" data-ratio="0.3">3:7</button>
                 <button class="split-pane-btn split-ratio-btn" data-ratio="0.4">4:6</button>

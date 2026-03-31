@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Build
+import android.os.PowerManager
 import com.castla.mirror.R
 import androidx.compose.ui.res.stringResource
 
@@ -90,6 +92,7 @@ fun SettingsScreen(
     settings: StreamSettings,
     isStreaming: Boolean,
     isPremium: Boolean = false,
+    thermalStatus: Int = 0,
     onSettingsChanged: (StreamSettings) -> Unit,
     onBackClick: () -> Unit,
     onUpgradeClick: (() -> Unit)? = null
@@ -114,13 +117,13 @@ fun SettingsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.settings_back),
                         tint = Color.White
                     )
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
-                    text = "Settings",
+                    text = stringResource(R.string.settings_title),
                     fontSize = 32.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White
@@ -130,7 +133,7 @@ fun SettingsScreen(
             AnimatedVisibility(visible = isStreaming) {
                 Box(modifier = Modifier.padding(bottom = 24.dp)) {
                     Text(
-                        text = "Stop streaming to change settings",
+                        text = stringResource(R.string.settings_stop_streaming_warning),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFFFF5252),
                         fontWeight = FontWeight.Bold
@@ -138,8 +141,42 @@ fun SettingsScreen(
                 }
             }
 
+            // Thermal throttling warning
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val thermalWarning = when (thermalStatus) {
+                    PowerManager.THERMAL_STATUS_EMERGENCY ->
+                        stringResource(R.string.thermal_warning_emergency)
+                    PowerManager.THERMAL_STATUS_CRITICAL,
+                    PowerManager.THERMAL_STATUS_SEVERE ->
+                        stringResource(R.string.thermal_warning_critical)
+                    PowerManager.THERMAL_STATUS_MODERATE ->
+                        stringResource(R.string.thermal_warning_moderate)
+                    PowerManager.THERMAL_STATUS_LIGHT ->
+                        stringResource(R.string.thermal_warning_light)
+                    else -> null
+                }
+                AnimatedVisibility(visible = thermalWarning != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 24.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFFFF5252).copy(alpha = 0.15f))
+                            .border(1.dp, Color(0xFFFF5252).copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = thermalWarning ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFFF5252),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             // Resolution
-            SettingSection(title = "Max Resolution") {
+            SettingSection(title = stringResource(R.string.settings_max_resolution)) {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -147,8 +184,12 @@ fun SettingsScreen(
                 ) {
                     StreamSettings.Resolution.entries.forEach { res ->
                         val isResLocked = !isPremium && res == StreamSettings.Resolution.RES_1080
+                        val localizedLabel = when (res) {
+                            StreamSettings.Resolution.RES_720 -> stringResource(R.string.settings_res_720)
+                            StreamSettings.Resolution.RES_1080 -> stringResource(R.string.settings_res_1080)
+                        }
                         ModernOptionChip(
-                            text = if (isResLocked) "${res.label} PRO" else res.label,
+                            text = if (isResLocked) "$localizedLabel PRO" else localizedLabel,
                             selected = settings.maxResolution == res,
                             onClick = {
                                 if (!isStreaming && !isResLocked) onSettingsChanged(settings.copy(maxResolution = res))
@@ -162,7 +203,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(20.dp))
 
             // FPS
-            SettingSection(title = "Frame Rate") {
+            SettingSection(title = stringResource(R.string.settings_frame_rate)) {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -185,7 +226,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(20.dp))
 
             // Audio
-            SettingSection(title = "Audio (Experimental)") {
+            SettingSection(title = stringResource(R.string.settings_audio_experimental)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -193,14 +234,14 @@ fun SettingsScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Stream device audio",
+                            text = stringResource(R.string.settings_stream_device_audio),
                             style = MaterialTheme.typography.bodyLarge,
                             color = Color.White,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Requires Android 10+. Captures system output.",
+                            text = stringResource(R.string.settings_audio_description),
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.6f)
                         )
@@ -222,10 +263,50 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Auto Hotspot
+            SettingSection(title = stringResource(R.string.settings_auto_hotspot)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_auto_hotspot_title),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.settings_auto_hotspot_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+                    }
+                    Switch(
+                        checked = settings.autoHotspot,
+                        onCheckedChange = { enabled ->
+                            if (!isStreaming) onSettingsChanged(settings.copy(autoHotspot = enabled))
+                        },
+                        enabled = !isStreaming,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF2979FF),
+                            uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.2f),
+                            uncheckedBorderColor = Color.Transparent
+                        )
+                    )
+                }
+            }
+
             // PRO Upgrade
             if (!isPremium && onUpgradeClick != null) {
                 Spacer(modifier = Modifier.height(20.dp))
-                SettingSection(title = "Castla PRO") {
+                SettingSection(title = stringResource(R.string.title_castla_pro)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -233,14 +314,14 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Unlock all features",
+                                text = stringResource(R.string.settings_unlock_all_features),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = Color(0xFFFFD700),
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "1080p, 60fps, and more",
+                                text = stringResource(R.string.settings_pro_description),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White.copy(alpha = 0.6f)
                             )
@@ -252,7 +333,7 @@ fun SettingsScreen(
                             ),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Upgrade", color = Color.Black, fontWeight = FontWeight.ExtraBold)
+                            Text(stringResource(R.string.settings_upgrade), color = Color.Black, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
@@ -269,21 +350,26 @@ fun SettingsScreen(
             ) {
                 Column {
                     Text(
-                        text = "Current Configuration",
+                        text = stringResource(R.string.settings_current_config),
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White.copy(alpha = 0.9f),
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     val modeText = if (settings.mirroringMode == MirroringMode.APP && settings.targetAppLabel.isNotEmpty()) {
-                        "App: ${settings.targetAppLabel}"
+                        stringResource(R.string.settings_app_mode, settings.targetAppLabel)
                     } else {
-                        "Full Screen"
+                        stringResource(R.string.settings_full_screen)
                     }
+                    val resLabel = when (settings.maxResolution) {
+                        StreamSettings.Resolution.RES_720 -> stringResource(R.string.settings_res_720)
+                        StreamSettings.Resolution.RES_1080 -> stringResource(R.string.settings_res_1080)
+                    }
+                    val audioSuffix = if (settings.audioEnabled) stringResource(R.string.settings_audio_on) else ""
                     Text(
-                        text = "$modeText, Max ${settings.maxResolution.label} @ " +
-                            "${settings.fps}fps, Auto Bitrate" +
-                            if (settings.audioEnabled) ", audio on" else "",
+                        text = "$modeText, Max $resLabel @ " +
+                            "${settings.fps}fps, ${stringResource(R.string.settings_auto_bitrate)}" +
+                            audioSuffix,
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.6f)
                     )
