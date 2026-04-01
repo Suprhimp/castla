@@ -1,4 +1,5 @@
 <p align="center">
+  <img src="docs/images/app-icon.png" width="120" alt="Castla App Icon">
   <h1 align="center">Castla</h1>
   <p align="center">
     <strong>테슬라를 위한 궁극의 Android Auto 대안. Waze, 구글 맵, T맵을 테슬라 브라우저에서 바로.</strong>
@@ -11,6 +12,10 @@
   <p align="center">
     <a href="README.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.zh-CN.md">中文</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a>
   </p>
+</p>
+
+<p align="center">
+  <img src="docs/images/hero.jpg" width="700" alt="Castla - 안드로이드 화면을 테슬라에 미러링">
 </p>
 
 ---

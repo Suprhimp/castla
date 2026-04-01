@@ -1,4 +1,5 @@
 <p align="center">
+  <img src="docs/images/app-icon.png" width="120" alt="Castla App Icon">
   <h1 align="center">Castla</h1>
   <p align="center">
     <strong>L'alternative ultime à Android Auto pour Tesla. Waze, Google Maps et votre écran directement dans le navigateur Tesla.</strong>
@@ -11,6 +12,10 @@
   <p align="center">
     <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a> · <a href="README.zh-CN.md">中文</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a>
   </p>
+</p>
+
+<p align="center">
+  <img src="docs/images/hero.jpg" width="700" alt="Castla - Miroir Android sur écran Tesla">
 </p>
 
 ---
