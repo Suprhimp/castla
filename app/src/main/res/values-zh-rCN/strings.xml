@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">准备投屏</string>
     <string name="title_open_tesla_browser">打开特斯拉浏览器</string>
     <string name="title_tesla_setup_required">需要特斯拉设置</string>
-    <string name="desc_shizuku_install_required">特斯拉浏览器需要 Shizuku 才能连接。\n点击下方查看如何安装 Shizuku。</string>
-    <string name="btn_how_to_install_shizuku">如何安装 Shizuku</string>
+    <string name="desc_shizuku_install_required">特斯拉浏览器需要 Shizuku 才能连接。\n点击下方下载并安装 Shizuku。</string>
+    <string name="btn_how_to_install_shizuku">安装 Shizuku</string>
     <string name="title_shizuku_setup_steps">Shizuku 设置步骤:</string>
     <string name="desc_shizuku_setup_steps">1. 设置 &gt; 关于手机 &gt; 软件信息\n   &gt; 连续点击版本号 7 次\n2. 设置 &gt; 开发者选项\n   &gt; 无线调试 &gt; 开启\n3. 打开 Shizuku &gt; \"通过无线调试启动\"</string>
     <string name="btn_open_shizuku">打开 Shizuku</string>
