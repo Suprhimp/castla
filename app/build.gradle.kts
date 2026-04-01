@@ -46,6 +46,10 @@ android {
         }
     }
 
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
+
     buildFeatures {
         compose = true
         aidl = true
