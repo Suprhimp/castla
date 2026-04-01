@@ -121,7 +121,7 @@ class TunTcpRelay(
         val srcPort = u16(buf, t)
         val dstPort = u16(buf, t + 2)
         val seq = u32(buf, t + 4)
-        val ackNum = u32(buf, t + 8)
+        val _ackNum = u32(buf, t + 8)
         val dataOff = ((buf[t + 12].toInt() ushr 4) and 0xF) * 4
         val flags = buf[t + 13].toInt() and 0x3F
         val payStart = t + dataOff

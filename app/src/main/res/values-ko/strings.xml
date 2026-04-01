@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p (일반)</string>
     <string name="settings_res_1080">1080p (고화질)</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">자동 핫스팟</string>
+    <string name="settings_auto_hotspot_title">핫스팟 자동 전환</string>
+    <string name="settings_auto_hotspot_description">미러링 시작 시 핫스팟을 자동으로 켜고, 미러링 종료 시 자동으로 끕니다. Shizuku가 필요합니다.</string>
+    <string name="toast_hotspot_enabling">핫스팟 켜는 중...</string>
+    <string name="toast_hotspot_enabled">핫스팟이 켜졌습니다</string>
+    <string name="toast_hotspot_failed">핫스팟 켜기 실패. Shizuku가 실행 중인지 확인하세요.</string>
+    <string name="toast_hotspot_disabled">핫스팟이 꺼졌습니다</string>
+    <string name="dialog_hotspot_off_title">핫스팟을 끌까요?</string>
+    <string name="dialog_hotspot_off_message">미러링을 위해 핫스팟이 켜졌습니다. 끄시겠습니까?</string>
+    <string name="dialog_hotspot_off_yes">끄기</string>
+    <string name="dialog_hotspot_off_no">유지</string>
+
+    <!-- Language -->
+    <string name="settings_language">언어</string>
+    <string name="settings_language_system_default">시스템 기본값</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">개발자 후원</string>
     <string name="settings_support_description">Castla는 무료 오픈소스 앱입니다.\n유용하게 사용하셨다면 커피 한 잔 사주세요!</string>

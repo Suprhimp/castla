@@ -23,7 +23,8 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import java.io.File
 import com.castla.mirror.server.MirrorServer
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import java.util.regex.Pattern
@@ -72,7 +73,7 @@ import com.castla.mirror.update.UpdateManager
 import com.castla.mirror.update.UpdateManagerFactory
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
@@ -277,6 +278,7 @@ class MainActivity : ComponentActivity() {
                     ?: kotlinx.coroutines.flow.MutableStateFlow(0)).collectAsState()
 
                 if (showSettings) {
+                    BackHandler { showSettings = false }
                     SettingsScreen(
                         settings = streamSettings,
                         isStreaming = isStreaming,
@@ -940,7 +942,7 @@ fun CastlaScreen(
     shizukuInstalled: Boolean,
     shizukuRunning: Boolean,
     shizukuPermitted: Boolean = false,
-    teslaIpReady: Boolean,
+    @Suppress("unused") teslaIpReady: Boolean,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -949,9 +951,9 @@ fun CastlaScreen(
     onGrantShizukuPermission: () -> Unit = {},
     shizukuDownloadProgress: Float = -1f,
     networkDiagLog: String = "",
-    teslaAutoDetectEnabled: Boolean = false,
-    onToggleAutoDetect: () -> Unit = {},
-    thermalStatus: Int = 0
+    @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
+    @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
+    @Suppress("unused") thermalStatus: Int = 0
 ) {
     MeshGradientBackground {
         Column(
