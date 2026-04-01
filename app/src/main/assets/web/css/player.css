@@ -136,19 +136,3 @@ html, body {
     border-radius: 4px;
 }
 
-#ad-banner {
-    width: 100%;
-    text-align: center;
-    flex-shrink: 0;
-    z-index: 10;
-    pointer-events: auto;
-    opacity: 0.92;
-    cursor: pointer;
-    background: #000;
-}
-
-#ad-banner img {
-    max-width: 100%;
-    height: auto;
-    display: block;
-}

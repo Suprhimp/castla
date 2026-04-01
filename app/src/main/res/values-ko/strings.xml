@@ -27,10 +27,7 @@
 
     <string name="subtitle_tesla_screen_mirroring">테슬라 화면 미러링</string>
     <string name="btn_settings">설정</string>
-    <string name="title_castla_pro">Castla PRO</string>
-    <string name="desc_castla_pro_features">모든 앱 잠금 해제  /  1080p 스트리밍  /  광고 없음</string>
-    <string name="btn_upgrade_pro">업그레이드 — 평생 이용권</string>
-    <string name="title_tesla_auto_detect_on">테슬라 자동 감지 ON</string>
+<string name="title_tesla_auto_detect_on">테슬라 자동 감지 ON</string>
     <string name="title_tesla_auto_detect">테슬라 자동 감지</string>
     <string name="desc_tesla_auto_detect_on">테슬라가 연결되면 알림을 받습니다</string>
     <string name="desc_tesla_auto_detect_off">테슬라가 근처에 있을 때 알림을 받습니다</string>
@@ -54,11 +51,6 @@
     <string name="title_network_setup_log">네트워크 설정 로그</string>
     <string name="btn_copy">복사</string>
 
-    <string name="title_free_mirroring">무료 미러링</string>
-    <string name="desc_free_credits">%d회 세션 남음</string>
-    <string name="desc_no_credits">광고를 시청하고 무료 세션 10회를 받으세요</string>
-    <string name="btn_watch_ad">광고 시청 — 무료 세션 10회 받기</string>
-
     <!-- Settings Screen -->
     <string name="settings_back">뒤로</string>
     <string name="settings_title">설정</string>
@@ -72,14 +64,17 @@
     <string name="settings_audio_experimental">오디오 (실험적)</string>
     <string name="settings_stream_device_audio">기기 오디오 스트리밍</string>
     <string name="settings_audio_description">Android 10 이상 필요. 시스템 출력을 캡처합니다.</string>
-    <string name="settings_unlock_all_features">모든 기능 잠금 해제</string>
-    <string name="settings_pro_description">1080p, 60fps 등</string>
-    <string name="settings_upgrade">업그레이드</string>
-    <string name="settings_current_config">현재 설정</string>
+<string name="settings_current_config">현재 설정</string>
     <string name="settings_full_screen">전체 화면</string>
     <string name="settings_audio_on">, 오디오 켜짐</string>
     <string name="settings_auto_bitrate">자동 비트레이트</string>
     <string name="settings_app_mode">앱: %s</string>
     <string name="settings_res_720">720p (일반)</string>
     <string name="settings_res_1080">1080p (고화질)</string>
+
+    <!-- Support / Donate -->
+    <string name="settings_support_title">개발자 후원</string>
+    <string name="settings_support_description">Castla는 무료 오픈소스 앱입니다.\n유용하게 사용하셨다면 커피 한 잔 사주세요!</string>
+    <string name="settings_donate_kofi">Ko-fi로 후원하기</string>
+    <string name="settings_donate_kakaopay">카카오페이로 후원하기</string>
 </resources>

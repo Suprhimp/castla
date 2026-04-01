@@ -30,21 +30,9 @@ android {
         applicationId = "com.castla.mirror"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 10
+        versionName = "1.0.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    flavorDimensions += "distribution"
-    productFlavors {
-        create("playstore") {
-            dimension = "distribution"
-            // Uses default applicationId
-        }
-        create("standalone") {
-            dimension = "distribution"
-            applicationIdSuffix = ".standalone"
-        }
     }
 
     buildTypes {
@@ -98,22 +86,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
 
     // Compose
-    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
-
-    // Google Play Billing (one-time in-app purchase)
-    implementation("com.android.billingclient:billing-ktx:7.0.0")
-
-    // Google AdMob
-    implementation("com.google.android.gms:play-services-ads:23.6.0")
-
-    // Google Play In-App Updates (playstore flavor only)
-    "playstoreImplementation"("com.google.android.play:app-update:2.1.0")
-    "playstoreImplementation"("com.google.android.play:app-update-ktx:2.1.0")
 
     // QR Code generation
     implementation("com.google.zxing:core:3.5.2")

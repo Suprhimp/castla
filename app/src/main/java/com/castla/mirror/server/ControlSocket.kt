@@ -82,9 +82,6 @@ class ControlSocket(
                     val text = json.optString("text", "")
                     server.onCompositionUpdate(backspaces, text)
                 }
-                "requestPurchase" -> {
-                    server.onPurchaseRequest()
-                }
                 "goHome" -> {
                     server.onGoHomeRequest()
                 }
