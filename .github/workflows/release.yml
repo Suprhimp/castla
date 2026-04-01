@@ -4,7 +4,7 @@
 #   1. Push a tag like `v1.0.9` → triggers this workflow
 #   2. Decodes your keystore from a GitHub secret
 #   3. Builds a signed release APK
-#   4. Creates a GitHub Release with the APK attached
+#   4. Creates (or updates) a GitHub Release with the APK attached
 #
 # Required repository secrets:
 #   - KEYSTORE_BASE64    : base64-encoded keystore file  (base64 -i your.keystore | pbcopy)
@@ -18,6 +18,9 @@ on:
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -64,19 +67,18 @@ jobs:
       - name: Build signed Release APK
         run: ./gradlew assembleRelease
 
-      - name: Rename APK with version
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/castla-${VERSION}.apk
-
-      - name: Upload APK to existing Release
+      - name: Upload APK to Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          # Delete source archives (zip/tar) from release
-          for asset_id in $(gh api repos/${{ github.repository }}/releases/tags/${GITHUB_REF_NAME} --jq '.assets[] | select(.name | test("Source code")) | .id' 2>/dev/null); do
-            gh api repos/${{ github.repository }}/releases/assets/${asset_id} -X DELETE 2>/dev/null || true
-          done
-          # Upload APK to the release
-          gh release upload ${GITHUB_REF_NAME} app/build/outputs/apk/release/castla-${VERSION}.apk --clobber
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          APK_NAME="castla-${VERSION}.apk"
+          mv "$APK_PATH" "app/build/outputs/apk/release/${APK_NAME}"
+          # Create release if it doesn't exist, then upload
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Release ${GITHUB_REF_NAME}" \
+            "app/build/outputs/apk/release/${APK_NAME}" 2>/dev/null \
+          || gh release upload "${GITHUB_REF_NAME}" \
+            "app/build/outputs/apk/release/${APK_NAME}" --clobber
