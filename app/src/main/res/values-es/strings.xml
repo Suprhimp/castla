@@ -41,6 +41,7 @@
     <string name="title_shizuku_setup_steps">Pasos de configuración de Shizuku:</string>
     <string name="desc_shizuku_setup_steps">1. Ajustes &gt; Información del teléfono &gt; Información de software\n   &gt; Toca el número de compilación 7 veces\n2. Ajustes &gt; Opciones de desarrollador\n   &gt; Depuración inalámbrica &gt; ACTIVADO\n3. Abre Shizuku &gt; \"Iniciar mediante depuración inalámbrica\"</string>
     <string name="btn_open_shizuku">Abrir Shizuku</string>
+    <string name="btn_setup_guide">Guía de configuración</string>
     <string name="status_shizuku_running_setup">Shizuku se está ejecutando. Configurando la conexión de Tesla...</string>
     <string name="desc_shizuku_permission_required">Shizuku se está ejecutando, pero Castla aún no tiene permiso.\nSin permiso, solo está disponible la duplicación básica de pantalla — la entrada táctil y la apertura de aplicaciones no funcionarán.</string>
     <string name="btn_grant_shizuku_permission">Otorgar permiso de Shizuku</string>

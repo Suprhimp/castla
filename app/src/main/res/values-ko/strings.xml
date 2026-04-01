@@ -41,6 +41,7 @@
     <string name="title_shizuku_setup_steps">Shizuku 설정 단계:</string>
     <string name="desc_shizuku_setup_steps">1. 설정 &gt; 휴대전화 정보 &gt; 소프트웨어 정보\n   &gt; 빌드 번호를 7번 탭하세요\n2. 설정 &gt; 개발자 옵션\n   &gt; 무선 디버깅 &gt; 켜기\n3. Shizuku 열기 &gt; \"무선 디버깅으로 시작\"</string>
     <string name="btn_open_shizuku">Shizuku 열기</string>
+    <string name="btn_setup_guide">설정 가이드</string>
     <string name="status_shizuku_running_setup">Shizuku 실행 중. 테슬라 연결을 설정하는 중입니다...</string>
     <string name="desc_shizuku_permission_required">Shizuku가 실행 중이지만 Castla에 아직 권한이 부여되지 않았습니다.\n권한 없이는 기본 화면 미러링만 가능하며, 터치 입력과 앱 실행이 작동하지 않습니다.</string>
     <string name="btn_grant_shizuku_permission">Shizuku 권한 부여</string>

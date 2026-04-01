@@ -41,6 +41,7 @@
     <string name="title_shizuku_setup_steps">Shizuku Einrichtungsschritte:</string>
     <string name="desc_shizuku_setup_steps">1. Einstellungen &gt; Telefoninfo &gt; Softwareinformationen\n   &gt; 7 Mal auf die Buildnummer tippen\n2. Einstellungen &gt; Entwickleroptionen\n   &gt; Wireless Debugging &gt; EIN\n3. Shizuku öffnen &gt; \"Über Wireless Debugging starten\"</string>
     <string name="btn_open_shizuku">Shizuku öffnen</string>
+    <string name="btn_setup_guide">Einrichtungsanleitung</string>
     <string name="status_shizuku_running_setup">Shizuku läuft. Richte Tesla-Verbindung ein...</string>
     <string name="desc_shizuku_permission_required">Shizuku läuft, aber Castla hat noch keine Berechtigung.\nOhne Berechtigung ist nur einfache Bildschirmspiegelung verfügbar — Touch-Eingabe und App-Start funktionieren nicht.</string>
     <string name="btn_grant_shizuku_permission">Shizuku-Berechtigung erteilen</string>
