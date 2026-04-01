@@ -41,6 +41,7 @@
     <string name="title_shizuku_setup_steps">Shizuku oppsettstrinn:</string>
     <string name="desc_shizuku_setup_steps">1. Innstillinger &gt; Om telefonen &gt; Programvareinformasjon\n   &gt; Trykk på byggnummeret 7 ganger\n2. Innstillinger &gt; Utvikleralternativer\n   &gt; Trådløs feilsøking &gt; PÅ\n3. Åpne Shizuku &gt; \"Start via trådløs feilsøking\"</string>
     <string name="btn_open_shizuku">Åpne Shizuku</string>
+    <string name="btn_setup_guide">Oppsettsveiledning</string>
     <string name="status_shizuku_running_setup">Shizuku kjører. Setter opp Tesla-tilkobling...</string>
     <string name="desc_shizuku_permission_required">Shizuku kjører, men Castla har ikke tillatelse ennå.\nUten tillatelse er kun grunnleggende skjermspeiling tilgjengelig — berøringsinndata og appstart vil ikke fungere.</string>
     <string name="btn_grant_shizuku_permission">Gi Shizuku-tillatelse</string>

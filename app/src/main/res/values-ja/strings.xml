@@ -41,6 +41,7 @@
     <string name="title_shizuku_setup_steps">Shizukuセットアップ手順:</string>
     <string name="desc_shizuku_setup_steps">1. 設定 &gt; 端末情報 &gt; ソフトウェア情報\n   &gt; ビルド番号を7回タップ\n2. 設定 &gt; 開発者向けオプション\n   &gt; ワイヤレスデバッグ &gt; オン\n3. Shizukuを開く &gt; \"ワイヤレスデバッグで起動\"</string>
     <string name="btn_open_shizuku">Shizukuを開く</string>
+    <string name="btn_setup_guide">セットアップガイド</string>
     <string name="status_shizuku_running_setup">Shizukuが実行中です。Teslaとの接続をセットアップしています...</string>
     <string name="desc_shizuku_permission_required">Shizukuは実行中ですが、Castlaにはまだ権限が付与されていません。\n権限がないと、基本的な画面ミラーリングのみ利用可能で、タッチ入力やアプリの起動は動作しません。</string>
     <string name="btn_grant_shizuku_permission">Shizuku権限を付与</string>
