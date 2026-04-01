@@ -18,7 +18,7 @@ const tr = useTranslations(lang);
     </div>
     <p class="subtitle" style="font-size:clamp(0.9rem, 3vw, 1.05rem); line-height:1.8;">{tr('setup.desc')}</p>
 
-    <!-- Step 1 -->
+    <!-- Step 1: Shizuku 다운로드 (1장) -->
     <div class="glass" style="margin-bottom:24px;">
       <div class="steps">
         <div class="step">
@@ -29,11 +29,16 @@ const tr = useTranslations(lang);
               {tr('setup.1.btn')}
             </a>
           </p>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step1-main.png" alt="Shizuku main screen" loading="lazy" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Step 2 -->
+    <!-- Step 2: 개발자 옵션 활성화 (2장) -->
     <div class="glass" style="margin-bottom:24px;">
       <div class="steps" style="counter-reset: step 1;">
         <div class="step">
@@ -42,11 +47,19 @@ const tr = useTranslations(lang);
           <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
             {tr('setup.2.steps').split('|').map((s) => <li set:html={s} />)}
           </ol>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step2-phone-info.png" alt="Phone info - software info" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step2-build-number.png" alt="Tap build number to enable developer mode" loading="lazy" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Step 3 -->
+    <!-- Step 3: 무선 디버깅 활성화 (2장) -->
     <div class="glass" style="margin-bottom:24px;">
       <div class="steps" style="counter-reset: step 2;">
         <div class="step">
@@ -55,28 +68,122 @@ const tr = useTranslations(lang);
           <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
             {tr('setup.3.steps').split('|').map((s) => <li set:html={s} />)}
           </ol>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step2-developer-options.png" alt="Developer options - wireless debugging" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step3-wireless-debugging.png" alt="Wireless debugging screen" loading="lazy" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Step 4 -->
+    <!-- Step 4: 페어링 준비 (2장) -->
     <div class="glass" style="margin-bottom:24px;">
       <div class="steps" style="counter-reset: step 3;">
         <div class="step">
           <h3>{tr('setup.4.title')}</h3>
-          <ol style="margin-top:8px; padding-left:20px; color:var(--text-dim); line-height:2;">
+          <p>{tr('setup.4.desc')}</p>
+          <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
             {tr('setup.4.steps').split('|').map((s) => <li set:html={s} />)}
           </ol>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step4-pairing.png" alt="Shizuku pairing screen" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step4-notification-allow.png" alt="Allow notifications" loading="lazy" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Step 5 -->
+    <!-- Step 5: 페어링 코드 입력 (2장) -->
     <div class="glass" style="margin-bottom:24px;">
       <div class="steps" style="counter-reset: step 4;">
         <div class="step">
           <h3>{tr('setup.5.title')}</h3>
           <p>{tr('setup.5.desc')}</p>
+          <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
+            {tr('setup.5.steps').split('|').map((s) => <li set:html={s} />)}
+          </ol>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step4-pairing-code.png" alt="Pairing code dialog" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step4-code-input.png" alt="Enter pairing code in notification" loading="lazy" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 6: Shizuku 시작 (2장) -->
+    <div class="glass" style="margin-bottom:24px;">
+      <div class="steps" style="counter-reset: step 5;">
+        <div class="step">
+          <h3>{tr('setup.6.title')}</h3>
+          <p>{tr('setup.6.desc')}</p>
+          <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
+            {tr('setup.6.steps').split('|').map((s) => <li set:html={s} />)}
+          </ol>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step4-start.png" alt="Shizuku start button" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step4-running.png" alt="Shizuku service started" loading="lazy" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 7: Castla 권한 부여 (2장) -->
+    <div class="glass" style="margin-bottom:24px;">
+      <div class="steps" style="counter-reset: step 6;">
+        <div class="step">
+          <h3>{tr('setup.7.title')}</h3>
+          <p>{tr('setup.7.desc')}</p>
+          <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
+            {tr('setup.7.steps').split('|').map((s) => <li set:html={s} />)}
+          </ol>
+          <div class="screenshot-row">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step5-castla-setup.png" alt="Castla requires Shizuku setup" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step5-permission.png" alt="Allow Shizuku permission" loading="lazy" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 8: 미러링 시작 (3장) -->
+    <div class="glass" style="margin-bottom:24px;">
+      <div class="steps" style="counter-reset: step 7;">
+        <div class="step">
+          <h3>{tr('setup.8.title')}</h3>
+          <p>{tr('setup.8.desc')}</p>
+          <ol style="margin-top:12px; padding-left:20px; color:var(--text-dim); line-height:2;">
+            {tr('setup.8.steps').split('|').map((s) => <li set:html={s} />)}
+          </ol>
+          <div class="screenshot-row screenshot-row--3">
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step5-ready.png" alt="Castla ready to mirror" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step5-capture.png" alt="Screen capture permission" loading="lazy" />
+            </div>
+            <div class="screenshot-item">
+              <img src="/images/shizuku/step5-streaming.png" alt="Castla streaming active" loading="lazy" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -97,3 +204,60 @@ const tr = useTranslations(lang);
     </div>
   </div>
 </section>
+
+<style>
+  .screenshot-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 20px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+  }
+
+  /* 3-column row */
+  .screenshot-row--3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* When only 1 image, center it and limit width */
+  .screenshot-row:has(.screenshot-item:only-child) {
+    grid-template-columns: 1fr;
+    max-width: 280px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .screenshot-item {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .screenshot-item img {
+    width: 100%;
+    max-width: 260px;
+    height: auto;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  @media (max-width: 640px) {
+    .screenshot-row {
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .screenshot-item img {
+      max-width: 100%;
+      border-radius: 8px;
+    }
+
+    .screenshot-row:has(.screenshot-item:only-child) {
+      max-width: 200px;
+    }
+  }
+</style>
