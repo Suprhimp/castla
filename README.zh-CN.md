@@ -2,7 +2,7 @@
   <img src="docs/images/app-icon.png" width="120" alt="Castla App Icon">
   <h1 align="center">Castla</h1>
   <p align="center">
-    <strong>特斯拉的终极Android Auto替代方案。在特斯拉浏览器中直接投射Waze、Google地图和手机屏幕。</strong>
+    <strong>特斯拉的终极Android Auto替代方案。在特斯拉浏览器中直接投射高德地图、百度地图和手机屏幕。</strong>
   </p>
   <p align="center">
     <a href="https://github.com/Suprhimp/castla/releases/latest"><img src="https://img.shields.io/github/v/release/Suprhimp/castla?style=flat-square" alt="Latest Release"></a>
@@ -22,7 +22,7 @@
 
 ## 什么是Castla？
 
-特斯拉没有**Android Auto**让你烦恼？想在大屏幕上使用**Waze**、Google地图？
+特斯拉没有**Android Auto**让你烦恼？想在大屏幕上使用**高德地图**、百度地图、Waze？
 
 Castla是一款免费开源解决方案，通过本地WiFi网络将安卓手机屏幕直接串流到特斯拉内置浏览器。无需互联网、无需昂贵的配件、无需云服务器、无需订阅 — 一切都在手机和车辆之间快速、安全地运行。
 
