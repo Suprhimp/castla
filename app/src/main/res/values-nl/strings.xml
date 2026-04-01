@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">Klaar om te streamen</string>
     <string name="title_open_tesla_browser">Open Tesla Browser</string>
     <string name="title_tesla_setup_required">Tesla Setup Vereist</string>
-    <string name="desc_shizuku_install_required">Tesla browser heeft Shizuku nodig om te verbinden.\nTik hieronder om te zien hoe je Shizuku installeert.</string>
-    <string name="btn_how_to_install_shizuku">Hoe installeer je Shizuku</string>
+    <string name="desc_shizuku_install_required">Tesla browser heeft Shizuku nodig om te verbinden.\nTik hieronder om Shizuku te downloaden en te installeren.</string>
+    <string name="btn_how_to_install_shizuku">Shizuku installeren</string>
     <string name="title_shizuku_setup_steps">Shizuku Setup Stappen:</string>
     <string name="desc_shizuku_setup_steps">1. Instellingen &gt; Over de telefoon &gt; Softwaregegevens\n   &gt; Tik 7 keer op Buildnummer\n2. Instellingen &gt; Ontwikkelaarsopties\n   &gt; Draadloze foutopsporing &gt; AAN\n3. Open Shizuku &gt; \"Start via Draadloze foutopsporing\"</string>
     <string name="btn_open_shizuku">Open Shizuku</string>

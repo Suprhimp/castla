@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">ストリーミング準備完了</string>
     <string name="title_open_tesla_browser">Teslaブラウザを開く</string>
     <string name="title_tesla_setup_required">Teslaの設定が必要です</string>
-    <string name="desc_shizuku_install_required">Teslaブラウザとの接続にはShizukuが必要です。\nインストール方法は下をタップしてください。</string>
-    <string name="btn_how_to_install_shizuku">Shizukuのインストール方法</string>
+    <string name="desc_shizuku_install_required">Teslaブラウザとの接続にはShizukuが必要です。\n下をタップしてShizukuをダウンロード・インストールしてください。</string>
+    <string name="btn_how_to_install_shizuku">Shizukuをインストール</string>
     <string name="title_shizuku_setup_steps">Shizukuセットアップ手順:</string>
     <string name="desc_shizuku_setup_steps">1. 設定 &gt; 端末情報 &gt; ソフトウェア情報\n   &gt; ビルド番号を7回タップ\n2. 設定 &gt; 開発者向けオプション\n   &gt; ワイヤレスデバッグ &gt; オン\n3. Shizukuを開く &gt; \"ワイヤレスデバッグで起動\"</string>
     <string name="btn_open_shizuku">Shizukuを開く</string>

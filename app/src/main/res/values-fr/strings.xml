@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">Prêt pour le streaming</string>
     <string name="title_open_tesla_browser">Ouvrir le navigateur Tesla</string>
     <string name="title_tesla_setup_required">Configuration Tesla requise</string>
-    <string name="desc_shizuku_install_required">Le navigateur Tesla a besoin de Shizuku pour se connecter.\nAppuyez ci-dessous pour voir comment installer Shizuku.</string>
-    <string name="btn_how_to_install_shizuku">Comment installer Shizuku</string>
+    <string name="desc_shizuku_install_required">Le navigateur Tesla a besoin de Shizuku pour se connecter.\nAppuyez ci-dessous pour télécharger et installer Shizuku.</string>
+    <string name="btn_how_to_install_shizuku">Installer Shizuku</string>
     <string name="title_shizuku_setup_steps">Étapes de configuration de Shizuku :</string>
     <string name="desc_shizuku_setup_steps">1. Paramètres &gt; À propos du téléphone &gt; Infos sur le logiciel\n   &gt; Appuyez 7 fois sur le numéro de version\n2. Paramètres &gt; Options pour les développeurs\n   &gt; Débogage sans fil &gt; ACTIVÉ\n3. Ouvrez Shizuku &gt; \"Démarrer via le débogage sans fil\"</string>
     <string name="btn_open_shizuku">Ouvrir Shizuku</string>

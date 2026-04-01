@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">Listo para transmitir</string>
     <string name="title_open_tesla_browser">Abre el navegador de Tesla</string>
     <string name="title_tesla_setup_required">Configuración de Tesla requerida</string>
-    <string name="desc_shizuku_install_required">El navegador de Tesla necesita Shizuku para conectarse.\nToca a continuación para ver cómo instalar Shizuku.</string>
-    <string name="btn_how_to_install_shizuku">Cómo instalar Shizuku</string>
+    <string name="desc_shizuku_install_required">El navegador de Tesla necesita Shizuku para conectarse.\nToca a continuación para descargar e instalar Shizuku.</string>
+    <string name="btn_how_to_install_shizuku">Instalar Shizuku</string>
     <string name="title_shizuku_setup_steps">Pasos de configuración de Shizuku:</string>
     <string name="desc_shizuku_setup_steps">1. Ajustes &gt; Información del teléfono &gt; Información de software\n   &gt; Toca el número de compilación 7 veces\n2. Ajustes &gt; Opciones de desarrollador\n   &gt; Depuración inalámbrica &gt; ACTIVADO\n3. Abre Shizuku &gt; \"Iniciar mediante depuración inalámbrica\"</string>
     <string name="btn_open_shizuku">Abrir Shizuku</string>
