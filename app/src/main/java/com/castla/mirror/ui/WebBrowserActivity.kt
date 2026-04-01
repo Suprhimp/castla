@@ -68,6 +68,7 @@ class WebBrowserActivity : Activity() {
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
             )
         } else {
+            @Suppress("DEPRECATION")
             window.setFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -118,6 +119,7 @@ class WebBrowserActivity : Activity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            @Suppress("DEPRECATION")
             databaseEnabled = true
             mediaPlaybackRequiresUserGesture = false
             useWideViewPort = !isSplit
@@ -201,6 +203,7 @@ class WebBrowserActivity : Activity() {
         Log.i(TAG, "WebBrowserActivity resumed")
     }
 
+    @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (customView != null) {
             webView.webChromeClient?.onHideCustomView()

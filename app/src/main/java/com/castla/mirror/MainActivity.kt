@@ -942,7 +942,7 @@ fun CastlaScreen(
     shizukuInstalled: Boolean,
     shizukuRunning: Boolean,
     shizukuPermitted: Boolean = false,
-    teslaIpReady: Boolean,
+    @Suppress("unused") teslaIpReady: Boolean,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -951,9 +951,9 @@ fun CastlaScreen(
     onGrantShizukuPermission: () -> Unit = {},
     shizukuDownloadProgress: Float = -1f,
     networkDiagLog: String = "",
-    teslaAutoDetectEnabled: Boolean = false,
-    onToggleAutoDetect: () -> Unit = {},
-    thermalStatus: Int = 0
+    @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
+    @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
+    @Suppress("unused") thermalStatus: Int = 0
 ) {
     MeshGradientBackground {
         Column(
