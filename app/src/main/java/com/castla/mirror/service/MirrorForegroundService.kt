@@ -33,7 +33,6 @@ import com.castla.mirror.capture.ScreenCaptureManager
 import com.castla.mirror.capture.VideoEncoder
 import com.castla.mirror.capture.VirtualDisplayManager
 import com.castla.mirror.input.TouchInjector
-import com.castla.mirror.billing.LicenseManager
 import com.castla.mirror.server.MirrorServer
 import com.castla.mirror.shizuku.IPrivilegedService
 import com.castla.mirror.shizuku.ShizukuSetup
@@ -161,10 +160,6 @@ class MirrorForegroundService : Service() {
         mirrorServer?.setBrowserConnectionListener(listener)
     }
 
-    fun setPurchaseRequestListener(listener: (() -> Unit)?) {
-        mirrorServer?.setPurchaseRequestListener(listener)
-    }
-
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onCreate() {
@@ -216,10 +211,14 @@ class MirrorForegroundService : Service() {
         when (status) {
             PowerManager.THERMAL_STATUS_CRITICAL,
             PowerManager.THERMAL_STATUS_EMERGENCY -> {
-                // CRITICAL+ — the device is dangerously hot. Stop mirroring entirely
-                // to prevent a system-level thermal shutdown / forced reboot.
-                Log.e(TAG, "Thermal status CRITICAL/EMERGENCY ($status) — auto-stopping mirroring")
-                requestStopAsync("thermal_critical_$status")
+                Log.w(TAG, "Thermal status CRITICAL/EMERGENCY ($status) — warning only, continuing")
+                android.os.Handler(mainLooper).post {
+                    android.widget.Toast.makeText(
+                        this,
+                        getString(R.string.toast_thermal_warning),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
             }
             PowerManager.THERMAL_STATUS_SEVERE -> {
                 Log.w(TAG, "Thermal status SEVERE ($status) - Throttling encoder heavily + fps/resolution")
@@ -713,7 +712,7 @@ class MirrorForegroundService : Service() {
         val effectiveMaxHeight = effectiveMaxHeightForRequest(targetHeight, isSecondaryPane = true)
         Log.i(
             TAG,
-            "Rebuilding secondary pipeline requested=${targetWidth}x${targetHeight} effectiveMaxHeight=$effectiveMaxHeight premium=${LicenseManager.isPremiumNow}"
+            "Rebuilding secondary pipeline requested=${targetWidth}x${targetHeight} effectiveMaxHeight=$effectiveMaxHeight"
         )
         var width = targetWidth
         var height = targetHeight
@@ -1850,8 +1849,7 @@ class MirrorForegroundService : Service() {
     private fun effectiveMaxHeightForRequest(requestedHeight: Int, isSecondaryPane: Boolean = false): Int {
         val baseMax = when {
             shouldUseRequestedHeightForSplit(isSecondaryPane) -> requestedHeight
-            LicenseManager.isPremiumNow -> currentMaxHeight
-            else -> 720
+            else -> currentMaxHeight
         }
         // Apply thermal resolution cap if active
         val thermalCap = thermalMaxHeight
@@ -1886,7 +1884,7 @@ class MirrorForegroundService : Service() {
 
         Log.i(
             TAG,
-            "Rebuilding pipeline requested=${newWidth}x${newHeight} -> ${width}x${height} effectiveMaxHeight=$effectiveMaxHeight premium=${LicenseManager.isPremiumNow} splitActive=${shouldUseRequestedHeightForSplit()} force=$force"
+            "Rebuilding pipeline requested=${newWidth}x${newHeight} -> ${width}x${height} effectiveMaxHeight=$effectiveMaxHeight splitActive=${shouldUseRequestedHeightForSplit()} force=$force"
         )
 
         try {

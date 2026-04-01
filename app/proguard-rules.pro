@@ -18,10 +18,6 @@
 -keep class * extends android.os.IInterface { *; }
 -keep class * extends android.os.Binder { *; }
 
-# Google AdMob / Play Services Ads
--keep class com.google.android.gms.ads.** { *; }
--keep class com.google.ads.** { *; }
-
 # Strip debug logs in release
 -assumenosideeffects class android.util.Log {
     public static int d(...);

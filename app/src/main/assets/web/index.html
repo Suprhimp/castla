@@ -123,30 +123,6 @@
             color: #ddd;
         }
 
-        /* Locked app cells for free users */
-        .app-cell.locked .app-icon {
-            opacity: 0.35;
-            filter: grayscale(100%) drop-shadow(0px 4px 6px rgba(0,0,0,0.5));
-        }
-        .app-cell.locked .app-label {
-            color: #666;
-        }
-        .app-cell.locked {
-            position: relative;
-        }
-        .app-cell.locked::after {
-            content: 'PRO';
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            background: rgba(0,0,0,0.75);
-            color: #FFD700;
-            font-size: 9px;
-            font-weight: bold;
-            padding: 2px 6px;
-            border-radius: 6px;
-        }
-
         /* ── Split Launcher Drawer (Dual App) ── */
         #split-drawer {
             position: absolute;
@@ -681,9 +657,6 @@
             <div class="split-app-list" id="split-app-list"></div>
         </div>
 
-        <div id="ad-banner" style="display:none;">
-            <img src="/img/promo-banner.png" width="728" height="90" alt="Upgrade to PRO">
-        </div>
         <div id="player-shell">
             <div id="stream-pane">
                 <canvas id="display"></canvas>
