@@ -29,7 +29,9 @@ class HotspotManager(private val context: Context) {
             wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
                 override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
                     hotspotReservation = reservation
+                    @Suppress("DEPRECATION")
                     val config = reservation.wifiConfiguration
+                    @Suppress("DEPRECATION")
                     val info = HotspotInfo(
                         ssid = config?.SSID ?: "Unknown",
                         password = config?.preSharedKey ?: "",

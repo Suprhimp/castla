@@ -11,7 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,6 +31,8 @@ import com.castla.mirror.R
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 
 @Composable
 fun MeshGradientBackground(content: @Composable BoxScope.() -> Unit) {
@@ -118,7 +120,7 @@ fun SettingsScreen(
                         .background(Color.White.copy(alpha = 0.1f))
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ArrowBack,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.settings_back),
                         tint = Color.White
                     )
@@ -303,12 +305,79 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Language
+            run {
+                val languages = listOf(
+                    "" to stringResource(R.string.settings_language_system_default),
+                    "en" to "English",
+                    "ko" to "한국어",
+                    "zh-CN" to "中文（简体）",
+                    "ja" to "日本語",
+                    "de" to "Deutsch",
+                    "fr" to "Français",
+                    "es" to "Español",
+                    "nl" to "Nederlands",
+                    "no" to "Norsk"
+                )
+                val currentLocales = AppCompatDelegate.getApplicationLocales()
+                val currentTag = if (currentLocales.isEmpty) "" else currentLocales.toLanguageTags()
+                val currentLabel = languages.firstOrNull { it.first == currentTag }?.second
+                    ?: languages.first().second
+                var expanded by remember { mutableStateOf(false) }
+
+                SettingSection(title = stringResource(R.string.settings_language)) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.1f))
+                                .clickable { expanded = !expanded }
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Text(
+                                text = currentLabel,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false }
+                        ) {
+                            languages.forEach { (tag, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        expanded = false
+                                        val localeList = if (tag.isEmpty()) {
+                                            LocaleListCompat.getEmptyLocaleList()
+                                        } else {
+                                            LocaleListCompat.forLanguageTags(tag)
+                                        }
+                                        AppCompatDelegate.setApplicationLocales(localeList)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
 
             // Support the Developer
             run {
                 val context = LocalContext.current
-                val isKorean = java.util.Locale.getDefault().language == "ko"
+                val appLocales = AppCompatDelegate.getApplicationLocales()
+                val isKorean = if (appLocales.isEmpty) {
+                    java.util.Locale.getDefault().language == "ko"
+                } else {
+                    appLocales.toLanguageTags().startsWith("ko")
+                }
                 val donateUrl = if (isKorean) "https://qr.kakaopay.com/Ej8mYEElE" else "https://ko-fi.com/suprhimp"
                 val buttonLabel = if (isKorean) stringResource(R.string.settings_donate_kakaopay) else stringResource(R.string.settings_donate_kofi)
 

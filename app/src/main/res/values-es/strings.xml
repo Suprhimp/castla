@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Alta)</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">Hotspot automático</string>
+    <string name="settings_auto_hotspot_title">Alternar hotspot automáticamente</string>
+    <string name="settings_auto_hotspot_description">Enciende automáticamente el hotspot al iniciar la duplicación y lo apaga al detenerla. Requiere Shizuku.</string>
+    <string name="toast_hotspot_enabling">Activando hotspot...</string>
+    <string name="toast_hotspot_enabled">Hotspot activado</string>
+    <string name="toast_hotspot_failed">Error al activar el hotspot. Verifica que Shizuku esté ejecutándose.</string>
+    <string name="toast_hotspot_disabled">Hotspot desactivado</string>
+    <string name="dialog_hotspot_off_title">¿Apagar hotspot?</string>
+    <string name="dialog_hotspot_off_message">El hotspot se encendió para la duplicación. ¿Deseas apagarlo?</string>
+    <string name="dialog_hotspot_off_yes">Apagar</string>
+    <string name="dialog_hotspot_off_no">Mantener</string>
+
+    <!-- Language -->
+    <string name="settings_language">Idioma</string>
+    <string name="settings_language_system_default">Predeterminado del sistema</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">Apoyar al desarrollador</string>
     <string name="settings_support_description">Castla es gratuito y de código abierto.\nSi te resulta útil, invítame a un café!</string>
