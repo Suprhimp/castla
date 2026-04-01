@@ -2,7 +2,7 @@
   <img src="docs/images/app-icon.png" width="120" alt="Castla App Icon">
   <h1 align="center">Castla</h1>
   <p align="center">
-    <strong>L'alternative ultime à Android Auto pour Tesla. Waze, Google Maps, Spotify et votre écran directement dans le navigateur Tesla.</strong>
+    <strong>L'alternative ultime à Android Auto pour Tesla. Waze, Google Maps et votre écran directement dans le navigateur Tesla.</strong>
   </p>
   <p align="center">
     <a href="https://github.com/Suprhimp/castla/releases/latest"><img src="https://img.shields.io/github/v/release/Suprhimp/castla?style=flat-square" alt="Latest Release"></a>
@@ -22,7 +22,7 @@
 
 ## Qu'est-ce que Castla ?
 
-**Android Auto** vous manque dans votre Tesla ? Vous voulez utiliser **Waze**, Google Maps ou Spotify sur le grand écran ?
+**Android Auto** vous manque dans votre Tesla ? Vous voulez utiliser **Waze** ou Google Maps sur le grand écran ?
 
 Castla est une solution gratuite et open source qui diffuse l'écran de votre téléphone Android directement sur le navigateur intégré de Tesla via votre réseau WiFi local. Pas de connexion internet, pas de dongles coûteux, pas de serveurs cloud, pas d'abonnement — tout reste rapide, sécurisé et entièrement entre votre téléphone et votre voiture.
 
