@@ -1,4 +1,5 @@
 <p align="center">
+  <img src="docs/images/app-icon.png" width="120" alt="Castla App Icon">
   <h1 align="center">Castla</h1>
   <p align="center">
     <strong>特斯拉的终极Android Auto替代方案。在特斯拉浏览器中直接投射Waze、Google地图和手机屏幕。</strong>
@@ -11,6 +12,10 @@
   <p align="center">
     <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a> · <a href="README.de.md">Deutsch</a> · <a href="README.es.md">Español</a> · <a href="README.fr.md">Français</a>
   </p>
+</p>
+
+<p align="center">
+  <img src="docs/images/hero.jpg" width="700" alt="Castla - 将Android投射到Tesla屏幕">
 </p>
 
 ---
