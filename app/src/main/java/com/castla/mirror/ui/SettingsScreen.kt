@@ -23,10 +23,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import com.castla.mirror.R
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun MeshGradientBackground(content: @Composable BoxScope.() -> Unit) {
@@ -91,11 +95,9 @@ fun ModernOptionChip(text: String, selected: Boolean, onClick: () -> Unit, enabl
 fun SettingsScreen(
     settings: StreamSettings,
     isStreaming: Boolean,
-    isPremium: Boolean = false,
     thermalStatus: Int = 0,
     onSettingsChanged: (StreamSettings) -> Unit,
-    onBackClick: () -> Unit,
-    onUpgradeClick: (() -> Unit)? = null
+    onBackClick: () -> Unit
 ) {
     MeshGradientBackground {
         Column(
@@ -183,18 +185,17 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StreamSettings.Resolution.entries.forEach { res ->
-                        val isResLocked = !isPremium && res == StreamSettings.Resolution.RES_1080
                         val localizedLabel = when (res) {
                             StreamSettings.Resolution.RES_720 -> stringResource(R.string.settings_res_720)
                             StreamSettings.Resolution.RES_1080 -> stringResource(R.string.settings_res_1080)
                         }
                         ModernOptionChip(
-                            text = if (isResLocked) "$localizedLabel PRO" else localizedLabel,
+                            text = localizedLabel,
                             selected = settings.maxResolution == res,
                             onClick = {
-                                if (!isStreaming && !isResLocked) onSettingsChanged(settings.copy(maxResolution = res))
+                                if (!isStreaming) onSettingsChanged(settings.copy(maxResolution = res))
                             },
-                            enabled = !isStreaming && !isResLocked
+                            enabled = !isStreaming
                         )
                     }
                 }
@@ -210,14 +211,13 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StreamSettings.FPS_OPTIONS.forEach { fps ->
-                        val isFpsLocked = !isPremium && fps > 30
                         ModernOptionChip(
-                            text = if (isFpsLocked) "${fps}fps PRO" else "${fps}fps",
+                            text = "${fps}fps",
                             selected = settings.fps == fps,
                             onClick = {
-                                if (!isStreaming && !isFpsLocked) onSettingsChanged(settings.copy(fps = fps))
+                                if (!isStreaming) onSettingsChanged(settings.copy(fps = fps))
                             },
-                            enabled = !isStreaming && !isFpsLocked
+                            enabled = !isStreaming
                         )
                     }
                 }
@@ -303,37 +303,42 @@ fun SettingsScreen(
                 }
             }
 
-            // PRO Upgrade
-            if (!isPremium && onUpgradeClick != null) {
-                Spacer(modifier = Modifier.height(20.dp))
-                SettingSection(title = stringResource(R.string.title_castla_pro)) {
-                    Row(
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Support the Developer
+            run {
+                val context = LocalContext.current
+                val isKorean = java.util.Locale.getDefault().language == "ko"
+                val donateUrl = if (isKorean) "https://qr.kakaopay.com/Ej8mYEElE" else "https://ko-fi.com/suprhimp"
+                val buttonLabel = if (isKorean) stringResource(R.string.settings_donate_kakaopay) else stringResource(R.string.settings_donate_kofi)
+
+                SettingSection(title = stringResource(R.string.settings_support_title)) {
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_support_description),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(donateUrl)))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isKorean) Color(0xFFFFEB00) else Color(0xFF72A4F2)
+                            )
+                        ) {
                             Text(
-                                text = stringResource(R.string.settings_unlock_all_features),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = Color(0xFFFFD700),
+                                text = buttonLabel,
+                                color = if (isKorean) Color.Black else Color.White,
                                 fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = stringResource(R.string.settings_pro_description),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.6f)
-                            )
-                        }
-                        Button(
-                            onClick = onUpgradeClick,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFFD700)
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(stringResource(R.string.settings_upgrade), color = Color.Black, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }

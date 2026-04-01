@@ -16,11 +16,9 @@ let currentPrimaryApp = null;
 let isLauncherMode = true; // start in launcher mode
 let codecMode = 'h264'; // Default to h264, switch to mjpeg if needed
 let streamPolicy = {
-    isPremium: false,
     fitMode: 'contain',
     autoFit: false,
-    layoutMode: 'single',
-    showAdBanner: false
+    layoutMode: 'single'
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -33,7 +31,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const launcherLoading = document.getElementById('launcher-loading');
     const launcherContent = document.getElementById('launcher-content');
     const canvas = document.getElementById('display');
-    const adBanner = document.getElementById('ad-banner');
     const playerShell = document.getElementById('player-shell');
     const streamPane = document.getElementById('stream-pane');
     const browserSplitPane = document.getElementById('browser-split-pane');
@@ -470,20 +467,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         document.body.dataset.layoutMode = streamPolicy.layoutMode;
 
-        if (adBanner) {
-            adBanner.style.display = streamPolicy.showAdBanner ? 'block' : 'none';
-        }
-
         applyActiveFitModes();
         requestAnimationFrame(() => sendViewportSize());
-    }
-
-    function requestPurchase(source = 'web') {
-        console.log(`[Main] Purchase requested from ${source}`);
-        if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
-            controlSocket.send(JSON.stringify({ type: 'requestPurchase' }));
-        }
-        showLauncherNotice('Premium feature — upgrade to unlock.');
     }
 
     function focusKeyboardProxy() {
@@ -994,26 +979,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!response.ok) throw new Error('Network error');
             const data = await response.json();
 
-            const isPremium = data.isPremium || false;
             const apps = data.apps || [];
 
             applyStreamPolicy({
-                isPremium,
                 fitMode: data.fitMode || 'contain',
                 autoFit: data.autoFit === true,
-                layoutMode: data.layoutMode || 'single',
-                showAdBanner: data.showAdBanner === true
+                layoutMode: data.layoutMode || 'single'
             });
 
-            renderLauncherApps(apps, isPremium);
-            renderSplitLauncherApps(apps, isPremium);
+            renderLauncherApps(apps);
+            renderSplitLauncherApps(apps);
         } catch (err) {
             console.error('[Launcher]', err);
             showLauncherNotice('Failed to load apps. Try refreshing.');
         }
     }
 
-    function renderSplitLauncherApps(apps, isPremium) {
+    function renderSplitLauncherApps(apps) {
         if (!splitAppList) return;
         splitAppList.innerHTML = '';
 
@@ -1032,11 +1014,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             cell.appendChild(label);
 
             cell.addEventListener('click', () => {
-                if ((app.category !== 'NAVIGATION') && !isPremium) {
-                    requestPurchase(`locked:${app.packageName}`);
-                    return;
-                }
-
                 launchApp(app, true);
                 splitDrawer.classList.remove('open');
             });
@@ -1045,13 +1022,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    function renderLauncherApps(apps, isPremium) {
+    function renderLauncherApps(apps) {
         launcherContent.innerHTML = '';
         const grouped = {
             'NAVIGATION': { title: 'Navigation', color: '#4CAF50', items: [] },
-            'VIDEO': { title: 'Video', color: '#FF5722', items: [], locked: !isPremium },
-            'MUSIC': { title: 'Music', color: '#9C27B0', items: [], locked: !isPremium },
-            'OTHER': { title: 'Apps', color: '#9E9E9E', items: [], locked: !isPremium }
+            'VIDEO': { title: 'Video', color: '#FF5722', items: [] },
+            'MUSIC': { title: 'Music', color: '#9C27B0', items: [] },
+            'OTHER': { title: 'Apps', color: '#9E9E9E', items: [] }
         };
 
         apps.forEach(app => {
@@ -1085,7 +1062,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             group.items.forEach(app => {
                 const cell = document.createElement('div');
                 cell.className = 'app-cell';
-                if (group.locked) cell.classList.add('locked');
 
                 const icon = document.createElement('img');
                 icon.className = 'app-icon';
@@ -1099,10 +1075,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 cell.appendChild(label);
 
                 cell.addEventListener('click', () => {
-                    if (group.locked) {
-                        requestPurchase(`locked:${app.packageName}`);
-                        return;
-                    }
                     launchApp(app, false);
                 });
 
@@ -1330,8 +1302,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         canvas.addEventListener('mouseup', maybeFocusKeyboard);
         canvas.addEventListener('touchend', maybeFocusKeyboard, { passive: true });
     }
-
-    if (adBanner) adBanner.addEventListener('click', () => requestPurchase('banner'));
 
     const kbInput = document.getElementById('keyboard-input');
     if (kbInput) {

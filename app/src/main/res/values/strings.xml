@@ -15,32 +15,24 @@
     <string name="toast_tesla_paired_device">Tesla paired: %s</string>
     <string name="toast_tesla_paired">Tesla paired!</string>
     <string name="toast_bluetooth_permission_missing">Bluetooth permission missing. Auto-detect may not work.</string>
-    <string name="toast_tesla_paired_auto_detect">Tesla paired! Auto-detect enabled.</string>
-    <string name="toast_tesla_auto_detect_disabled">Tesla auto-detect disabled</string>
-    <string name="title_ble_fallback">BLE Fallback Scanner</string>
-    <string name="desc_ble_fallback">Scans for Tesla BLE signals as backup detection</string>
-    <string name="toast_ble_scan_enabled">BLE fallback scanner enabled</string>
-    <string name="toast_ble_scan_disabled">BLE fallback scanner disabled</string>
-    <string name="toast_ble_permission_denied">BLE scan permission required</string>
+    <string name="toast_tesla_paired_auto_detect">Auto-detect enabled</string>
+    <string name="toast_tesla_auto_detect_disabled">Auto-detect disabled</string>
     <string name="toast_requesting_screen_capture">Requesting screen capture...</string>
     <string name="toast_error">Error: %s</string>
 
     <string name="subtitle_tesla_screen_mirroring">Tesla Screen Mirroring</string>
     <string name="btn_settings">Settings</string>
-    <string name="title_castla_pro">Castla PRO</string>
-    <string name="desc_castla_pro_features">Unlock all apps  /  1080p streaming  /  No ads</string>
-    <string name="btn_upgrade_pro">Upgrade — One-time Purchase</string>
-    <string name="title_tesla_auto_detect_on">Tesla Auto-Detect ON</string>
+<string name="title_tesla_auto_detect_on">Tesla Auto-Detect ON</string>
     <string name="title_tesla_auto_detect">Tesla Auto-Detect</string>
-    <string name="desc_tesla_auto_detect_on">You\'ll get a notification when Tesla connects</string>
-    <string name="desc_tesla_auto_detect_off">Get notified when your Tesla is nearby</string>
+    <string name="desc_tesla_auto_detect_on">Monitoring hotspot — notification when Tesla connects</string>
+    <string name="desc_tesla_auto_detect_off">Auto-notify when Tesla connects to your hotspot</string>
     <string name="status_streaming_active">Streaming Active</string>
     <string name="status_preparing">Preparing…</string>
     <string name="status_ready_to_stream">Ready to Stream</string>
     <string name="title_open_tesla_browser">Open Tesla Browser</string>
     <string name="title_tesla_setup_required">Tesla Setup Required</string>
-    <string name="desc_shizuku_install_required">Tesla browser needs Shizuku to connect.\nTap below to see how to install Shizuku.</string>
-    <string name="btn_how_to_install_shizuku">How to Install Shizuku</string>
+    <string name="desc_shizuku_install_required">Tesla browser needs Shizuku to connect.\nTap below to download and install Shizuku.</string>
+    <string name="btn_how_to_install_shizuku">Install Shizuku</string>
     <string name="title_shizuku_setup_steps">Shizuku Setup Steps:</string>
     <string name="desc_shizuku_setup_steps">1. Settings &gt; About Phone &gt; Software Info\n   &gt; Tap Build Number 7 times\n2. Settings &gt; Developer Options\n   &gt; Wireless Debugging &gt; ON\n3. Open Shizuku &gt; \"Start via Wireless Debugging\"</string>
     <string name="btn_open_shizuku">Open Shizuku</string>
@@ -53,11 +45,6 @@
     <string name="desc_how_to_use">1. Connect phone and Tesla to the same WiFi\n2. Tap \"Start Mirroring\" above\n3. Open the URL in Tesla\'s browser\n4. Your phone screen will appear on Tesla</string>
     <string name="title_network_setup_log">Network Setup Log</string>
     <string name="btn_copy">Copy</string>
-
-    <string name="title_free_mirroring">Free Mirroring</string>
-    <string name="desc_free_credits">%d sessions remaining</string>
-    <string name="desc_no_credits">Watch an ad to get 10 free sessions</string>
-    <string name="btn_watch_ad">Watch Ad — Get 10 Free Sessions</string>
 
     <!-- Settings Screen -->
     <string name="settings_back">Back</string>
@@ -72,10 +59,7 @@
     <string name="settings_audio_experimental">Audio (Experimental)</string>
     <string name="settings_stream_device_audio">Stream device audio</string>
     <string name="settings_audio_description">Requires Android 10+. Captures system output.</string>
-    <string name="settings_unlock_all_features">Unlock all features</string>
-    <string name="settings_pro_description">1080p, 60fps, and more</string>
-    <string name="settings_upgrade">Upgrade</string>
-    <string name="settings_current_config">Current Configuration</string>
+<string name="settings_current_config">Current Configuration</string>
     <string name="settings_full_screen">Full Screen</string>
     <string name="settings_audio_on">, audio on</string>
     <string name="settings_auto_bitrate">Auto Bitrate</string>
@@ -91,4 +75,15 @@
     <string name="toast_hotspot_enabled">Hotspot enabled</string>
     <string name="toast_hotspot_failed">Failed to enable hotspot. Check Shizuku is running.</string>
     <string name="toast_hotspot_disabled">Hotspot disabled</string>
+    <string name="dialog_hotspot_off_title">Turn off hotspot?</string>
+    <string name="dialog_hotspot_off_message">Hotspot was turned on for mirroring. Would you like to turn it off?</string>
+    <string name="dialog_hotspot_off_yes">Turn off</string>
+    <string name="dialog_hotspot_off_no">Keep on</string>
+    <string name="toast_thermal_warning">⚠️ Device is very hot. Mirroring quality may be reduced.</string>
+
+    <!-- Support / Donate -->
+    <string name="settings_support_title">Support the Developer</string>
+    <string name="settings_support_description">Castla is free and open-source.\nIf you find it useful, consider buying me a coffee!</string>
+    <string name="settings_donate_kofi">Buy me a Coffee on Ko-fi</string>
+    <string name="settings_donate_kakaopay">카카오페이로 후원하기</string>
 </resources>

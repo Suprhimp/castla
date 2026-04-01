@@ -6,7 +6,6 @@ import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
 import fi.iki.elonen.NanoWSD.WebSocket
 import org.json.JSONObject
-import com.castla.mirror.billing.LicenseManager
 import com.castla.mirror.utils.AppCategoryClassifier
 
 data class TouchEvent(val action: String, val x: Float, val y: Float, val pointerId: Int, val pane: String = "primary")
@@ -43,8 +42,6 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     private var isBrowserConnected = false
     private var onBrowserConnectionListener: ((Boolean) -> Unit)? = null
 
-    // Listeners for DesktopActivity interaction
-    private var onPurchaseRequestListener: (() -> Unit)? = null
 
     private var cachedSpsPps: ByteArray? = null
 
@@ -90,10 +87,6 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         if (isBrowserConnected) listener?.invoke(true)
     }
 
-    fun setPurchaseRequestListener(listener: (() -> Unit)?) {
-        onPurchaseRequestListener = listener
-    }
-    
     fun setGoHomeListener(listener: () -> Unit) {
         onGoHomeListener = listener
     }
@@ -306,10 +299,6 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         onCompositionUpdateListener?.invoke(backspaces, text)
     }
     
-    fun onPurchaseRequest() {
-        onPurchaseRequestListener?.invoke()
-    }
-    
     fun onGoHomeRequest() {
         onGoHomeListener?.invoke()
     }
@@ -395,12 +384,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
             }
             
             val responseObj = JSONObject().apply {
-                val isPremium = LicenseManager.isPremiumNow
-                put("isPremium", isPremium)
+                put("isPremium", true)
                 put("fitMode", "contain")
                 put("autoFit", true)
                 put("layoutMode", "single")
-                put("showAdBanner", false)
                 put("apps", jsonArray)
             }
             

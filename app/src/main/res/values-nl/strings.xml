@@ -27,10 +27,7 @@
 
     <string name="subtitle_tesla_screen_mirroring">Tesla Scherm Mirroring</string>
     <string name="btn_settings">Instellingen</string>
-    <string name="title_castla_pro">Castla PRO</string>
-    <string name="desc_castla_pro_features">Ontgrendel alle apps / 1080p streaming / Geen advertenties</string>
-    <string name="btn_upgrade_pro">Upgrade — Eenmalige aankoop</string>
-    <string name="title_tesla_auto_detect_on">Tesla Auto-Detectie AAN</string>
+<string name="title_tesla_auto_detect_on">Tesla Auto-Detectie AAN</string>
     <string name="title_tesla_auto_detect">Tesla Auto-Detectie</string>
     <string name="desc_tesla_auto_detect_on">Je krijgt een melding wanneer Tesla verbinding maakt</string>
     <string name="desc_tesla_auto_detect_off">Ontvang een melding wanneer je Tesla in de buurt is</string>
@@ -54,11 +51,6 @@
     <string name="title_network_setup_log">Netwerk Setup Log</string>
     <string name="btn_copy">Kopiëren</string>
 
-    <string name="title_free_mirroring">Gratis Mirroring</string>
-    <string name="desc_free_credits">%d sessies over</string>
-    <string name="desc_no_credits">Bekijk een advertentie om 10 gratis sessies te krijgen</string>
-    <string name="btn_watch_ad">Advertentie bekijken — 10 gratis sessies krijgen</string>
-
     <!-- Settings Screen -->
     <string name="settings_back">Terug</string>
     <string name="settings_title">Instellingen</string>
@@ -72,14 +64,17 @@
     <string name="settings_audio_experimental">Audio (Experimenteel)</string>
     <string name="settings_stream_device_audio">Apparaataudio streamen</string>
     <string name="settings_audio_description">Vereist Android 10+. Vangt systeemuitvoer op.</string>
-    <string name="settings_unlock_all_features">Alle functies ontgrendelen</string>
-    <string name="settings_pro_description">1080p, 60fps en meer</string>
-    <string name="settings_upgrade">Upgraden</string>
-    <string name="settings_current_config">Huidige configuratie</string>
+<string name="settings_current_config">Huidige configuratie</string>
     <string name="settings_full_screen">Volledig scherm</string>
     <string name="settings_audio_on">, audio aan</string>
     <string name="settings_auto_bitrate">Automatische bitrate</string>
     <string name="settings_app_mode">App: %s</string>
     <string name="settings_res_720">720p (Normaal)</string>
     <string name="settings_res_1080">1080p (Hoog)</string>
+
+    <!-- Support / Donate -->
+    <string name="settings_support_title">Ondersteun de ontwikkelaar</string>
+    <string name="settings_support_description">Castla is gratis en open source.\nAls je het handig vindt, trakteer me op een koffie!</string>
+    <string name="settings_donate_kofi">Trakteer op Ko-fi</string>
+    <string name="settings_donate_kakaopay">카카오페이로 후원하기</string>
 </resources>

@@ -27,10 +27,7 @@
 
     <string name="subtitle_tesla_screen_mirroring">Duplicación de pantalla para Tesla</string>
     <string name="btn_settings">Ajustes</string>
-    <string name="title_castla_pro">Castla PRO</string>
-    <string name="desc_castla_pro_features">Desbloquea todas las aplicaciones / Streaming 1080p / Sin anuncios</string>
-    <string name="btn_upgrade_pro">Actualizar — Compra única</string>
-    <string name="title_tesla_auto_detect_on">Detección auto Tesla ACTIVADA</string>
+<string name="title_tesla_auto_detect_on">Detección auto Tesla ACTIVADA</string>
     <string name="title_tesla_auto_detect">Detección automática de Tesla</string>
     <string name="desc_tesla_auto_detect_on">Recibirás una notificación cuando Tesla se conecte</string>
     <string name="desc_tesla_auto_detect_off">Recibe una notificación cuando tu Tesla esté cerca</string>
@@ -54,11 +51,6 @@
     <string name="title_network_setup_log">Registro de configuración de red</string>
     <string name="btn_copy">Copiar</string>
 
-    <string name="title_free_mirroring">Duplicación gratuita</string>
-    <string name="desc_free_credits">%d sesiones restantes</string>
-    <string name="desc_no_credits">Mira un anuncio para obtener 10 sesiones gratuitas</string>
-    <string name="btn_watch_ad">Ver anuncio — Obtener 10 sesiones gratuitas</string>
-
     <!-- Settings Screen -->
     <string name="settings_back">Atrás</string>
     <string name="settings_title">Ajustes</string>
@@ -72,14 +64,17 @@
     <string name="settings_audio_experimental">Audio (Experimental)</string>
     <string name="settings_stream_device_audio">Transmitir audio del dispositivo</string>
     <string name="settings_audio_description">Requiere Android 10+. Captura la salida del sistema.</string>
-    <string name="settings_unlock_all_features">Desbloquear todas las funciones</string>
-    <string name="settings_pro_description">1080p, 60fps y más</string>
-    <string name="settings_upgrade">Actualizar</string>
-    <string name="settings_current_config">Configuración actual</string>
+<string name="settings_current_config">Configuración actual</string>
     <string name="settings_full_screen">Pantalla completa</string>
     <string name="settings_audio_on">, audio activado</string>
     <string name="settings_auto_bitrate">Bitrate automático</string>
     <string name="settings_app_mode">App: %s</string>
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Alta)</string>
+
+    <!-- Support / Donate -->
+    <string name="settings_support_title">Apoyar al desarrollador</string>
+    <string name="settings_support_description">Castla es gratuito y de código abierto.\nSi te resulta útil, invítame a un café!</string>
+    <string name="settings_donate_kofi">Invítame un café en Ko-fi</string>
+    <string name="settings_donate_kakaopay">카카오페이로 후원하기</string>
 </resources>
