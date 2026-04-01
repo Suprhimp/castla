@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p（标准）</string>
     <string name="settings_res_1080">1080p（高清）</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">自动热点</string>
+    <string name="settings_auto_hotspot_title">自动切换热点</string>
+    <string name="settings_auto_hotspot_description">镜像开始时自动开启热点，镜像停止时自动关闭热点。需要 Shizuku。</string>
+    <string name="toast_hotspot_enabling">正在开启热点...</string>
+    <string name="toast_hotspot_enabled">热点已开启</string>
+    <string name="toast_hotspot_failed">开启热点失败。请检查 Shizuku 是否正在运行。</string>
+    <string name="toast_hotspot_disabled">热点已关闭</string>
+    <string name="dialog_hotspot_off_title">关闭热点？</string>
+    <string name="dialog_hotspot_off_message">热点是为镜像而开启的。是否要关闭？</string>
+    <string name="dialog_hotspot_off_yes">关闭</string>
+    <string name="dialog_hotspot_off_no">保持开启</string>
+
+    <!-- Language -->
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system_default">系统默认</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">支持开发者</string>
     <string name="settings_support_description">Castla是免费开源应用。\n如果觉得好用，请我喝杯咖啡吧！</string>

@@ -81,6 +81,10 @@
     <string name="dialog_hotspot_off_no">Keep on</string>
     <string name="toast_thermal_warning">⚠️ Device is very hot. Mirroring quality may be reduced.</string>
 
+    <!-- Language -->
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system_default">System Default</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">Support the Developer</string>
     <string name="settings_support_description">Castla is free and open-source.\nIf you find it useful, consider buying me a coffee!</string>

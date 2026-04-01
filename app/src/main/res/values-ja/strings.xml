@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p（標準）</string>
     <string name="settings_res_1080">1080p（高画質）</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">自動ホットスポット</string>
+    <string name="settings_auto_hotspot_title">ホットスポット自動切替</string>
+    <string name="settings_auto_hotspot_description">ミラーリング開始時にホットスポットを自動でオンにし、停止時にオフにします。Shizukuが必要です。</string>
+    <string name="toast_hotspot_enabling">ホットスポットを有効化中...</string>
+    <string name="toast_hotspot_enabled">ホットスポットが有効になりました</string>
+    <string name="toast_hotspot_failed">ホットスポットの有効化に失敗しました。Shizukuが実行中か確認してください。</string>
+    <string name="toast_hotspot_disabled">ホットスポットが無効になりました</string>
+    <string name="dialog_hotspot_off_title">ホットスポットをオフにしますか？</string>
+    <string name="dialog_hotspot_off_message">ミラーリングのためにホットスポットがオンになりました。オフにしますか？</string>
+    <string name="dialog_hotspot_off_yes">オフにする</string>
+    <string name="dialog_hotspot_off_no">そのまま</string>
+
+    <!-- Language -->
+    <string name="settings_language">言語</string>
+    <string name="settings_language_system_default">システムデフォルト</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">開発者をサポート</string>
     <string name="settings_support_description">Castlaは無料のオープンソースアプリです。\n気に入っていただけたら、コーヒーをおごってください！</string>

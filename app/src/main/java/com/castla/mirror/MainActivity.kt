@@ -23,7 +23,8 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import java.io.File
 import com.castla.mirror.server.MirrorServer
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import java.util.regex.Pattern
@@ -72,7 +73,7 @@ import com.castla.mirror.update.UpdateManager
 import com.castla.mirror.update.UpdateManagerFactory
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
@@ -277,6 +278,7 @@ class MainActivity : ComponentActivity() {
                     ?: kotlinx.coroutines.flow.MutableStateFlow(0)).collectAsState()
 
                 if (showSettings) {
+                    BackHandler { showSettings = false }
                     SettingsScreen(
                         settings = streamSettings,
                         isStreaming = isStreaming,
