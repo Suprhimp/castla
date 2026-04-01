@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">스트리밍 준비 완료</string>
     <string name="title_open_tesla_browser">테슬라 브라우저 열기</string>
     <string name="title_tesla_setup_required">테슬라 설정 필요</string>
-    <string name="desc_shizuku_install_required">테슬라 브라우저에 연결하려면 Shizuku가 필요합니다.\n설치 방법을 보려면 아래를 탭하세요.</string>
-    <string name="btn_how_to_install_shizuku">Shizuku 설치 방법</string>
+    <string name="desc_shizuku_install_required">테슬라 브라우저에 연결하려면 Shizuku가 필요합니다.\n아래를 탭하여 Shizuku를 다운로드하고 설치하세요.</string>
+    <string name="btn_how_to_install_shizuku">Shizuku 설치</string>
     <string name="title_shizuku_setup_steps">Shizuku 설정 단계:</string>
     <string name="desc_shizuku_setup_steps">1. 설정 &gt; 휴대전화 정보 &gt; 소프트웨어 정보\n   &gt; 빌드 번호를 7번 탭하세요\n2. 설정 &gt; 개발자 옵션\n   &gt; 무선 디버깅 &gt; 켜기\n3. Shizuku 열기 &gt; \"무선 디버깅으로 시작\"</string>
     <string name="btn_open_shizuku">Shizuku 열기</string>
