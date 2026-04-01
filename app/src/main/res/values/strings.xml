@@ -36,6 +36,7 @@
     <string name="title_shizuku_setup_steps">Shizuku Setup Steps:</string>
     <string name="desc_shizuku_setup_steps">1. Settings &gt; About Phone &gt; Software Info\n   &gt; Tap Build Number 7 times\n2. Settings &gt; Developer Options\n   &gt; Wireless Debugging &gt; ON\n3. Open Shizuku &gt; \"Start via Wireless Debugging\"</string>
     <string name="btn_open_shizuku">Open Shizuku</string>
+    <string name="btn_setup_guide">Setup Guide</string>
     <string name="status_shizuku_running_setup">Shizuku is running. Setting up Tesla connection...</string>
     <string name="desc_shizuku_permission_required">Shizuku is running, but Castla does not have permission yet.\nWithout permission, only basic screen mirroring is available — touch input and app launching won\'t work.</string>
     <string name="btn_grant_shizuku_permission">Grant Shizuku Permission</string>

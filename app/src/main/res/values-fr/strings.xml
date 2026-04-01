@@ -41,6 +41,7 @@
     <string name="title_shizuku_setup_steps">Étapes de configuration de Shizuku :</string>
     <string name="desc_shizuku_setup_steps">1. Paramètres &gt; À propos du téléphone &gt; Infos sur le logiciel\n   &gt; Appuyez 7 fois sur le numéro de version\n2. Paramètres &gt; Options pour les développeurs\n   &gt; Débogage sans fil &gt; ACTIVÉ\n3. Ouvrez Shizuku &gt; \"Démarrer via le débogage sans fil\"</string>
     <string name="btn_open_shizuku">Ouvrir Shizuku</string>
+    <string name="btn_setup_guide">Guide d\'installation</string>
     <string name="status_shizuku_running_setup">Shizuku est en cours d\'exécution. Configuration de la connexion Tesla...</string>
     <string name="desc_shizuku_permission_required">Shizuku est en cours d\'exécution, mais Castla n\'a pas encore l\'autorisation.\nSans autorisation, seule la mise en miroir de base est disponible — la saisie tactile et le lancement d\'applications ne fonctionneront pas.</string>
     <string name="btn_grant_shizuku_permission">Accorder l\'autorisation Shizuku</string>
