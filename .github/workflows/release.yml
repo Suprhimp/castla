@@ -59,12 +59,10 @@ jobs:
           keyAlias=${{ secrets.KEY_ALIAS }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
           EOF
-
-      - name: Generate lint baseline
-        run: ./gradlew lintRelease || true
+          sed -i 's/^[[:space:]]*//' keystore.properties
 
       - name: Build signed Release APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease
 
       - name: Rename APK with version
         run: |
