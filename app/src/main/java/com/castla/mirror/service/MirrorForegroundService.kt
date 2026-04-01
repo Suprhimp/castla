@@ -1806,6 +1806,7 @@ class MirrorForegroundService : Service() {
         }
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val compositionDispatcher = kotlinx.coroutines.newSingleThreadContext("composition")
 
     private fun injectCompositionUpdate(backspaces: Int, text: String) {

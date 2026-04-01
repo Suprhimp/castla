@@ -230,7 +230,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
         } catch (_: Exception) {}
 
         try {
-            val result = injectMethod?.invoke(inputManagerInstance, event, 0)
+            injectMethod?.invoke(inputManagerInstance, event, 0)
         } catch (e: Exception) {
             Log.e(TAG, "Input injection failed on display $displayId", e)
         } finally {
@@ -247,7 +247,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
             val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
             val output = process.inputStream.bufferedReader().readText()
             val error = process.errorStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
+            process.waitFor()
             if (error.isNotEmpty()) Log.w(TAG, "stderr: $error")
             output
         } catch (e: Exception) {
@@ -475,7 +475,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
     override fun launchAppOnDisplay(displayId: Int, packageName: String) {
         try {
             val cmd = buildLaunchCommand(displayId, packageName)
-            val result = execCommand(cmd)
+            execCommand(cmd)
             Log.i(TAG, "Launched $packageName on display $displayId")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
@@ -485,7 +485,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
     override fun launchAppWithExtraOnDisplay(displayId: Int, packageName: String, extraKey: String, extraValue: String) {
         try {
             val cmd = buildLaunchCommand(displayId, packageName, extraKey, extraValue)
-            val result = execCommand(cmd)
+            execCommand(cmd)
             Log.i(TAG, "Launched $packageName with extra on display $displayId")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
@@ -866,7 +866,6 @@ class PrivilegedService : IPrivilegedService.Stub() {
 
             // 3. Inject a no-op touch (down+up at 1,1) to generate user activity on the VD
             try {
-                val now = SystemClock.uptimeMillis()
                 injectInput(displayId, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
                 injectInput(displayId, MotionEvent.ACTION_UP, 1f, 1f, 0)
             } catch (_: Exception) {}

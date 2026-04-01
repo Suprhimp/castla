@@ -89,6 +89,7 @@ class SplitWebBrowserActivity : Activity() {
                 @Suppress("SetJavaScriptEnabled")
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                @Suppress("DEPRECATION")
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 useWideViewPort = true
