@@ -29,6 +29,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import java.util.regex.Pattern
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -955,6 +956,7 @@ fun CastlaScreen(
     @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
     @Suppress("unused") thermalStatus: Int = 0
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     MeshGradientBackground {
         Column(
             modifier = Modifier.fillMaxSize()
@@ -1148,15 +1150,34 @@ fun CastlaScreen(
                                 lineHeight = 20.sp
                             )
                             Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = onOpenShizuku,
+                            Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFFFB300)
-                                )
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(stringResource(id = R.string.btn_open_shizuku), color = Color.Black, fontWeight = FontWeight.Bold)
+                                Button(
+                                    onClick = onOpenShizuku,
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFFFB300)
+                                    )
+                                ) {
+                                    Text(stringResource(id = R.string.btn_open_shizuku), color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://website-ten-sigma-42.vercel.app/setup"))
+                                        context.startActivity(intent)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = Color(0xFFFFB300)
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFFFFB300))
+                                ) {
+                                    Text(stringResource(id = R.string.btn_setup_guide), fontWeight = FontWeight.Bold)
+                                }
                             }
                         } else if (!shizukuPermitted) {
                             Text(
