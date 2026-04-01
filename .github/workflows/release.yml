@@ -62,7 +62,7 @@ jobs:
           sed -i 's/^[[:space:]]*//' keystore.properties
 
       - name: Build signed Release APK
-        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease
+        run: ./gradlew assembleRelease
 
       - name: Rename APK with version
         run: |
