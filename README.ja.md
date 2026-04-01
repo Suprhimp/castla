@@ -2,7 +2,7 @@
   <img src="docs/images/app-icon.png" width="120" alt="Castla App Icon">
   <h1 align="center">Castla</h1>
   <p align="center">
-    <strong>Tesla向け究極のAndroid Auto代替アプリ。Waze、Googleマップをテスラのブラウザで直接表示。</strong>
+    <strong>Tesla向け究極のAndroid Auto代替アプリ。Waze、Googleマップ、Yahoo!カーナビをテスラのブラウザで直接表示。</strong>
   </p>
   <p align="center">
     <a href="https://github.com/Suprhimp/castla/releases/latest"><img src="https://img.shields.io/github/v/release/Suprhimp/castla?style=flat-square" alt="Latest Release"></a>
@@ -22,7 +22,7 @@
 
 ## Castlaとは？
 
-テスラに**Android Auto**がなくて困っていませんか？**Waze**やGoogleマップを大画面で使いたくありませんか？
+テスラに**Android Auto**がなくて困っていませんか？**Waze**やGoogleマップ、Yahoo!カーナビを大画面で使いたくありませんか？
 
 Castlaは、ローカルWiFiネットワーク経由でAndroidスマートフォンの画面をテスラの内蔵ブラウザに直接ストリーミングする無料のオープンソースソリューションです。インターネット接続、高価なドングル、クラウドサーバー、サブスクリプション不要 — すべてが高速、安全、完全にスマートフォンと車両の間だけで完結します。
 
