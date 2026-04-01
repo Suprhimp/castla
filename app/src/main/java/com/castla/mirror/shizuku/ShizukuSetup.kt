@@ -38,16 +38,21 @@ class ShizukuSetup {
         )
     ).daemon(false).processNameSuffix("privileged").version(107)
 
+    /** Guard to prevent duplicate bind calls while a bind is in progress. */
+    private var bindingInProgress = false
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             privilegedService = IPrivilegedService.Stub.asInterface(binder)
             _serviceConnected.value = true
+            bindingInProgress = false
             Log.i(TAG, "Privileged service connected")
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             privilegedService = null
             _serviceConnected.value = false
+            bindingInProgress = false
             Log.i(TAG, "Privileged service disconnected")
         }
     }
@@ -60,6 +65,8 @@ class ShizukuSetup {
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         Log.i(TAG, "Shizuku binder dead")
         privilegedService = null
+        _serviceConnected.value = false
+        bindingInProgress = false
         _state.value = ShizukuState.NotRunning
     }
 
@@ -110,10 +117,20 @@ class ShizukuSetup {
     }
 
     private fun bindPrivilegedService() {
+        if (_serviceConnected.value) {
+            Log.d(TAG, "bindPrivilegedService skipped: already connected")
+            return
+        }
+        if (bindingInProgress) {
+            Log.d(TAG, "bindPrivilegedService skipped: bind already in progress")
+            return
+        }
         try {
+            bindingInProgress = true
             Shizuku.bindUserService(serviceArgs, serviceConnection)
             Log.i(TAG, "Binding privileged service...")
         } catch (e: Exception) {
+            bindingInProgress = false
             Log.e(TAG, "Failed to bind privileged service", e)
         }
     }
@@ -230,6 +247,8 @@ class ShizukuSetup {
             Shizuku.unbindUserService(serviceArgs, serviceConnection, true)
         } catch (_: Exception) {}
         privilegedService = null
+        _serviceConnected.value = false
+        bindingInProgress = false
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
         Shizuku.removeRequestPermissionResultListener(permissionResultListener)

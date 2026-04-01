@@ -2,11 +2,8 @@ package com.castla.mirror
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothDevice
-import android.companion.AssociationRequest
-import android.companion.BluetoothDeviceFilter
-import android.companion.CompanionDeviceManager
 import com.castla.mirror.BuildConfig
+import android.app.DownloadManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -23,13 +20,11 @@ import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
-import com.castla.mirror.billing.BillingManager
-import com.castla.mirror.billing.LicenseManager
+import androidx.core.content.FileProvider
+import java.io.File
 import com.castla.mirror.server.MirrorServer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import java.util.regex.Pattern
 import androidx.compose.animation.AnimatedVisibility
@@ -62,6 +57,7 @@ import android.net.VpnService
 import com.castla.mirror.network.NetworkMonitor
 import com.castla.mirror.network.NetworkState
 import com.castla.mirror.network.TeslaVpnService
+import com.castla.mirror.service.HotspotClientDetector
 import com.castla.mirror.service.MirrorForegroundService
 import com.castla.mirror.service.TeslaBleScanner
 import com.castla.mirror.service.TeslaDetectNotifier
@@ -74,8 +70,6 @@ import com.castla.mirror.ui.glassCard
 import com.castla.mirror.update.ForceUpdateDialog
 import com.castla.mirror.update.UpdateManager
 import com.castla.mirror.update.UpdateManagerFactory
-import com.castla.mirror.ads.AdManager
-import com.castla.mirror.ads.BannerAd
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -85,8 +79,8 @@ class MainActivity : ComponentActivity() {
         private const val TESLA_VIRTUAL_IP = "100.99.9.9"
         private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
-        // TODO: Replace with your actual website URL where you'll host the Markdown guide
-        private const val SHIZUKU_GUIDE_URL = "https://website-ten-sigma-42.vercel.app/setup"
+        private const val SHIZUKU_RELEASES_API = "https://api.github.com/repos/RikkaApps/Shizuku/releases/latest"
+        private const val SHIZUKU_APK_FILENAME = "shizuku.apk"
     }
 
     private var isStreaming by mutableStateOf(false)
@@ -100,17 +94,17 @@ class MainActivity : ComponentActivity() {
     private var shizukuPermitted by mutableStateOf(false)
     private var showShizukuPermissionDialog by mutableStateOf(false)
     private var networkDiagLog by mutableStateOf("")
-    private var teslaAssociated by mutableStateOf(false)
     private var teslaAutoDetectEnabled by mutableStateOf(false)
-    /** Tracks whether this app turned on the hotspot so we only turn it off if we turned it on */
     private var hotspotEnabledByApp = false
-    /** Guard against double-handling CDM association on API 33+ */
-    private var cdmAssociationHandled = false
     private var teslaBleScanner: TeslaBleScanner? = null
+
+    // Shizuku download state
+    private var shizukuDownloadId: Long = -1L
+    private var shizukuDownloadProgress by mutableFloatStateOf(-1f) // -1 = not downloading
+    private var downloadProgressJob: kotlinx.coroutines.Job? = null
 
     private lateinit var networkMonitor: NetworkMonitor
     private lateinit var shizukuSetup: ShizukuSetup
-    private lateinit var billingManager: BillingManager
     private lateinit var updateManager: UpdateManager
     private var mirrorService: MirrorForegroundService? = null
     private var serviceBound = false
@@ -131,13 +125,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            localBinder.service.setPurchaseRequestListener {
-                val intent = Intent(this@MainActivity, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    putExtra("start_billing", true)
-                }
-                startActivity(intent)
-            }
             updateServerUrl()
             serviceBound = true
             bindRequested = false
@@ -181,16 +168,6 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "Startup permissions: $results")
     }
 
-    private val blePermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        if (results.values.all { it }) {
-            startBleScanner()
-        } else {
-            Log.w(TAG, "BLE scan permission denied — BLE fallback won't be available")
-        }
-    }
-
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -202,23 +179,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val cdmAssociationLauncher: ActivityResultLauncher<IntentSenderRequest> =
-        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-                handleCdmAssociationResult(result.data!!)
-            } else {
-                Log.w(TAG, "CDM association cancelled or failed: code=${result.resultCode}")
-                Toast.makeText(this, getString(R.string.toast_tesla_pairing_cancelled), Toast.LENGTH_SHORT).show()
-            }
-        }
-
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        LicenseManager.init(this)
-        billingManager = BillingManager(this)
-        billingManager.init()
 
         updateManager = UpdateManagerFactory.create()
         updateManager.checkForUpdate(this)
@@ -233,7 +195,7 @@ class MainActivity : ComponentActivity() {
             shizukuSetup.init()
         }
 
-        refreshCdmState()
+        loadAutoDetectState()
         requestStartupPermissions()
 
         // Handle intent extra to open settings (e.g. from screenshot automation)
@@ -258,7 +220,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Sync UI streaming state when service stops externally (e.g. notification action)
+        // Sync UI streaming state when service stops externally
+        // (e.g. notification action, thermal auto-stop, crash)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 MirrorForegroundService.serviceRunningFlow.collect { running ->
@@ -271,14 +234,15 @@ class MainActivity : ComponentActivity() {
                             serviceBound = false
                             bindRequested = false
                         }
-                        // Tear down hotspot if the app enabled it (thermal auto-stop, crash, etc.)
+                        updateServerUrl()
+                        // Clean up hotspot that was auto-enabled by the app
                         if (hotspotEnabledByApp && shizukuSetup.serviceConnected.value) {
                             hotspotEnabledByApp = false
                             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 disableHotspot()
+                                Log.i(TAG, "Auto-disabled hotspot after external service stop")
                             }
                         }
-                        updateServerUrl()
                     }
                 }
             }
@@ -294,7 +258,7 @@ class MainActivity : ComponentActivity() {
                 // Auto-continue mirroring after Shizuku permission granted
                 if (!wasPermitted && shizukuPermitted && showShizukuPermissionDialog) {
                     showShizukuPermissionDialog = false
-                    onStartMirroringAfterAd()
+                    onStartMirroring()
                 }
             }
         }
@@ -306,26 +270,22 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            val isPremium by LicenseManager.isPremium.collectAsState()
-            val freeCredits by AdManager.freeCredits.collectAsState()
-
             MaterialTheme(colorScheme = darkColorScheme()) {
                 updateManager.ForceUpdateOverlay(this@MainActivity)
 
+                val thermalStatus by (mirrorService?.thermalStatus
+                    ?: kotlinx.coroutines.flow.MutableStateFlow(0)).collectAsState()
+
                 if (showSettings) {
-                    val thermalStatus by (mirrorService?.thermalStatus
-                        ?: kotlinx.coroutines.flow.MutableStateFlow(0)).collectAsState()
                     SettingsScreen(
                         settings = streamSettings,
                         isStreaming = isStreaming,
-                        isPremium = isPremium,
                         thermalStatus = thermalStatus,
                         onSettingsChanged = { newSettings ->
                             streamSettings = newSettings
                             StreamSettings.save(this@MainActivity, newSettings)
                         },
-                        onBackClick = { showSettings = false },
-                        onUpgradeClick = { billingManager.launchPurchaseFlow(this@MainActivity) }
+                        onBackClick = { showSettings = false }
                     )
                 } else {
                     CastlaScreen(
@@ -336,23 +296,19 @@ class MainActivity : ComponentActivity() {
                         shizukuRunning = shizukuRunning,
                         shizukuPermitted = shizukuPermitted,
                         teslaIpReady = teslaIpReady,
-                        isPremium = isPremium,
-                        freeCredits = freeCredits,
                         onStartClick = { onStartMirroring() },
                         onStopClick = { stopMirrorService() },
                         onSettingsClick = { showSettings = true },
-                        onUpgradeClick = { billingManager.launchPurchaseFlow(this@MainActivity) },
-                        onWatchAdClick = {
-                            AdManager.watchAdForCredits(this@MainActivity) {}
-                        },
-                        onInstallShizuku = { openShizukuInstallGuide() },
+                        onInstallShizuku = { downloadAndInstallShizuku() },
                         onOpenShizuku = { openShizukuApp() },
                         onGrantShizukuPermission = { shizukuSetup.requestPermission() },
+                        shizukuDownloadProgress = shizukuDownloadProgress,
                         networkDiagLog = networkDiagLog,
                         teslaAutoDetectEnabled = teslaAutoDetectEnabled,
                         onToggleAutoDetect = {
-                            if (teslaAssociated) disassociateTesla() else associateTesla()
-                        }
+                            toggleAutoDetect()
+                        },
+                        thermalStatus = thermalStatus
                     )
                 }
             }
@@ -374,11 +330,6 @@ class MainActivity : ComponentActivity() {
     private fun handleNewIntent(intent: Intent?) {
         if (intent == null) return
         
-        if (intent.getBooleanExtra("start_billing", false)) {
-            Log.i(TAG, "Purchase flow triggered from browser banner")
-            wakeUpScreen()
-            billingManager.launchPurchaseFlow(this)
-        }
         if (intent.getBooleanExtra("start_mirroring", false) && !isStreaming) {
             Log.i(TAG, "Start mirroring triggered from widget")
             onStartMirroring()
@@ -415,13 +366,7 @@ class MainActivity : ComponentActivity() {
         if (shizukuInstalled && !wasInstalled) {
             shizukuSetup.init()
         }
-        refreshCdmState()
-
-        // Restart BLE scanner if auto-detect is on and CDM presence not available
-        if (teslaAutoDetectEnabled && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
-            && teslaBleScanner == null && hasBleScanPermissions()) {
-            startBleScanner()
-        }
+        loadAutoDetectState()
 
         if (!serviceBound && !bindRequested) {
             val intent = Intent(this, MirrorForegroundService::class.java)
@@ -440,11 +385,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         updateManager.destroy()
-        billingManager.destroy()
         networkMonitor.stopMonitoring()
-        stopBleScanner()
+        stopAutoDetect()
         stopTeslaVpn()
         shizukuSetup.release()
+        downloadProgressJob?.cancel()
+        try { unregisterReceiver(shizukuDownloadReceiver) } catch (_: IllegalArgumentException) {}
         super.onDestroy()
     }
 
@@ -557,9 +503,6 @@ class MainActivity : ComponentActivity() {
         return success
     }
 
-    /**
-     * Disable WiFi tethering (hotspot) via Shizuku's privileged service.
-     */
     private fun disableHotspot() {
         if (!shizukuSetup.serviceConnected.value) {
             Log.w(TAG, "disableHotspot: Shizuku service not connected")
@@ -593,14 +536,146 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openShizukuInstallGuide() {
-        // Open the setup guide on our website (Play Store is no longer available for Shizuku)
-        try {
-            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(SHIZUKU_GUIDE_URL))
-            startActivity(webIntent)
-        } catch (e: Exception) {
-            Toast.makeText(this, getString(R.string.toast_could_not_open_browser), Toast.LENGTH_LONG).show()
+    private fun downloadAndInstallShizuku() {
+        if (shizukuDownloadProgress >= 0f) {
+            Toast.makeText(this, "Download already in progress…", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        shizukuDownloadProgress = 0f
+        Toast.makeText(this, "Fetching latest Shizuku release…", Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                // Fetch latest release APK URL from GitHub API
+                val url = java.net.URL(SHIZUKU_RELEASES_API)
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("Accept", "application/vnd.github+json")
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 10_000
+                val json = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+
+                // Parse APK download URL from assets
+                val apkUrl = org.json.JSONObject(json)
+                    .getJSONArray("assets")
+                    .let { assets ->
+                        var downloadUrl: String? = null
+                        for (i in 0 until assets.length()) {
+                            val asset = assets.getJSONObject(i)
+                            val name = asset.getString("name")
+                            if (name.endsWith(".apk")) {
+                                downloadUrl = asset.getString("browser_download_url")
+                                break
+                            }
+                        }
+                        downloadUrl
+                    } ?: throw Exception("No APK found in latest release")
+
+                Log.i(TAG, "Shizuku APK URL: $apkUrl")
+
+                runOnUiThread { startShizukuDownload(apkUrl) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch Shizuku release info", e)
+                runOnUiThread {
+                    shizukuDownloadProgress = -1f
+                    Toast.makeText(this@MainActivity, "Failed to fetch release info: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun startShizukuDownload(apkUrl: String) {
+        // Delete any previous APK
+        val apkFile = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), SHIZUKU_APK_FILENAME)
+        if (apkFile.exists()) apkFile.delete()
+
+        val request = DownloadManager.Request(Uri.parse(apkUrl))
+            .setTitle("Shizuku")
+            .setDescription("Downloading Shizuku APK…")
+            .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, SHIZUKU_APK_FILENAME)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+
+        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        shizukuDownloadId = dm.enqueue(request)
+        Log.i(TAG, "Shizuku download started: id=$shizukuDownloadId")
+        Toast.makeText(this, "Downloading Shizuku…", Toast.LENGTH_SHORT).show()
+
+        // Register completion receiver
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        registerReceiver(shizukuDownloadReceiver, filter, Context.RECEIVER_EXPORTED)
+
+        startDownloadProgressPolling()
+    }
+
+    private val shizukuDownloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+            if (id != shizukuDownloadId) return
+
+            downloadProgressJob?.cancel()
+            shizukuDownloadProgress = -1f
+
+            try {
+                unregisterReceiver(this)
+            } catch (_: IllegalArgumentException) {}
+
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val query = DownloadManager.Query().setFilterById(id)
+            val cursor = dm.query(query)
+            if (cursor != null && cursor.moveToFirst()) {
+                val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                    Log.i(TAG, "Shizuku APK download complete")
+                    installShizukuApk()
+                } else {
+                    Log.e(TAG, "Shizuku download failed with status: $status")
+                    Toast.makeText(context, "Download failed. Please try again.", Toast.LENGTH_LONG).show()
+                }
+                cursor.close()
+            }
+        }
+    }
+
+    private fun startDownloadProgressPolling() {
+        downloadProgressJob?.cancel()
+        downloadProgressJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            while (shizukuDownloadProgress >= 0f) {
+                val query = DownloadManager.Query().setFilterById(shizukuDownloadId)
+                val cursor = dm.query(query)
+                if (cursor != null && cursor.moveToFirst()) {
+                    val bytesDownloaded = cursor.getLong(
+                        cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                    )
+                    val bytesTotal = cursor.getLong(
+                        cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                    )
+                    if (bytesTotal > 0) {
+                        shizukuDownloadProgress = bytesDownloaded.toFloat() / bytesTotal.toFloat()
+                    }
+                    cursor.close()
+                }
+                kotlinx.coroutines.delay(300)
+            }
+        }
+    }
+
+    private fun installShizukuApk() {
+        val apkFile = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), SHIZUKU_APK_FILENAME)
+        if (!apkFile.exists()) {
+            Log.e(TAG, "Shizuku APK file not found: ${apkFile.absolutePath}")
+            Toast.makeText(this, "APK file not found.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val apkUri = FileProvider.getUriForFile(this, "${BuildConfig.APPLICATION_ID}.fileprovider", apkFile)
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(installIntent)
     }
 
     private fun openShizukuApp() {
@@ -610,228 +685,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun refreshCdmState() {
-        val hasAssociations: Boolean
-        try {
-            val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as? CompanionDeviceManager
-            if (cdm == null) {
-                Log.w(TAG, "CompanionDeviceManager not available")
-                teslaAssociated = false
-                teslaAutoDetectEnabled = false
-                return
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val assocs = cdm.myAssociations
-                hasAssociations = assocs.isNotEmpty()
-                if (hasAssociations) {
-                    for (assoc in assocs) {
-                        val mac = assoc.deviceMacAddress?.toString()?.uppercase()
-                        if (mac != null) {
-                            try {
-                                cdm.startObservingDevicePresence(mac)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Re-observe failed for $mac", e)
-                            }
-                        }
-                    }
-                }
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                @Suppress("DEPRECATION")
-                val addrs = cdm.associations
-                hasAssociations = addrs.isNotEmpty()
-                for (addr in addrs) {
-                    try {
-                        cdm.startObservingDevicePresence(addr)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Re-observe failed for $addr", e)
-                    }
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                hasAssociations = cdm.associations.isNotEmpty()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "CDM initialization failed (emulator?)", e)
-            teslaAssociated = false
-            teslaAutoDetectEnabled = false
-            return
-        }
-        teslaAssociated = hasAssociations
-        teslaAutoDetectEnabled = hasAssociations
-        // BLE scanner only needed on pre-S where CDM can't observe device presence
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            if (hasAssociations && teslaBleScanner == null && hasBleScanPermissions()) {
-                startBleScanner()
-            } else if (!hasAssociations) {
-                stopBleScanner()
-            }
-        } else {
-            // CDM handles presence detection — stop BLE if running
-            stopBleScanner()
-        }
-        Log.i(TAG, "CDM associations: teslaAssociated=$teslaAssociated")
-    }
+    // ── Tesla Auto-Detect (Hotspot client + BLE) ──────────────────────
 
-    private fun associateTesla() {
-        // Filter to Tesla vehicles only (BT name starts with "Tesla ")
-        val teslaPattern = java.util.regex.Pattern.compile("^Tesla .*", java.util.regex.Pattern.CASE_INSENSITIVE)
-        val deviceFilter = BluetoothDeviceFilter.Builder()
-            .setNamePattern(teslaPattern)
-            .build()
-
-        val request = AssociationRequest.Builder()
-            .addDeviceFilter(deviceFilter)
-            .setSingleDevice(false)
-            .build()
-
-        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
-
-        cdmAssociationHandled = false
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            cdm.associate(request, mainExecutor, object : CompanionDeviceManager.Callback() {
-                override fun onAssociationPending(intentSender: android.content.IntentSender) {
-                    cdmAssociationLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                }
-
-                override fun onAssociationCreated(associationInfo: android.companion.AssociationInfo) {
-                    if (cdmAssociationHandled) return
-                    cdmAssociationHandled = true
-                    Log.i(TAG, "CDM association created directly: id=${associationInfo.id}")
-                    onTeslaAssociated(associationInfo.id)
-                }
-
-                override fun onFailure(error: CharSequence?) {
-                    Log.e(TAG, "CDM association failed: $error")
-                    Toast.makeText(this@MainActivity, getString(R.string.toast_tesla_pairing_failed, error), Toast.LENGTH_LONG).show()
-                }
-            })
-        } else {
-            @Suppress("DEPRECATION")
-            cdm.associate(request, object : CompanionDeviceManager.Callback() {
-                @Deprecated("Deprecated in API 33")
-                override fun onDeviceFound(chooserLauncher: android.content.IntentSender) {
-                    cdmAssociationLauncher.launch(IntentSenderRequest.Builder(chooserLauncher).build())
-                }
-
-                override fun onAssociationPending(intentSender: android.content.IntentSender) {
-                    cdmAssociationLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                }
-
-                override fun onAssociationCreated(associationInfo: android.companion.AssociationInfo) {
-                    Log.i(TAG, "CDM association created: id=${associationInfo.id}")
-                    onTeslaAssociated(associationInfo.id)
-                }
-
-                override fun onFailure(error: CharSequence?) {
-                    Log.e(TAG, "CDM association failed: $error")
-                    Toast.makeText(this@MainActivity, getString(R.string.toast_tesla_pairing_failed, error), Toast.LENGTH_LONG).show()
-                }
-            }, null)
+    private fun loadAutoDetectState() {
+        teslaAutoDetectEnabled = getSharedPreferences("castla_settings", MODE_PRIVATE)
+            .getBoolean("auto_detect_enabled", false)
+        if (teslaAutoDetectEnabled) {
+            startAutoDetect()
         }
     }
 
-    private fun handleCdmAssociationResult(data: Intent) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (cdmAssociationHandled) {
-                Log.i(TAG, "CDM association already handled via onAssociationCreated, skipping ActivityResult")
-                return
-            }
-            cdmAssociationHandled = true
-            val associationInfo = data.getParcelableExtra(
-                CompanionDeviceManager.EXTRA_ASSOCIATION,
-                android.companion.AssociationInfo::class.java
-            )
-            if (associationInfo != null) {
-                onTeslaAssociated(associationInfo.id)
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            val device = data.getParcelableExtra<BluetoothDevice>(CompanionDeviceManager.EXTRA_DEVICE)
-            if (device != null) {
-                try {
-                    Log.i(TAG, "CDM legacy association: ${device.name} [${device.address}]")
-                    val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        cdm.startObservingDevicePresence(device.address)
-                    }
-                    teslaAssociated = true
-                    teslaAutoDetectEnabled = true
-                    Toast.makeText(this, getString(R.string.toast_tesla_paired_device, device.name), Toast.LENGTH_SHORT).show()
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "CDM legacy association: SecurityException accessing device", e)
-                    refreshCdmState()
-                    if (teslaAssociated) {
-                        Toast.makeText(this, getString(R.string.toast_tesla_paired), Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun onTeslaAssociated(associationId: Int) {
-        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val assoc = cdm.myAssociations.find { it.id == associationId }
-            val macAddress = assoc?.deviceMacAddress?.toString()?.uppercase()
-            if (macAddress != null) {
-                cdm.startObservingDevicePresence(macAddress)
-                Log.i(TAG, "Observing device presence for $macAddress (assocId=$associationId)")
-            } else {
-                Log.w(TAG, "No MAC address in association $associationId")
-                runOnUiThread {
-                    Toast.makeText(this, getString(R.string.toast_bluetooth_permission_missing), Toast.LENGTH_LONG).show()
-                }
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            @Suppress("DEPRECATION")
-            val addresses = cdm.associations
-            for (addr in addresses) {
-                cdm.startObservingDevicePresence(addr)
-                Log.i(TAG, "Observing device presence for $addr")
-            }
-        }
-        teslaAssociated = true
-        teslaAutoDetectEnabled = true
-        // BLE scanner only needed on pre-S where CDM can't observe device presence
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            if (hasBleScanPermissions()) {
-                startBleScanner()
-            } else {
-                requestBleScanPermissions()
-            }
-        }
-        runOnUiThread {
+    private fun toggleAutoDetect() {
+        teslaAutoDetectEnabled = !teslaAutoDetectEnabled
+        getSharedPreferences("castla_settings", MODE_PRIVATE).edit()
+            .putBoolean("auto_detect_enabled", teslaAutoDetectEnabled).apply()
+        if (teslaAutoDetectEnabled) {
+            startAutoDetect()
             Toast.makeText(this, getString(R.string.toast_tesla_paired_auto_detect), Toast.LENGTH_SHORT).show()
+        } else {
+            stopAutoDetect()
+            Toast.makeText(this, getString(R.string.toast_tesla_auto_detect_disabled), Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun disassociateTesla() {
-        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                for (assoc in cdm.myAssociations) {
-                    cdm.disassociate(assoc.id)
-                    Log.i(TAG, "Disassociated CDM id=${assoc.id}")
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                for (addr in cdm.associations) {
-                    @Suppress("DEPRECATION")
-                    cdm.disassociate(addr)
-                    Log.i(TAG, "Disassociated CDM addr=$addr")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "CDM disassociate failed", e)
+    private fun startAutoDetect() {
+        // BLE scanner — detects Tesla BLE advertisement
+        if (teslaBleScanner == null && hasBleScanPermissions()) {
+            startBleScanner()
         }
-        teslaAssociated = false
-        teslaAutoDetectEnabled = false
+    }
+
+    private fun stopAutoDetect() {
         stopBleScanner()
-        Toast.makeText(this, getString(R.string.toast_tesla_auto_detect_disabled), Toast.LENGTH_SHORT).show()
     }
-
-    // ── BLE Fallback Scanner (runs alongside CDM) ─────────────────────
 
     private fun startBleScanner() {
         if (teslaBleScanner != null) return
@@ -840,7 +726,7 @@ class MainActivity : ComponentActivity() {
                 TeslaDetectNotifier.showTeslaDetectedNotification(this)
             }
         }
-        Log.i(TAG, "BLE fallback scanner started")
+        Log.i(TAG, "BLE scanner started")
     }
 
     private fun stopBleScanner() {
@@ -854,15 +740,6 @@ class MainActivity : ComponentActivity() {
         } else {
             checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         }
-    }
-
-    private fun requestBleScanPermissions() {
-        val needed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN)
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        blePermissionLauncher.launch(needed)
     }
 
     private fun requestStartupPermissions() {
@@ -895,14 +772,6 @@ class MainActivity : ComponentActivity() {
 
     private fun onStartMirroring() {
         Log.i(TAG, "onStartMirroring called")
-
-        // Credit system: if no credits, show ad first; otherwise deduct and proceed
-        AdManager.onMirroringStart(this) {
-            onStartMirroringAfterAd()
-        }
-    }
-
-    private fun onStartMirroringAfterAd() {
         isPreparing = true
         Log.i(TAG, "isPreparing=true (starting permission flow)")
 
@@ -957,23 +826,35 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startMirrorService(resultCode: Int, data: Intent) {
-        // Auto-enable hotspot if setting is on and Shizuku is available
-        if (streamSettings.autoHotspot && shizukuSetup.serviceConnected.value) {
-            Toast.makeText(this, getString(R.string.toast_hotspot_enabling), Toast.LENGTH_SHORT).show()
-            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                val success = enableHotspot()
-                hotspotEnabledByApp = success
-                runOnUiThread {
-                    if (success) {
-                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabled), Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+        // Auto-enable hotspot if setting is on, Shizuku is available, and hotspot is not already active
+        val needHotspot = streamSettings.autoHotspot && shizukuSetup.serviceConnected.value
+        if (needHotspot) {
+            val alreadyActive = findHotspotInterface() != null
+            if (alreadyActive) {
+                Log.i(TAG, "Hotspot already active — skipping enableHotspot, starting service directly")
+                launchMirrorService(resultCode, data)
+            } else {
+                Toast.makeText(this, getString(R.string.toast_hotspot_enabling), Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val success = enableHotspot()
+                    hotspotEnabledByApp = success
+                    runOnUiThread {
+                        if (success) {
+                            Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabled), Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+                        }
+                        updateServerUrl()
+                        launchMirrorService(resultCode, data)
                     }
-                    updateServerUrl()
                 }
             }
+        } else {
+            launchMirrorService(resultCode, data)
         }
+    }
 
+    private fun launchMirrorService(resultCode: Int, data: Intent) {
         val intent = Intent(this, MirrorForegroundService::class.java).apply {
             putExtra(MirrorForegroundService.EXTRA_RESULT_CODE, resultCode)
             putExtra(MirrorForegroundService.EXTRA_DATA, data)
@@ -1014,16 +895,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopMirrorService() {
-        // Auto-disable hotspot if we enabled it
-        if (hotspotEnabledByApp && shizukuSetup.serviceConnected.value) {
-            hotspotEnabledByApp = false
-            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                disableHotspot()
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_disabled), Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+        val shouldAskHotspot = hotspotEnabledByApp && shizukuSetup.serviceConnected.value
 
         if (serviceBound || bindRequested) {
             try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
@@ -1036,6 +908,27 @@ class MainActivity : ComponentActivity() {
         isPreparing = false
         updateServerUrl()
         com.castla.mirror.widget.MirrorWidgetProvider.updateAllWidgets(this)
+
+        // Ask user whether to turn off hotspot
+        if (shouldAskHotspot) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.dialog_hotspot_off_title)
+                .setMessage(R.string.dialog_hotspot_off_message)
+                .setPositiveButton(R.string.dialog_hotspot_off_yes) { _, _ ->
+                    hotspotEnabledByApp = false
+                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        disableHotspot()
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_disabled), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                .setNegativeButton(R.string.dialog_hotspot_off_no) { _, _ ->
+                    hotspotEnabledByApp = false
+                }
+                .setCancelable(false)
+                .show()
+        }
     }
 }
 
@@ -1048,19 +941,17 @@ fun CastlaScreen(
     shizukuRunning: Boolean,
     shizukuPermitted: Boolean = false,
     teslaIpReady: Boolean,
-    isPremium: Boolean = false,
-    freeCredits: Int = 0,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onUpgradeClick: () -> Unit = {},
-    onWatchAdClick: () -> Unit = {},
     onInstallShizuku: () -> Unit,
     onOpenShizuku: () -> Unit,
     onGrantShizukuPermission: () -> Unit = {},
+    shizukuDownloadProgress: Float = -1f,
     networkDiagLog: String = "",
     teslaAutoDetectEnabled: Boolean = false,
-    onToggleAutoDetect: () -> Unit = {}
+    onToggleAutoDetect: () -> Unit = {},
+    thermalStatus: Int = 0
 ) {
     MeshGradientBackground {
         Column(
@@ -1101,142 +992,6 @@ fun CastlaScreen(
                     Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(stringResource(id = R.string.btn_settings), color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            if (!isPremium) {
-                Spacer(modifier = Modifier.height(24.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .glassCard()
-                        .padding(20.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.title_castla_pro),
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFFFFD700)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = stringResource(id = R.string.desc_castla_pro_features),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = onUpgradeClick,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFFFD700)
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = stringResource(id = R.string.btn_upgrade_pro),
-                                color = Color.Black,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Free mirroring credits card (free users only)
-            if (!isPremium) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .glassCard()
-                        .padding(20.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.title_free_mirroring),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = if (freeCredits > 0)
-                                stringResource(id = R.string.desc_free_credits, freeCredits)
-                            else
-                                stringResource(id = R.string.desc_no_credits),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (freeCredits > 0) Color(0xFF69F0AE) else Color.White.copy(alpha = 0.6f),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = onWatchAdClick,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF00BCD4)
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = stringResource(id = R.string.btn_watch_ad),
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .glassCard()
-                    .padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (teslaAutoDetectEnabled) stringResource(id = R.string.title_tesla_auto_detect_on) else stringResource(id = R.string.title_tesla_auto_detect),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (teslaAutoDetectEnabled) Color(0xFF69F0AE) else Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (teslaAutoDetectEnabled)
-                                stringResource(id = R.string.desc_tesla_auto_detect_on)
-                            else
-                                stringResource(id = R.string.desc_tesla_auto_detect_off),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.6f)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Switch(
-                        checked = teslaAutoDetectEnabled,
-                        onCheckedChange = { onToggleAutoDetect() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFF69F0AE),
-                            uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.2f),
-                            uncheckedBorderColor = Color.Transparent
-                        )
-                    )
                 }
             }
 
@@ -1314,7 +1069,7 @@ fun CastlaScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            AnimatedVisibility(visible = !teslaIpReady) {
+            AnimatedVisibility(visible = !shizukuInstalled || !shizukuRunning || !shizukuPermitted) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1343,15 +1098,38 @@ fun CastlaScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            Button(
-                                onClick = onInstallShizuku,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFFFB300)
-                                )
-                            ) {
-                                Text(stringResource(id = R.string.btn_how_to_install_shizuku), color = Color.Black, fontWeight = FontWeight.Bold)
+                            if (shizukuDownloadProgress >= 0f) {
+                                // Download in progress
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    LinearProgressIndicator(
+                                        progress = { shizukuDownloadProgress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(8.dp)
+                                            .clip(RoundedCornerShape(4.dp)),
+                                        color = Color(0xFFFFB300),
+                                        trackColor = Color.White.copy(alpha = 0.2f),
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Downloading… ${(shizukuDownloadProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFFFD54F),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            } else {
+                                Button(
+                                    onClick = onInstallShizuku,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFFFB300)
+                                    )
+                                ) {
+                                    Text(stringResource(id = R.string.btn_how_to_install_shizuku), color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
                             }
                         } else if (!shizukuRunning) {
                             Text(
@@ -1396,19 +1174,12 @@ fun CastlaScreen(
                             ) {
                                 Text(stringResource(id = R.string.btn_grant_shizuku_permission), color = Color.White, fontWeight = FontWeight.Bold)
                             }
-                        } else {
-                            Text(
-                                text = stringResource(id = R.string.status_shizuku_running_setup),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFFFD54F),
-                                fontWeight = FontWeight.Medium
-                            )
                         }
                     }
                 }
             }
 
-            if (!teslaIpReady) {
+            if (!shizukuInstalled || !shizukuRunning || !shizukuPermitted) {
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
@@ -1521,8 +1292,6 @@ fun CastlaScreen(
                 Spacer(modifier = Modifier.height(48.dp))
             }
 
-            // Banner ad at the bottom (free users only)
-            BannerAd()
         }
     }
 }

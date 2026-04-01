@@ -22,14 +22,14 @@
     <!-- BLE scanning on API < 31 requires location permission -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
 
+    <!-- Install APKs (for Shizuku auto-install) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Query all installed apps for VD launcher grid -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <!-- Shizuku -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
-
-    <!-- Advertising ID for AdMob -->
-    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
     <!-- CompanionDeviceManager: Tesla auto-detection -->
     <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
@@ -45,11 +45,6 @@
         android:theme="@style/Theme.Castla"
         android:localeConfig="@xml/locales_config"
         android:networkSecurityConfig="@xml/network_security_config">
-
-        <!-- AdMob App ID (replace with your real ID from AdMob console) -->
-        <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-8785907922784819~1654827242" />
 
         <activity
             android:name=".MainActivity"
@@ -104,6 +99,17 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+
+        <!-- FileProvider for APK installation -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- Shizuku provider -->
         <provider

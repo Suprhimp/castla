@@ -19,7 +19,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
-import com.castla.mirror.billing.LicenseManager
 
 /**
  * Launcher activity displayed on the Shizuku Virtual Display.
@@ -163,26 +162,25 @@ class DesktopActivity : Activity() {
         // Navigation (green)
         if (navApps.isNotEmpty()) {
             content.addView(createSectionHeader("Navigation", 0xFF4CAF50.toInt()))
-            content.addView(createAppGrid(navApps, isPremium = false))
+            content.addView(createAppGrid(navApps))
         }
 
-        // Video / OTT (deep orange) — locked for free users
-        val isLocked = !LicenseManager.isPremiumNow
+        // Video / OTT (deep orange)
         if (videoApps.isNotEmpty()) {
             content.addView(createSectionHeader("Video", 0xFFFF5722.toInt()))
-            content.addView(createAppGrid(videoApps, isPremium = isLocked))
+            content.addView(createAppGrid(videoApps))
         }
 
-        // Music (purple) — locked for free users
+        // Music (purple)
         if (musicApps.isNotEmpty()) {
             content.addView(createSectionHeader("Music", 0xFF9C27B0.toInt()))
-            content.addView(createAppGrid(musicApps, isPremium = isLocked))
+            content.addView(createAppGrid(musicApps))
         }
 
-        // Other apps (gray) — locked for free users
+        // Other apps (gray)
         if (otherApps.isNotEmpty()) {
             content.addView(createSectionHeader("Apps", 0xFF9E9E9E.toInt()))
-            content.addView(createAppGrid(otherApps, isPremium = isLocked))
+            content.addView(createAppGrid(otherApps))
         }
 
         root.addView(content)
@@ -221,7 +219,7 @@ class DesktopActivity : Activity() {
         }
     }
 
-    private fun createAppGrid(apps: List<AppInfo>, isPremium: Boolean): GridLayout {
+    private fun createAppGrid(apps: List<AppInfo>): GridLayout {
         return GridLayout(this).apply {
             columnCount = 8
             layoutParams = LinearLayout.LayoutParams(
@@ -233,12 +231,12 @@ class DesktopActivity : Activity() {
             setPadding(8, 8, 8, 8)
 
             for (app in apps) {
-                addView(createAppCell(app, isPremium))
+                addView(createAppCell(app))
             }
         }
     }
 
-    private fun createAppCell(app: AppInfo, isPremium: Boolean): View {
+    private fun createAppCell(app: AppInfo): View {
         val cell = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -267,7 +265,6 @@ class DesktopActivity : Activity() {
             setImageDrawable(app.icon)
             layoutParams = FrameLayout.LayoutParams(80, 80)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            if (isPremium) alpha = 0.4f
         }
         iconContainer.addView(icon)
 
@@ -297,32 +294,9 @@ class DesktopActivity : Activity() {
             iconContainer.addView(webBadge)
         }
 
-        if (isPremium) {
-            // Lock overlay
-            val lock = TextView(this).apply {
-                text = "PRO"
-                setTextColor(0xFFFFD700.toInt())
-                textSize = 9f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                val bg = GradientDrawable().apply {
-                    setColor(0xCC000000.toInt())
-                    cornerRadius = 8f
-                }
-                background = bg
-                setPadding(8, 2, 8, 2)
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM or Gravity.END
-                )
-            }
-            iconContainer.addView(lock)
-        }
-
         val label = TextView(this).apply {
             text = app.label
-            setTextColor(if (isPremium) 0xFF888888.toInt() else 0xFFFFFFFF.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
             textSize = 10f
             gravity = Gravity.CENTER
             maxLines = 2
@@ -339,11 +313,7 @@ class DesktopActivity : Activity() {
         cell.addView(label)
 
         cell.setOnClickListener {
-            if (isPremium) {
-                Toast.makeText(this, "Premium feature — upgrade to unlock", Toast.LENGTH_SHORT).show()
-            } else {
-                launchApp(app.packageName, app.className, app.category)
-            }
+            launchApp(app.packageName, app.className, app.category)
         }
 
         return cell

@@ -27,10 +27,7 @@
 
     <string name="subtitle_tesla_screen_mirroring">Tesla skjermspeiling</string>
     <string name="btn_settings">Innstillinger</string>
-    <string name="title_castla_pro">Castla PRO</string>
-    <string name="desc_castla_pro_features">Lås opp alle apper / 1080p strømming / Ingen annonser</string>
-    <string name="btn_upgrade_pro">Oppgrader — Engangskjøp</string>
-    <string name="title_tesla_auto_detect_on">Tesla autogjenkjenning PÅ</string>
+<string name="title_tesla_auto_detect_on">Tesla autogjenkjenning PÅ</string>
     <string name="title_tesla_auto_detect">Tesla autogjenkjenning</string>
     <string name="desc_tesla_auto_detect_on">Du vil få et varsel når Tesla kobler til</string>
     <string name="desc_tesla_auto_detect_off">Få varsel når din Tesla er i nærheten</string>
@@ -54,11 +51,6 @@
     <string name="title_network_setup_log">Nettverksoppsettlogg</string>
     <string name="btn_copy">Kopier</string>
 
-    <string name="title_free_mirroring">Gratis speiling</string>
-    <string name="desc_free_credits">%d økter gjenstår</string>
-    <string name="desc_no_credits">Se en annonse for å få 10 gratis økter</string>
-    <string name="btn_watch_ad">Se annonse — Få 10 gratis økter</string>
-
     <!-- Settings Screen -->
     <string name="settings_back">Tilbake</string>
     <string name="settings_title">Innstillinger</string>
@@ -72,14 +64,17 @@
     <string name="settings_audio_experimental">Lyd (Eksperimentell)</string>
     <string name="settings_stream_device_audio">Strøm enhetslyd</string>
     <string name="settings_audio_description">Krever Android 10+. Fanger opp systemlyd.</string>
-    <string name="settings_unlock_all_features">Lås opp alle funksjoner</string>
-    <string name="settings_pro_description">1080p, 60fps og mer</string>
-    <string name="settings_upgrade">Oppgrader</string>
-    <string name="settings_current_config">Gjeldende konfigurasjon</string>
+<string name="settings_current_config">Gjeldende konfigurasjon</string>
     <string name="settings_full_screen">Fullskjerm</string>
     <string name="settings_audio_on">, lyd på</string>
     <string name="settings_auto_bitrate">Automatisk bitrate</string>
     <string name="settings_app_mode">App: %s</string>
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Høy)</string>
+
+    <!-- Support / Donate -->
+    <string name="settings_support_title">Støtt utvikleren</string>
+    <string name="settings_support_description">Castla er gratis og åpen kildekode.\nHvis du liker den, spander en kaffe!</string>
+    <string name="settings_donate_kofi">Spander en kaffe på Ko-fi</string>
+    <string name="settings_donate_kakaopay">카카오페이로 후원하기</string>
 </resources>
