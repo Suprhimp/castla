@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Høy)</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">Automatisk hotspot</string>
+    <string name="settings_auto_hotspot_title">Automatisk hotspot-veksling</string>
+    <string name="settings_auto_hotspot_description">Slår automatisk på hotspot når speiling starter, og av når speiling stopper. Krever Shizuku.</string>
+    <string name="toast_hotspot_enabling">Aktiverer hotspot...</string>
+    <string name="toast_hotspot_enabled">Hotspot aktivert</string>
+    <string name="toast_hotspot_failed">Kunne ikke aktivere hotspot. Sjekk at Shizuku kjører.</string>
+    <string name="toast_hotspot_disabled">Hotspot deaktivert</string>
+    <string name="dialog_hotspot_off_title">Slå av hotspot?</string>
+    <string name="dialog_hotspot_off_message">Hotspot ble slått på for speiling. Vil du slå den av?</string>
+    <string name="dialog_hotspot_off_yes">Slå av</string>
+    <string name="dialog_hotspot_off_no">Behold på</string>
+
+    <!-- Language -->
+    <string name="settings_language">Språk</string>
+    <string name="settings_language_system_default">Systemstandard</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">Støtt utvikleren</string>
     <string name="settings_support_description">Castla er gratis og åpen kildekode.\nHvis du liker den, spander en kaffe!</string>

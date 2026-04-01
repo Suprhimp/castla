@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Élevé)</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">Hotspot automatique</string>
+    <string name="settings_auto_hotspot_title">Activer/désactiver le hotspot automatiquement</string>
+    <string name="settings_auto_hotspot_description">Active automatiquement le hotspot au début de la mise en miroir et le désactive à l\'arrêt. Nécessite Shizuku.</string>
+    <string name="toast_hotspot_enabling">Activation du hotspot...</string>
+    <string name="toast_hotspot_enabled">Hotspot activé</string>
+    <string name="toast_hotspot_failed">Échec de l\'activation du hotspot. Vérifiez que Shizuku est en cours d\'exécution.</string>
+    <string name="toast_hotspot_disabled">Hotspot désactivé</string>
+    <string name="dialog_hotspot_off_title">Désactiver le hotspot ?</string>
+    <string name="dialog_hotspot_off_message">Le hotspot a été activé pour la mise en miroir. Voulez-vous le désactiver ?</string>
+    <string name="dialog_hotspot_off_yes">Désactiver</string>
+    <string name="dialog_hotspot_off_no">Garder activé</string>
+
+    <!-- Language -->
+    <string name="settings_language">Langue</string>
+    <string name="settings_language_system_default">Par défaut du système</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">Soutenir le développeur</string>
     <string name="settings_support_description">Castla est gratuit et open source.\nSi vous le trouvez utile, offrez-moi un café !</string>

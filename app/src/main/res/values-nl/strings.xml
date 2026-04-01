@@ -72,6 +72,23 @@
     <string name="settings_res_720">720p (Normaal)</string>
     <string name="settings_res_1080">1080p (Hoog)</string>
 
+    <!-- Auto Hotspot -->
+    <string name="settings_auto_hotspot">Automatische hotspot</string>
+    <string name="settings_auto_hotspot_title">Hotspot automatisch schakelen</string>
+    <string name="settings_auto_hotspot_description">Schakelt automatisch de hotspot in bij het starten van mirroring en uit bij het stoppen. Vereist Shizuku.</string>
+    <string name="toast_hotspot_enabling">Hotspot inschakelen...</string>
+    <string name="toast_hotspot_enabled">Hotspot ingeschakeld</string>
+    <string name="toast_hotspot_failed">Hotspot inschakelen mislukt. Controleer of Shizuku draait.</string>
+    <string name="toast_hotspot_disabled">Hotspot uitgeschakeld</string>
+    <string name="dialog_hotspot_off_title">Hotspot uitschakelen?</string>
+    <string name="dialog_hotspot_off_message">De hotspot werd ingeschakeld voor mirroring. Wil je deze uitschakelen?</string>
+    <string name="dialog_hotspot_off_yes">Uitschakelen</string>
+    <string name="dialog_hotspot_off_no">Aanlaten</string>
+
+    <!-- Language -->
+    <string name="settings_language">Taal</string>
+    <string name="settings_language_system_default">Systeemstandaard</string>
+
     <!-- Support / Donate -->
     <string name="settings_support_title">Ondersteun de ontwikkelaar</string>
     <string name="settings_support_description">Castla is gratis en open source.\nAls je het handig vindt, trakteer me op een koffie!</string>
