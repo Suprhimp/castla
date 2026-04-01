@@ -36,8 +36,8 @@
     <string name="status_ready_to_stream">Bereit zum Streamen</string>
     <string name="title_open_tesla_browser">Tesla Browser öffnen</string>
     <string name="title_tesla_setup_required">Tesla Einrichtung erforderlich</string>
-    <string name="desc_shizuku_install_required">Der Tesla-Browser benötigt Shizuku zur Verbindung.\nTippen Sie unten, um zu sehen, wie Sie Shizuku installieren.</string>
-    <string name="btn_how_to_install_shizuku">Wie man Shizuku installiert</string>
+    <string name="desc_shizuku_install_required">Der Tesla-Browser benötigt Shizuku zur Verbindung.\nTippen Sie unten, um Shizuku herunterzuladen und zu installieren.</string>
+    <string name="btn_how_to_install_shizuku">Shizuku installieren</string>
     <string name="title_shizuku_setup_steps">Shizuku Einrichtungsschritte:</string>
     <string name="desc_shizuku_setup_steps">1. Einstellungen &gt; Telefoninfo &gt; Softwareinformationen\n   &gt; 7 Mal auf die Buildnummer tippen\n2. Einstellungen &gt; Entwickleroptionen\n   &gt; Wireless Debugging &gt; EIN\n3. Shizuku öffnen &gt; \"Über Wireless Debugging starten\"</string>
     <string name="btn_open_shizuku">Shizuku öffnen</string>
