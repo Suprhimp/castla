@@ -18,6 +18,9 @@ import androidx.compose.ui.window.DialogProperties
 @Composable
 fun ForceUpdateDialog(
     latestVersion: String,
+    isDownloading: Boolean = false,
+    downloadProgress: Float = 0f,
+    downloadFailed: Boolean = false,
     onUpdate: () -> Unit
 ) {
     Dialog(
@@ -47,29 +50,50 @@ fun ForceUpdateDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "A new version ($latestVersion) is available.\nPlease update to continue using Castla.",
+                    text = if (downloadFailed)
+                        "Download failed. Please try again."
+                    else
+                        "A new version ($latestVersion) is available.\nPlease update to continue using Castla.",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White.copy(alpha = 0.8f),
+                    color = if (downloadFailed) Color(0xFFFF5252) else Color.White.copy(alpha = 0.8f),
                     textAlign = TextAlign.Center,
                     lineHeight = 24.sp
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Button(
-                    onClick = onUpdate,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF69F0AE)
+                if (isDownloading) {
+                    LinearProgressIndicator(
+                        progress = { downloadProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp),
+                        color = Color(0xFF69F0AE),
+                        trackColor = Color.White.copy(alpha = 0.2f),
+                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
                     )
-                ) {
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Update Now",
-                        color = Color.Black,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 16.sp
+                        text = "${(downloadProgress * 100).toInt()}%",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 14.sp
                     )
+                } else {
+                    Button(
+                        onClick = onUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (downloadFailed) Color(0xFFFF5252) else Color(0xFF69F0AE)
+                        )
+                    ) {
+                        Text(
+                            text = if (downloadFailed) "Retry" else "Update Now",
+                            color = if (downloadFailed) Color.White else Color.Black,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 16.sp
+                        )
+                    }
                 }
             }
         }
