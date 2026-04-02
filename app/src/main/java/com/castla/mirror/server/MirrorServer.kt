@@ -40,6 +40,7 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     private var onCloseSplitListener: (() -> Unit)? = null
     private var onDisplayDensityListener: ((Float) -> Unit)? = null
     private var onQualityReportListener: ((Int, Double, Int) -> Unit)? = null
+    private var onStreamResolutionListener: ((String) -> Unit)? = null
 
     // Track active connection status
     private var isBrowserConnected = false
@@ -48,6 +49,7 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     // Cached thermal status JSON — sent immediately to new control sockets
     // to prevent race where browser connects before thermal broadcast arrives.
     @Volatile private var cachedThermalJson: String? = null
+    @Volatile private var cachedStreamSettingsJson: String? = null
 
     private var cachedSpsPps: ByteArray? = null
 
@@ -113,6 +115,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         onQualityReportListener = listener
     }
 
+    fun setStreamResolutionListener(listener: (String) -> Unit) {
+        onStreamResolutionListener = listener
+    }
+
     fun onCloseSplitRequest() {
         onCloseSplitListener?.invoke()
     }
@@ -159,6 +165,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         cachedThermalJson?.let { json ->
             try { socket.send(json) }
             catch (e: Exception) { Log.w(TAG, "Failed to send cached thermal status", e) }
+        }
+        cachedStreamSettingsJson?.let { json ->
+            try { socket.send(json) }
+            catch (e: Exception) { Log.w(TAG, "Failed to send cached stream settings", e) }
         }
 
         updateConnectionState()
@@ -283,6 +293,8 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         // Cache thermal status so new control sockets receive it immediately
         if (json.contains("\"thermalStatus\"")) {
             cachedThermalJson = json
+        } else if (json.contains("\"streamSettings\"")) {
+            cachedStreamSettingsJson = json
         }
         val deadSockets = mutableListOf<ControlSocket>()
         for (socket in controlSockets) {
@@ -342,6 +354,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
 
     fun onQualityReport(droppedFrames: Int, avgDelayMs: Double, backlogDrops: Int) {
         onQualityReportListener?.invoke(droppedFrames, avgDelayMs, backlogDrops)
+    }
+
+    fun onStreamResolutionChange(mode: String) {
+        onStreamResolutionListener?.invoke(mode)
     }
 
     override fun openWebSocket(handshake: IHTTPSession): WebSocket {

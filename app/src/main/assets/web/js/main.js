@@ -42,6 +42,7 @@ let userPreferredProfile = (() => {
 })();
 let currentThermalLevel = 'none';
 let playbackProfile = userPreferredProfile;
+let streamResolutionMode = 'auto';
 let streamPolicy = {
     fitMode: 'contain',
     autoFit: false,
@@ -64,6 +65,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const webLauncher = document.getElementById('web-launcher');
     const homeBtn = document.getElementById('home-btn');
+    const resolutionControl = document.getElementById('stream-resolution-control');
+    const resolutionBtn = document.getElementById('stream-resolution-btn');
+    const resolutionLabel = document.getElementById('stream-resolution-label');
+    const resolutionPopup = document.getElementById('stream-resolution-popup');
     const overlay = document.getElementById('overlay');
     const statusText = document.getElementById('status');
     const launcherLoading = document.getElementById('launcher-loading');
@@ -1077,6 +1082,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     else blurKeyboardProxy();
                 } else if (msg.type === 'thermalStatus') {
                     handleThermalProfileSwitch(msg.level);
+                } else if (msg.type === 'streamSettings') {
+                    applyResolutionMode(msg.resolutionMode || 'auto');
                 } else if (msg.type === 'autoTierChange') {
                     const tier = msg.tier;
                     const reason = msg.reason;
@@ -1536,6 +1543,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (canvas) canvas.style.pointerEvents = 'auto';
     if (secondaryCanvas) secondaryCanvas.style.pointerEvents = 'auto';
 
+    // ── Stream Resolution UI ──
+    const RESOLUTION_OPTIONS = [
+        { value: 'auto', label: 'Auto' },
+        { value: '720p', label: '720p' },
+        { value: '1080p', label: '1080p' }
+    ];
+
+    function applyResolutionMode(mode) {
+        streamResolutionMode = RESOLUTION_OPTIONS.some(opt => opt.value === mode) ? mode : 'auto';
+        const opt = RESOLUTION_OPTIONS.find(p => p.value === streamResolutionMode) || RESOLUTION_OPTIONS[0];
+        if (resolutionLabel) resolutionLabel.textContent = opt.label;
+        if (resolutionPopup) buildResolutionPopup();
+    }
+
+    function buildResolutionPopup() {
+        if (!resolutionPopup) return;
+        resolutionPopup.innerHTML = '';
+        RESOLUTION_OPTIONS.forEach(option => {
+            const btn = document.createElement('button');
+            const isActive = option.value === streamResolutionMode;
+            btn.textContent = option.label;
+            btn.style.cssText = `
+                display:block;width:100%;padding:10px 16px;border:none;
+                border-radius:8px;background:${isActive ? 'rgba(100,181,246,0.25)' : 'transparent'};
+                color:${isActive ? '#64B5F6' : '#ccc'};
+                font-size:14px;font-weight:${isActive ? '600' : '400'};
+                cursor:pointer;text-align:left;
+                font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            `;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                applyResolutionMode(option.value);
+                resolutionPopup.style.display = 'none';
+                buildResolutionPopup();
+                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                    controlSocket.send(JSON.stringify({
+                        type: 'streamSettings',
+                        resolutionMode: option.value
+                    }));
+                }
+            });
+            resolutionPopup.appendChild(btn);
+        });
+    }
+
+    function updateOverlayControlsVisibility() {
+        const isVisible = homeBtn && homeBtn.style.display !== 'none';
+        if (profileControl) profileControl.style.display = isVisible ? 'block' : 'none';
+        if (resolutionControl) resolutionControl.style.display = isVisible ? 'block' : 'none';
+    }
+
     // ── Playback Profile UI ──
     // Controls client-side frame pacing / decoder backlog.
     // Thermal-aware auto-downgrade: the service broadcasts thermalStatus
@@ -1664,13 +1722,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Show/hide playback profile control with home button
-    const profileObserver = new MutationObserver(() => {
-        if (profileControl) {
-            profileControl.style.display = homeBtn.style.display === 'none' ? 'none' : 'block';
-        }
-    });
+    if (resolutionBtn && resolutionPopup) {
+        applyResolutionMode(streamResolutionMode);
+        buildResolutionPopup();
+
+        resolutionBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = resolutionPopup.style.display === 'block';
+            resolutionPopup.style.display = isVisible ? 'none' : 'block';
+        });
+        document.addEventListener('click', () => {
+            if (resolutionPopup) resolutionPopup.style.display = 'none';
+        });
+    }
+
+    // Show/hide floating controls with home button
+    const profileObserver = new MutationObserver(() => updateOverlayControlsVisibility());
     if (homeBtn) {
         profileObserver.observe(homeBtn, { attributes: true, attributeFilter: ['style'] });
     }
+    updateOverlayControlsVisibility();
 });

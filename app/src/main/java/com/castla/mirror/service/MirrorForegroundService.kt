@@ -713,11 +713,73 @@ class MirrorForegroundService : Service() {
         mirrorServer?.broadcastControlMessage(json)
     }
 
+    private fun currentResolutionMode(): String = when {
+        autoResolution -> "auto"
+        currentMaxHeight <= 720 -> "720p"
+        else -> "1080p"
+    }
+
+    private fun broadcastStreamSettingsState() {
+        val json = JSONObject().apply {
+            put("type", "streamSettings")
+            put("resolutionMode", currentResolutionMode())
+            put("autoResolution", autoResolution)
+            put("currentMaxHeight", currentMaxHeight)
+            put("currentFps", currentFps)
+        }.toString()
+        mirrorServer?.broadcastControlMessage(json)
+    }
+
+    private fun refreshAutoScaleLoop(resetTier: Boolean = false) {
+        if (autoResolution || autoFps) {
+            if (resetTier || autoScaleJob?.isActive != true) {
+                startAutoScaleLoop()
+            }
+        } else {
+            autoScaleJob?.cancel()
+        }
+    }
+
+    private fun onStreamResolutionChange(mode: String) {
+        val previousAuto = autoResolution
+        val previousHeight = currentMaxHeight
+
+        when (mode) {
+            "auto" -> {
+                autoResolution = true
+                autoTierIndex = 0
+                autoStableCount = 0
+                currentMaxHeight = AUTO_TIERS.first().maxHeight
+            }
+            "720p" -> {
+                autoResolution = false
+                currentMaxHeight = 720
+            }
+            "1080p" -> {
+                autoResolution = false
+                currentMaxHeight = 1080
+            }
+            else -> return
+        }
+
+        refreshAutoScaleLoop(resetTier = mode == "auto")
+        broadcastStreamSettingsState()
+
+        if ((previousAuto != autoResolution || previousHeight != currentMaxHeight) &&
+            browserConnected && currentWidth > 0 && currentHeight > 0
+        ) {
+            serviceScope.launch {
+                rebuildPipeline(currentWidth, currentHeight, force = true)
+            }
+        }
+    }
+
     private fun applyAutoTier() {
         val tier = AUTO_TIERS[autoTierIndex]
         // Only apply auto values for settings that are in auto mode
         if (autoResolution) currentMaxHeight = tier.maxHeight
         if (autoFps) currentFps = tier.fps
+        broadcastStreamSettingsState()
         // Trigger pipeline rebuild with new settings
         if (browserConnected && currentWidth > 0 && currentHeight > 0) {
             serviceScope.launch {
@@ -831,6 +893,11 @@ class MirrorForegroundService : Service() {
                     lastQualityBacklogDrops = backlogDrops
                 }
 
+                server.setStreamResolutionListener { mode ->
+                    Log.i(TAG, "Stream resolution mode changed to $mode")
+                    onStreamResolutionChange(mode)
+                }
+
                 server.setBrowserConnectionListener { connected ->
                     if (connected && !browserConnected) {
                         browserConnected = true
@@ -843,6 +910,7 @@ class MirrorForegroundService : Service() {
                 }
 
                 server.start(0)
+                broadcastStreamSettingsState()
                 Log.i(TAG, "Server started on port ${MirrorServer.DEFAULT_PORT} — waiting for browser")
             }
 

@@ -118,6 +118,12 @@ class ControlSocket(
                         backlogDrops = json.optInt("backlogDrops", 0)
                     )
                 }
+                "streamSettings" -> {
+                    val resolutionMode = json.optString("resolutionMode", "")
+                    if (resolutionMode == "auto" || resolutionMode == "720p" || resolutionMode == "1080p") {
+                        server.onStreamResolutionChange(resolutionMode)
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)
