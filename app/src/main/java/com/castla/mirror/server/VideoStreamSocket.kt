@@ -15,13 +15,17 @@ class VideoStreamSocket(
 
     companion object {
         private const val TAG = "VideoStreamSocket"
-        private const val MAX_QUEUE = 3
+        private const val MAX_QUEUE = 5
+        private const val MIN_KEYFRAME_REQUEST_INTERVAL_MS = 500L
     }
 
     private val sendQueue = ArrayBlockingQueue<ByteArray>(MAX_QUEUE)
     private val sending = AtomicBoolean(false)
     @Volatile private var closed = false
     @Volatile private var framesSent = 0L
+    @Volatile private var framesDropped = 0L
+    @Volatile private var lastKeyframeRequestTime = 0L
+    @Volatile private var queueFlushCount = 0L
 
     private val sendThread = Thread({
         while (!closed) {
@@ -31,7 +35,7 @@ class VideoStreamSocket(
                 send(data)
                 framesSent++
                 if (framesSent == 1L || framesSent % 1000 == 0L) {
-                    Log.i(TAG, "Sent frame #$framesSent, size=${data.size}")
+                    Log.i(TAG, "[$channel] frame=#$framesSent size=${data.size} dropped=$framesDropped flushes=$queueFlushCount queueSize=${sendQueue.size}")
                 }
             } catch (_: InterruptedException) {
                 break
@@ -75,12 +79,13 @@ class VideoStreamSocket(
     }
 
     /**
-     * Smart keyframe-preserving queue:
+     * Smart keyframe-preserving queue with graduated drop policy:
      * - Keyframes: clear all queued delta frames, then enqueue (keyframes are never dropped)
      * - Delta frames: if queue is full, drop oldest delta to make room
      * - SPS/PPS config (0x02): always enqueue immediately
+     * - Keyframe requests are rate-limited to avoid encoder thrashing
      *
-     * Frame header: [flags:u8][seqLo:u8][seqHi:u8][reserved:u8]
+     * Frame header: [flags:u8][seqLo:u8][seqHi:u8][tsMs0-3:u8x4][reserved:u8]
      */
     fun sendBinary(data: ByteArray) {
         if (closed) throw IOException("Socket closed")
@@ -90,7 +95,6 @@ class VideoStreamSocket(
 
         if (isConfig) {
             // Config messages bypass the queue — send directly
-            // (small enough that blocking briefly is fine)
             while (!sendQueue.offer(data)) {
                 sendQueue.poll()
             }
@@ -103,14 +107,26 @@ class VideoStreamSocket(
             sendQueue.clear()
             sendQueue.offer(data)
         } else {
-            // Delta frame: if queue full, drop oldest (which is also a delta)
+            // Delta frame: graduated drop policy
             if (!sendQueue.offer(data)) {
-                // The queue is full (network bottleneck).
-                // Do NOT just drop a P-frame, because it will cause smearing/ghosting
-                // until the next I-frame. Instead, clear the queue to stop sending
-                // useless deltas, and immediately request a fresh I-frame from the encoder.
-                sendQueue.clear()
-                server.onKeyframeRequest(channel)
+                // Queue is full — drop the oldest frame (likely a stale delta)
+                // and try again before resorting to a full flush + keyframe request
+                sendQueue.poll()
+                framesDropped++
+
+                if (!sendQueue.offer(data)) {
+                    // Still can't fit — network is severely bottlenecked.
+                    // Clear queue and request a fresh keyframe, but rate-limit
+                    // the request to avoid encoder thrashing.
+                    sendQueue.clear()
+                    queueFlushCount++
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastKeyframeRequestTime >= MIN_KEYFRAME_REQUEST_INTERVAL_MS) {
+                        lastKeyframeRequestTime = now
+                        server.onKeyframeRequest(channel)
+                    }
+                }
             }
         }
     }

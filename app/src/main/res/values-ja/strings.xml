@@ -72,6 +72,8 @@
     <string name="settings_audio_on">、オーディオオン</string>
     <string name="settings_auto_bitrate">自動ビットレート</string>
     <string name="settings_app_mode">アプリ: %s</string>
+    <string name="settings_res_auto">自動</string>
+    <string name="settings_fps_auto">自動</string>
     <string name="settings_res_720">720p（標準）</string>
     <string name="settings_res_1080">1080p（高画質）</string>
 

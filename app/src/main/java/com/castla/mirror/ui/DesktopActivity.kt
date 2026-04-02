@@ -19,6 +19,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
+import com.castla.mirror.ott.OttCatalog
+import com.castla.mirror.utils.AppLaunchRequest
+import com.castla.mirror.utils.LaunchMode
 
 /**
  * Launcher activity displayed on the Shizuku Virtual Display.
@@ -78,17 +81,7 @@ class DesktopActivity : Activity() {
             "stream", "vod", "player", "hulu", "disney", "tving", "wavve"
         )
 
-        // Web URLs for DRM-restricted OTT apps
-        private val OTT_WEB_URLS = mapOf(
-            "com.google.android.youtube" to "https://m.youtube.com", // 모바일 유튜브 웹버전
-            "com.netflix.mediaclient" to "https://www.netflix.com",
-            "com.disney.disneyplus" to "https://www.disneyplus.com",
-            "com.disney.disneyplus.kr" to "https://www.disneyplus.com",
-            "com.wavve.player" to "https://m.wavve.com",
-            "net.cj.cjhv.gs.tving" to "https://www.tving.com",
-            "com.coupang.play" to "https://www.coupangplay.com",
-            "com.frograms.watcha" to "https://watcha.com"
-        )
+        // OTT web URLs are now sourced from OttCatalog (single source of truth)
 
         // --- Music ---
         private val MUSIC_PACKAGES = setOf(
@@ -271,7 +264,7 @@ class DesktopActivity : Activity() {
         iconContainer.addView(icon)
 
         // Web badge for DRM-restricted OTTs
-        if (OTT_WEB_URLS.containsKey(app.packageName)) {
+        if (OttCatalog.isOtt(app.packageName)) {
             val webBadge = TextView(this).apply {
                 text = "WEB"
                 setTextColor(0xFFFFFFFF.toInt())
@@ -323,16 +316,18 @@ class DesktopActivity : Activity() {
 
     private fun launchApp(packageName: String, className: String, category: AppCategory = AppCategory.OTHER) {
         val isVideo = category == AppCategory.VIDEO
-        
-        // Check if this is a DRM-restricted OTT app that should be launched in our WebBrowserActivity
-        val webUrl = OTT_WEB_URLS[packageName]
-        if (webUrl != null) {
-            Log.i(TAG, "Launching DRM-restricted OTT app via WebBrowserActivity locally: $packageName -> $webUrl")
-            // System 앱이 아닌 일반 앱은 권한 문제(SecurityException)로 인해
-            // 가상 디스플레이에 직접 ActivityOptions.launchDisplayId 를 사용할 수 없습니다.
-            // 따라서 1차적으로 시도했던 Shizuku(시스템 권한)를 통한 launchAppWithExtraOnDisplay 로 롤백하여 안전하게 띄웁니다.
-            val componentName = "com.castla.mirror/com.castla.mirror.ui.WebBrowserActivity"
-            com.castla.mirror.utils.AppLaunchBus.requestLaunch(componentName, null, isVideoApp = true, intentExtra = webUrl)
+
+        val ottTarget = OttCatalog.resolve(packageName)
+        if (ottTarget != null) {
+            Log.i(TAG, "Launching OTT app via external browser: $packageName -> ${ottTarget.webUrl}")
+            com.castla.mirror.utils.AppLaunchBus.requestLaunch(AppLaunchRequest(
+                packageName = packageName,
+                isVideoApp = true,
+                launchMode = LaunchMode.EXTERNAL_BROWSER_URL,
+                url = ottTarget.webUrl,
+                sourceAppPackage = packageName,
+                allowEmbeddedFallback = ottTarget.allowEmbeddedFallback
+            ))
         } else {
             // Standard app launch via Shizuku
             com.castla.mirror.utils.AppLaunchBus.requestLaunch(packageName, className, isVideoApp = isVideo)

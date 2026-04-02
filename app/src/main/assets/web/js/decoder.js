@@ -3,6 +3,15 @@
  * Decodes raw H.264 NAL units using hardware-accelerated VideoDecoder
  */
 class H264Decoder {
+    // Profile-dependent backlog thresholds.
+    // Higher buffer profiles tolerate more decode queue depth
+    // before dropping, since the pacer absorbs the extra latency.
+    static BACKLOG_THRESHOLDS = {
+        low_latency: 3,
+        balanced: 5,
+        smooth: 8
+    };
+
     constructor(onFrame, onError) {
         this.onFrame = onFrame;
         this.onError = onError;
@@ -11,6 +20,18 @@ class H264Decoder {
         this.frameCount = 0;
         this.startTime = 0;
         this.codecString = null; // dynamically detected from SPS
+        this._backlogProfile = 'balanced';
+
+        // Backlog metrics
+        this._backlogHits = 0;
+        this._backlogDrops = 0;
+        this._lastBacklogWarn = 0;
+    }
+
+    setBacklogProfile(profileName) {
+        if (H264Decoder.BACKLOG_THRESHOLDS[profileName] !== undefined) {
+            this._backlogProfile = profileName;
+        }
     }
 
     static isSupported() {
@@ -121,8 +142,22 @@ class H264Decoder {
                 data: frameData
             });
 
-            if (this.decoder.decodeQueueSize > 3) {
-                console.warn('[Decoder] Queue backing up:', this.decoder.decodeQueueSize);
+            const queueSize = this.decoder.decodeQueueSize;
+            const threshold = H264Decoder.BACKLOG_THRESHOLDS[this._backlogProfile] || 5;
+
+            // Profile-aware backlog policy:
+            // - Keyframes are never dropped (they reset the decode chain)
+            // - Delta frames dropped when queue exceeds profile threshold
+            //   (low_latency=3, balanced=5, smooth=8)
+            if (!isKeyFrame && queueSize > threshold) {
+                this._backlogHits++;
+                this._backlogDrops++;
+                // Warn sparingly — unified metrics are logged by FramePacer
+                const now = performance.now();
+                if (now - this._lastBacklogWarn > 10000) {
+                    this._lastBacklogWarn = now;
+                    console.warn(`[Decoder] Backlog: queueSize=${queueSize} threshold=${threshold} totalDrops=${this._backlogDrops}`);
+                }
                 return;
             }
 
@@ -178,6 +213,14 @@ class H264Decoder {
     resetStats() {
         this.frameCount = 0;
         this.startTime = performance.now();
+    }
+
+    getBacklogMetrics() {
+        return {
+            backlogHits: this._backlogHits,
+            backlogDrops: this._backlogDrops,
+            decodeQueueSize: this.decoder ? this.decoder.decodeQueueSize : 0
+        };
     }
 
     destroy() {

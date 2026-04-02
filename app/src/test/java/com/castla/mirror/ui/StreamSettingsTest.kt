@@ -22,18 +22,22 @@ class StreamSettingsTest {
     }
 
     @Test
-    fun `default settings are correct`() {
+    fun `default settings are Auto`() {
         val settings = StreamSettings()
-        assertEquals(StreamSettings.Resolution.RES_720, settings.maxResolution)
-        assertEquals(30, settings.fps)
+        assertEquals(StreamSettings.Resolution.AUTO, settings.maxResolution)
+        assertEquals(StreamSettings.FPS_AUTO, settings.fps)
+        assertTrue(settings.isAutoResolution)
+        assertTrue(settings.isAutoFps)
         assertFalse(settings.audioEnabled)
     }
 
     @Test
-    fun `load returns defaults when no saved settings`() {
+    fun `load returns Auto defaults when no saved settings`() {
         val settings = StreamSettings.load(context)
-        assertEquals(StreamSettings.Resolution.RES_720, settings.maxResolution)
-        assertEquals(30, settings.fps)
+        assertEquals(StreamSettings.Resolution.AUTO, settings.maxResolution)
+        assertEquals(StreamSettings.FPS_AUTO, settings.fps)
+        assertTrue(settings.isAutoResolution)
+        assertTrue(settings.isAutoFps)
         assertFalse(settings.audioEnabled)
     }
 
@@ -50,15 +54,33 @@ class StreamSettingsTest {
     }
 
     @Test
+    fun `save and load round-trips Auto settings`() {
+        val original = StreamSettings(
+            maxResolution = StreamSettings.Resolution.AUTO,
+            fps = StreamSettings.FPS_AUTO,
+            audioEnabled = false
+        )
+        StreamSettings.save(context, original)
+        val loaded = StreamSettings.load(context)
+        assertEquals(original, loaded)
+        assertTrue(loaded.isAutoResolution)
+        assertTrue(loaded.isAutoFps)
+    }
+
+    @Test
     fun `load handles corrupted resolution gracefully`() {
         context.getSharedPreferences("castla_settings", Context.MODE_PRIVATE)
             .edit().putString("max_resolution", "INVALID_RES").commit()
         val loaded = StreamSettings.load(context)
-        assertEquals(StreamSettings.Resolution.RES_720, loaded.maxResolution)
+        assertEquals(StreamSettings.Resolution.AUTO, loaded.maxResolution)
     }
 
     @Test
     fun `resolution enum has correct dimensions`() {
+        val auto = StreamSettings.Resolution.AUTO
+        assertEquals(720, auto.maxHeight) // AUTO starts at 720p
+        assertTrue(auto.label.contains("Auto"))
+
         val hd = StreamSettings.Resolution.RES_720
         assertEquals(720, hd.maxHeight)
         assertTrue(hd.label.contains("720p"))
@@ -69,8 +91,19 @@ class StreamSettingsTest {
     }
 
     @Test
-    fun `fps options are 30 and 60`() {
-        assertEquals(listOf(30, 60), StreamSettings.FPS_OPTIONS)
+    fun `fps options include Auto, 30, and 60`() {
+        assertEquals(listOf(StreamSettings.FPS_AUTO, 30, 60), StreamSettings.FPS_OPTIONS)
+        assertEquals(0, StreamSettings.FPS_AUTO)
+    }
+
+    @Test
+    fun `isAutoResolution and isAutoFps reflect manual values`() {
+        val manual = StreamSettings(
+            maxResolution = StreamSettings.Resolution.RES_720,
+            fps = 30
+        )
+        assertFalse(manual.isAutoResolution)
+        assertFalse(manual.isAutoFps)
     }
 
     @Test

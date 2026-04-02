@@ -6,18 +6,25 @@ import android.content.SharedPreferences
 enum class MirroringMode { FULL_SCREEN, APP }
 
 data class StreamSettings(
-    val maxResolution: Resolution = Resolution.RES_720,
-    val fps: Int = 30,
+    val maxResolution: Resolution = Resolution.AUTO,
+    val fps: Int = FPS_AUTO,
     val audioEnabled: Boolean = false,
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
     val targetAppPackage: String = "",
     val targetAppLabel: String = "",
-    val autoHotspot: Boolean = false
+    val autoHotspot: Boolean = true
 ) {
     enum class Resolution(val maxHeight: Int, val label: String) {
+        AUTO(720, "Auto"),
         RES_720(720, "720p (Normal)"),
         RES_1080(1080, "1080p (High)");
     }
+
+    /** True when resolution is set to automatic mode */
+    val isAutoResolution: Boolean get() = maxResolution == Resolution.AUTO
+
+    /** True when fps is set to automatic mode */
+    val isAutoFps: Boolean get() = fps == FPS_AUTO
 
     companion object {
         private const val PREFS_NAME = "castla_settings"
@@ -29,15 +36,18 @@ data class StreamSettings(
         private const val KEY_TARGET_APP_LABEL = "target_app_label"
         private const val KEY_AUTO_HOTSPOT = "auto_hotspot"
 
-        val FPS_OPTIONS = listOf(30, 60)
+        /** Sentinel value indicating auto FPS mode. Must not collide with real FPS values. */
+        const val FPS_AUTO = 0
+
+        val FPS_OPTIONS = listOf(FPS_AUTO, 30, 60)
 
         fun load(context: Context): StreamSettings {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val resolution = try {
-                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.RES_720.name)!!)
-            } catch (_: Exception) { Resolution.RES_720 }
+                Resolution.valueOf(prefs.getString(KEY_RESOLUTION, Resolution.AUTO.name)!!)
+            } catch (_: Exception) { Resolution.AUTO }
 
-            val fps = prefs.getInt(KEY_FPS, 30)
+            val fps = prefs.getInt(KEY_FPS, FPS_AUTO)
 
             return StreamSettings(
                 maxResolution = resolution,
@@ -48,7 +58,7 @@ data class StreamSettings(
                 } catch (_: Exception) { MirroringMode.FULL_SCREEN },
                 targetAppPackage = prefs.getString(KEY_TARGET_APP_PACKAGE, "") ?: "",
                 targetAppLabel = prefs.getString(KEY_TARGET_APP_LABEL, "") ?: "",
-                autoHotspot = prefs.getBoolean(KEY_AUTO_HOTSPOT, false)
+                autoHotspot = prefs.getBoolean(KEY_AUTO_HOTSPOT, true)
             )
         }
 

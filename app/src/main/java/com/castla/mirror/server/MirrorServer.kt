@@ -7,6 +7,7 @@ import fi.iki.elonen.NanoWSD
 import fi.iki.elonen.NanoWSD.WebSocket
 import org.json.JSONObject
 import com.castla.mirror.utils.AppCategoryClassifier
+import com.castla.mirror.ott.OttCatalog
 
 data class TouchEvent(val action: String, val x: Float, val y: Float, val pointerId: Int, val pane: String = "primary")
 
@@ -37,11 +38,16 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     private var onGoHomeListener: (() -> Unit)? = null
     private var onAppLaunchListener: ((String, String?, Boolean, String) -> Unit)? = null
     private var onCloseSplitListener: (() -> Unit)? = null
+    private var onDisplayDensityListener: ((Float) -> Unit)? = null
+    private var onQualityReportListener: ((Int, Double, Int) -> Unit)? = null
 
     // Track active connection status
     private var isBrowserConnected = false
     private var onBrowserConnectionListener: ((Boolean) -> Unit)? = null
 
+    // Cached thermal status JSON — sent immediately to new control sockets
+    // to prevent race where browser connects before thermal broadcast arrives.
+    @Volatile private var cachedThermalJson: String? = null
 
     private var cachedSpsPps: ByteArray? = null
 
@@ -99,8 +105,20 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         onCloseSplitListener = listener
     }
 
+    fun setDisplayDensityListener(listener: (Float) -> Unit) {
+        onDisplayDensityListener = listener
+    }
+
+    fun setQualityReportListener(listener: (Int, Double, Int) -> Unit) {
+        onQualityReportListener = listener
+    }
+
     fun onCloseSplitRequest() {
         onCloseSplitListener?.invoke()
+    }
+
+    fun onDisplayDensityChange(scale: Float) {
+        onDisplayDensityListener?.invoke(scale)
     }
 
     private fun updateConnectionState() {
@@ -136,6 +154,13 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     fun registerControlSocket(socket: ControlSocket) {
         controlSockets.add(socket)
         Log.i(TAG, "Control client connected (total: ${controlSockets.size})")
+
+        // Replay cached thermal status to new client immediately
+        cachedThermalJson?.let { json ->
+            try { socket.send(json) }
+            catch (e: Exception) { Log.w(TAG, "Failed to send cached thermal status", e) }
+        }
+
         updateConnectionState()
     }
 
@@ -255,6 +280,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     }
 
     fun broadcastControlMessage(json: String) {
+        // Cache thermal status so new control sockets receive it immediately
+        if (json.contains("\"thermalStatus\"")) {
+            cachedThermalJson = json
+        }
         val deadSockets = mutableListOf<ControlSocket>()
         for (socket in controlSockets) {
             try {
@@ -311,6 +340,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         onAppLaunchListener?.invoke(pkg, componentName, splitMode, pane)
     }
 
+    fun onQualityReport(droppedFrames: Int, avgDelayMs: Double, backlogDrops: Int) {
+        onQualityReportListener?.invoke(droppedFrames, avgDelayMs, backlogDrops)
+    }
+
     override fun openWebSocket(handshake: IHTTPSession): WebSocket {
         val uri = handshake.uri
         val channel = handshake.parameters["channel"]?.firstOrNull()
@@ -344,16 +377,6 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     private fun serveAppList(): Response {
         try {
             val pm = context.packageManager
-            val ottWebUrls = mapOf(
-                "com.google.android.youtube" to "https://m.youtube.com",
-                "com.netflix.mediaclient" to "https://www.netflix.com",
-                "com.disney.disneyplus" to "https://www.disneyplus.com",
-                "com.disney.disneyplus.kr" to "https://www.disneyplus.com",
-                "com.wavve.player" to "https://m.wavve.com",
-                "net.cj.cjhv.gs.tving" to "https://www.tving.com",
-                "com.coupang.play" to "https://www.coupangplay.com",
-                "com.frograms.watcha" to "https://watcha.com"
-            )
             val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
                 addCategory(android.content.Intent.CATEGORY_LAUNCHER)
             }
@@ -374,10 +397,11 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
                         put("label", label)
                         put("category", AppCategoryClassifier.classify(pkgName, label))
                         
-                        // Check if it's a DRM-restricted OTT app (handled by WebBrowserActivity)
-                        val webUrl = ottWebUrls[pkgName]
-                        put("isWeb", webUrl != null)
-                        put("webUrl", webUrl ?: JSONObject.NULL)
+                        // Check if it's a DRM-restricted OTT app
+                        val ottTarget = OttCatalog.resolve(pkgName)
+                        put("isWeb", ottTarget != null)
+                        put("webUrl", ottTarget?.webUrl ?: JSONObject.NULL)
+                        put("launchMode", if (ottTarget != null) "EXTERNAL_BROWSER_URL" else "STANDARD_APP")
                     }
                     jsonArray.put(obj)
                 }
