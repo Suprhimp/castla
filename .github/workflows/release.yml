@@ -102,9 +102,11 @@ jobs:
           if [ "${{ steps.check.outputs.exists }}" = "true" ]; then
             gh release upload "${TAG}" \
               "app/build/outputs/apk/release/${APK_NAME}" --clobber
+            gh release edit "${TAG}" --latest
           else
             gh release create "${TAG}" \
               --title "${TAG}" \
               --generate-notes \
+              --latest \
               "app/build/outputs/apk/release/${APK_NAME}"
           fi
