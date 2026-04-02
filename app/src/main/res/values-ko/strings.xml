@@ -72,8 +72,10 @@
     <string name="settings_audio_on">, 오디오 켜짐</string>
     <string name="settings_auto_bitrate">자동 비트레이트</string>
     <string name="settings_app_mode">앱: %s</string>
+    <string name="settings_res_auto">자동</string>
     <string name="settings_res_720">720p (일반)</string>
     <string name="settings_res_1080">1080p (고화질)</string>
+    <string name="settings_fps_auto">자동</string>
 
     <!-- Auto Hotspot -->
     <string name="settings_auto_hotspot">자동 핫스팟</string>

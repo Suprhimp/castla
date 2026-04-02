@@ -865,8 +865,9 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, MirrorForegroundService::class.java).apply {
             putExtra(MirrorForegroundService.EXTRA_RESULT_CODE, resultCode)
             putExtra(MirrorForegroundService.EXTRA_DATA, data)
-            putExtra(MirrorForegroundService.EXTRA_MAX_RESOLUTION, streamSettings.maxResolution.maxHeight)
-            putExtra(MirrorForegroundService.EXTRA_FPS, streamSettings.fps)
+            putExtra(MirrorForegroundService.EXTRA_MAX_RESOLUTION,
+                if (streamSettings.isAutoResolution) 0 else streamSettings.maxResolution.maxHeight)
+            putExtra(MirrorForegroundService.EXTRA_FPS, streamSettings.fps) // FPS_AUTO is already 0
             putExtra(MirrorForegroundService.EXTRA_AUDIO, streamSettings.audioEnabled)
             putExtra(MirrorForegroundService.EXTRA_MIRRORING_MODE, streamSettings.mirroringMode.name)
             putExtra(MirrorForegroundService.EXTRA_TARGET_PACKAGE, streamSettings.targetAppPackage)

@@ -39,6 +39,9 @@ import com.castla.mirror.shizuku.ShizukuSetup
 import com.castla.mirror.ott.BrowserResolver
 import com.castla.mirror.ott.OttCatalog
 import com.castla.mirror.utils.LaunchMode
+import com.castla.mirror.policy.AutoScaleDecision
+import com.castla.mirror.policy.AutoScaleInput
+import com.castla.mirror.policy.AutoScalePolicy
 import com.castla.mirror.utils.StreamMath
 import com.castla.mirror.ui.SplitWebPresentation
 import kotlinx.coroutines.CoroutineScope
@@ -87,12 +90,6 @@ class MirrorForegroundService : Service() {
             AutoTier(1080, 30, "1080p30"),
             AutoTier(1080, 60, "1080p60")
         )
-        /** Number of consecutive stable intervals required before stepping up. */
-        private const val AUTO_UPSCALE_THRESHOLD = 2
-        /** Browser quality thresholds — exceeding any blocks upscale / triggers downscale */
-        private const val AUTO_QUALITY_DROP_THRESHOLD = 5      // max dropped frames per report interval
-        private const val AUTO_QUALITY_BACKLOG_THRESHOLD = 3   // max decoder backlog drops per interval
-        private const val AUTO_QUALITY_DELAY_THRESHOLD_MS = 200.0  // max avg render delay ms
         /** Check interval for auto-scale loop */
         private const val AUTO_SCALE_INTERVAL_MS = 10_000L
         /** Initial delay before first auto-scale evaluation */
@@ -643,7 +640,7 @@ class MirrorForegroundService : Service() {
      * Auto-scale loop: periodically checks conditions and steps resolution/fps
      * up or down. Only runs when autoResolution or autoFps is true.
      *
-     * Upscale requires AUTO_UPSCALE_THRESHOLD consecutive stable intervals.
+     * Upscale requires AutoScalePolicy.UPSCALE_THRESHOLD consecutive stable intervals.
      * Downscale on thermal is immediate (handled by thermal handler, not here).
      * This loop handles the gradual upscale when conditions improve.
      */
@@ -663,68 +660,57 @@ class MirrorForegroundService : Service() {
     }
 
     private fun evaluateAutoScale() {
-        val thermalStatus = _thermalStatus.value
         val now = android.os.SystemClock.elapsedRealtime()
-        val networkStable = now - lastCongestionTimeMs >= AUTO_SCALE_INTERVAL_MS
-        val noThermalPressure = thermalStatus == 0 // THERMAL_STATUS_NONE
+        val input = AutoScaleInput(
+            thermalStatus = _thermalStatus.value,
+            networkStable = now - lastCongestionTimeMs >= AUTO_SCALE_INTERVAL_MS,
+            browserHealthy = AutoScalePolicy.isBrowserHealthy(
+                lastQualityDroppedFrames, lastQualityBacklogDrops, lastQualityAvgDelayMs
+            ),
+            currentTierIndex = autoTierIndex,
+            stableCount = autoStableCount,
+            tierCount = AUTO_TIERS.size
+        )
 
-        // Snapshot browser quality metrics (written asynchronously from control socket)
-        val droppedFrames = lastQualityDroppedFrames
-        val avgDelayMs = lastQualityAvgDelayMs
-        val backlogDrops = lastQualityBacklogDrops
-        // Browser is struggling if it's dropping frames or decoder can't keep up
-        val browserHealthy = droppedFrames <= AUTO_QUALITY_DROP_THRESHOLD &&
-                backlogDrops <= AUTO_QUALITY_BACKLOG_THRESHOLD &&
-                avgDelayMs <= AUTO_QUALITY_DELAY_THRESHOLD_MS
-
-        // Thermal override always takes priority — force to lowest auto tier
-        // THERMAL_STATUS_MODERATE = 2
-        if (thermalStatus >= 2) {
-            if (autoTierIndex > 0) {
-                autoTierIndex = 0
+        when (val decision = AutoScalePolicy.evaluate(input)) {
+            is AutoScaleDecision.DropToTier -> {
+                autoTierIndex = decision.tierIndex
                 autoStableCount = 0
                 applyAutoTier()
-                Log.i(TAG, "AutoScale: thermal $thermalStatus — dropped to ${AUTO_TIERS[autoTierIndex].label}")
+                notifyAutoTierChange(decision.reason)
+                Log.i(TAG, "AutoScale: ${decision.reason} — dropped to ${AUTO_TIERS[autoTierIndex].label}")
             }
-            return
-        }
-
-        // Light thermal (1): prevent upscale but don't force downscale
-        if (thermalStatus >= 1) {
-            autoStableCount = 0
-            return
-        }
-
-        if (!networkStable) {
-            // Network congestion — consider stepping down
-            if (autoTierIndex > 0) {
-                autoTierIndex--
+            is AutoScaleDecision.StepDown -> {
+                autoTierIndex = decision.newTierIndex
                 autoStableCount = 0
                 applyAutoTier()
-                Log.i(TAG, "AutoScale: congestion — stepped down to ${AUTO_TIERS[autoTierIndex].label}")
+                notifyAutoTierChange(decision.reason)
+                Log.i(TAG, "AutoScale: ${decision.reason} — stepped down to ${AUTO_TIERS[autoTierIndex].label}")
             }
-            return
-        }
-
-        // Browser playback struggling — step down
-        if (!browserHealthy && autoTierIndex > 0) {
-            autoTierIndex--
-            autoStableCount = 0
-            applyAutoTier()
-            Log.i(TAG, "AutoScale: browser quality poor (dropped=$droppedFrames backlog=$backlogDrops delay=${avgDelayMs.toInt()}ms) — stepped down to ${AUTO_TIERS[autoTierIndex].label}")
-            return
-        }
-
-        // All conditions healthy — increment stability counter
-        if (noThermalPressure && networkStable && browserHealthy) {
-            autoStableCount++
-            if (autoStableCount >= AUTO_UPSCALE_THRESHOLD && autoTierIndex < AUTO_TIERS.size - 1) {
-                autoTierIndex++
+            is AutoScaleDecision.StepUp -> {
+                autoTierIndex = decision.newTierIndex
                 autoStableCount = 0
                 applyAutoTier()
-                Log.i(TAG, "AutoScale: stable for ${AUTO_UPSCALE_THRESHOLD} intervals — stepped up to ${AUTO_TIERS[autoTierIndex].label}")
+                notifyAutoTierChange("stable")
+                Log.i(TAG, "AutoScale: stable — stepped up to ${AUTO_TIERS[autoTierIndex].label}")
+            }
+            is AutoScaleDecision.Hold -> {
+                autoStableCount = decision.newStableCount
+            }
+            AutoScaleDecision.Block -> {
+                autoStableCount = 0
             }
         }
+    }
+
+    private fun notifyAutoTierChange(reason: String) {
+        val tier = AUTO_TIERS[autoTierIndex]
+        val json = JSONObject().apply {
+            put("type", "autoTierChange")
+            put("tier", tier.label)
+            put("reason", reason)
+        }.toString()
+        mirrorServer?.broadcastControlMessage(json)
     }
 
     private fun applyAutoTier() {
@@ -839,7 +825,7 @@ class MirrorForegroundService : Service() {
                     }
                 }
 
-                server.setQualityReportListener { dropped, avgDelay, backlogDrops, _ ->
+                server.setQualityReportListener { dropped, avgDelay, backlogDrops ->
                     lastQualityDroppedFrames = dropped
                     lastQualityAvgDelayMs = avgDelay
                     lastQualityBacklogDrops = backlogDrops

@@ -105,6 +105,19 @@ class ControlSocket(
                 "closeSplit" -> {
                     server.onCloseSplitRequest()
                 }
+                "displayDensity" -> {
+                    val scale = json.optDouble("scale", 1.0).toFloat()
+                    if (scale in 0.4f..1.5f) {
+                        server.onDisplayDensityChange(scale)
+                    }
+                }
+                "qualityReport" -> {
+                    server.onQualityReport(
+                        droppedFrames = json.optInt("droppedFrames", 0),
+                        avgDelayMs = json.optDouble("avgDelayMs", 0.0),
+                        backlogDrops = json.optInt("backlogDrops", 0)
+                    )
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)

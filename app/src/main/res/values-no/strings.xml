@@ -72,6 +72,8 @@
     <string name="settings_audio_on">, lyd på</string>
     <string name="settings_auto_bitrate">Automatisk bitrate</string>
     <string name="settings_app_mode">App: %s</string>
+    <string name="settings_res_auto">Automatisk</string>
+    <string name="settings_fps_auto">Automatisk</string>
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Høy)</string>
 
