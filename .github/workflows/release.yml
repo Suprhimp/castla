@@ -57,12 +57,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get latest release tag (fallback to v0.0.0 if none exists)
-          LATEST=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+          # Get the highest existing semver tag/release, not just the first row from gh release list.
+          # gh release list is not guaranteed to be sorted by semantic version.
+          LATEST=$( (
+            gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null || true
+            git ls-remote --tags origin 2>/dev/null | awk -F/ '{print $3}' || true
+          ) | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 )
           if [ -z "$LATEST" ]; then
-            LATEST="v0.0.0"
+            LATEST="0.0.0"
           fi
-          LATEST="${LATEST#v}"
           echo "Previous release: $LATEST"
 
           # Parse semver
