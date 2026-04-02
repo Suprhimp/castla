@@ -123,8 +123,8 @@ class StreamMathTest {
     // ── Display density scale tests ──
 
     @Test
-    fun `test density scale default is 0_85`() {
-        assertEquals(0.85f, StreamMath.DENSITY_SCALE_DEFAULT)
+    fun `test density scale default is 0_7`() {
+        assertEquals(0.7f, StreamMath.DENSITY_SCALE_DEFAULT)
     }
 
     @Test
@@ -139,9 +139,9 @@ class StreamMathTest {
 
     @Test
     fun `test applyDensityScale at default`() {
-        // 720p base DPI = 240, default scale = 0.85
-        // 240 * 0.85 = 204
-        assertEquals(204, StreamMath.applyDensityScale(240, 0.85f))
+        // 720p base DPI = 240, default scale = 0.7
+        // 240 * 0.7 = 168
+        assertEquals(168, StreamMath.applyDensityScale(240, StreamMath.DENSITY_SCALE_DEFAULT))
     }
 
     @Test
