@@ -69,8 +69,8 @@ object StreamMath {
         return (height * 240 / 720).coerceIn(120, 320)
     }
 
-    /** Default display density scale. */
-    const val DENSITY_SCALE_DEFAULT = 0.85f
+    /** Default display density scale (Small). */
+    const val DENSITY_SCALE_DEFAULT = 0.7f
 
     /** All supported density scale values, from largest (original) to most compact. */
     val DENSITY_SCALE_OPTIONS = listOf(1.0f, 0.85f, 0.7f, 0.55f)
