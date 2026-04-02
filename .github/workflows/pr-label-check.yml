@@ -1,0 +1,29 @@
+name: Require version label
+
+on:
+  pull_request:
+    types: [opened, labeled, unlabeled, synchronize]
+
+jobs:
+  check-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify version bump label
+        run: |
+          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+
+          HAS_MAJOR=$(echo "$LABELS" | grep -c '"major"' || true)
+          HAS_MINOR=$(echo "$LABELS" | grep -c '"minor"' || true)
+          HAS_PATCH=$(echo "$LABELS" | grep -c '"patch"' || true)
+
+          COUNT=$((HAS_MAJOR + HAS_MINOR + HAS_PATCH))
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::PR must have one of: major, minor, patch label"
+            exit 1
+          elif [ "$COUNT" -gt 1 ]; then
+            echo "::error::PR must have exactly one version label (major, minor, or patch). Found multiple."
+            exit 1
+          fi
+
+          echo "✓ Version label found"
