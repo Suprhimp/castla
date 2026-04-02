@@ -42,6 +42,8 @@
     <string name="btn_grant_shizuku_permission">Grant Shizuku Permission</string>
     <string name="btn_stop_mirroring">Stop Mirroring</string>
     <string name="btn_start_mirroring">Start Mirroring</string>
+    <string name="version_update_available">Update</string>
+    <string name="version_latest">Latest</string>
     <string name="title_how_to_use">How to use</string>
     <string name="desc_how_to_use">1. Connect phone and Tesla to the same WiFi\n2. Tap \"Start Mirroring\" above\n3. Open the URL in Tesla\'s browser\n4. Your phone screen will appear on Tesla</string>
     <string name="title_network_setup_log">Network Setup Log</string>

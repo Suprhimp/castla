@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">Shizuku 권한 부여</string>
     <string name="btn_stop_mirroring">미러링 중지</string>
     <string name="btn_start_mirroring">미러링 시작</string>
+    <string name="version_update_available">업데이트</string>
+    <string name="version_latest">최신</string>
     <string name="title_how_to_use">사용 방법</string>
     <string name="desc_how_to_use">1. 전화와 테슬라를 같은 WiFi에 연결하세요\n2. 위 \"미러링 시작\"을 탭하세요\n3. 테슬라 브라우저에서 위 URL을 여세요\n4. 테슬라 화면에 전화 화면이 나타납니다</string>
     <string name="title_network_setup_log">네트워크 설정 로그</string>

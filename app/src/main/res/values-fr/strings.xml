@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">Accorder l\'autorisation Shizuku</string>
     <string name="btn_stop_mirroring">Arrêter la mise en miroir</string>
     <string name="btn_start_mirroring">Démarrer la mise en miroir</string>
+    <string name="version_update_available">Mise à jour</string>
+    <string name="version_latest">À jour</string>
     <string name="title_how_to_use">Comment utiliser</string>
     <string name="desc_how_to_use">1. Connectez le téléphone et Tesla au même WiFi\n2. Appuyez sur \"Démarrer la mise en miroir\" ci-dessus\n3. Ouvrez l\'URL dans le navigateur de Tesla\n4. L\'écran de votre téléphone apparaîtra sur Tesla</string>
     <string name="title_network_setup_log">Journal de configuration réseau</string>
