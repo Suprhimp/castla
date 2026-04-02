@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">Shizuku権限を付与</string>
     <string name="btn_stop_mirroring">ミラーリングを停止</string>
     <string name="btn_start_mirroring">ミラーリングを開始</string>
+    <string name="version_update_available">更新</string>
+    <string name="version_latest">最新</string>
     <string name="title_how_to_use">使い方</string>
     <string name="desc_how_to_use">1. スマートフォンとTeslaを同じWiFiに接続します\n2. 上の「ミラーリングを開始」をタップします\n3. TeslaのブラウザでURLを開きます\n4. スマートフォンの画面がTeslaに表示されます</string>
     <string name="title_network_setup_log">ネットワーク設定ログ</string>

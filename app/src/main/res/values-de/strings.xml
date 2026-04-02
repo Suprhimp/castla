@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">Shizuku-Berechtigung erteilen</string>
     <string name="btn_stop_mirroring">Spiegelung stoppen</string>
     <string name="btn_start_mirroring">Spiegelung starten</string>
+    <string name="version_update_available">Update</string>
+    <string name="version_latest">Aktuell</string>
     <string name="title_how_to_use">Wie benutzt man es</string>
     <string name="desc_how_to_use">1. Verbinden Sie das Telefon und Tesla mit demselben WiFi\n2. Tippen Sie oben auf \"Spiegelung starten\"\n3. Öffnen Sie die URL im Tesla-Browser\n4. Ihr Telefonbildschirm wird auf dem Tesla angezeigt</string>
     <string name="title_network_setup_log">Netzwerk-Setup Protokoll</string>

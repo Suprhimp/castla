@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">Otorgar permiso de Shizuku</string>
     <string name="btn_stop_mirroring">Detener duplicación</string>
     <string name="btn_start_mirroring">Iniciar duplicación</string>
+    <string name="version_update_available">Actualizar</string>
+    <string name="version_latest">Última</string>
     <string name="title_how_to_use">Cómo utilizar</string>
     <string name="desc_how_to_use">1. Conecta el teléfono y el Tesla al mismo WiFi\n2. Toca \"Iniciar duplicación\" arriba\n3. Abre la URL en el navegador de Tesla\n4. La pantalla de tu teléfono aparecerá en el Tesla</string>
     <string name="title_network_setup_log">Registro de configuración de red</string>

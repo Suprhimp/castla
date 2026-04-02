@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">授予 Shizuku 权限</string>
     <string name="btn_stop_mirroring">停止镜像</string>
     <string name="btn_start_mirroring">开始镜像</string>
+    <string name="version_update_available">更新</string>
+    <string name="version_latest">最新</string>
     <string name="title_how_to_use">使用方法</string>
     <string name="desc_how_to_use">1. 将手机和特斯拉连接到同一个 WiFi\n2. 点击上方的 \"开始镜像\"\n3. 在特斯拉浏览器中打开此 URL\n4. 您的手机屏幕将显示在特斯拉上</string>
     <string name="title_network_setup_log">网络设置日志</string>

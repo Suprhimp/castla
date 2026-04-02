@@ -47,6 +47,8 @@
     <string name="btn_grant_shizuku_permission">Gi Shizuku-tillatelse</string>
     <string name="btn_stop_mirroring">Stopp speiling</string>
     <string name="btn_start_mirroring">Start speiling</string>
+    <string name="version_update_available">Oppdater</string>
+    <string name="version_latest">Nyeste</string>
     <string name="title_how_to_use">Slik bruker du det</string>
     <string name="desc_how_to_use">1. Koble telefon og Tesla til samme WiFi\n2. Trykk på \"Start speiling\" ovenfor\n3. Åpne URL-en i Teslas nettleser\n4. Telefonskjermen din vil vises på Tesla</string>
     <string name="title_network_setup_log">Nettverksoppsettlogg</string>
