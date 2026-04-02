@@ -39,6 +39,8 @@ class StandaloneUpdateManager : UpdateManager {
 
     private val showForceUpdate = mutableStateOf(false)
     private val latestVersionName = mutableStateOf("")
+    private val _currentVersion = mutableStateOf("")
+    private val _updateAvailable = mutableStateOf(false)
     private val downloadUrl = mutableStateOf("")
     private val isDownloading = mutableStateOf(false)
     private val downloadProgress = mutableFloatStateOf(0f)
@@ -47,7 +49,21 @@ class StandaloneUpdateManager : UpdateManager {
     private var downloadId: Long = -1
     private var downloadReceiver: BroadcastReceiver? = null
 
+    override val currentVersion: String get() = _currentVersion.value
+    override val latestVersion: String? get() = latestVersionName.value.ifEmpty { null }
+    override val updateAvailable: Boolean get() = _updateAvailable.value
+
+    override fun startUpdate(activity: ComponentActivity) {
+        startDownloadAndInstall(activity)
+    }
+
     override fun checkForUpdate(activity: ComponentActivity) {
+        // Set current version
+        try {
+            _currentVersion.value = activity.packageManager
+                .getPackageInfo(activity.packageName, 0).versionName ?: ""
+        } catch (_: Exception) {}
+
         activity.lifecycleScope.launch {
             try {
                 val result = fetchVersionInfo()
@@ -63,14 +79,19 @@ class StandaloneUpdateManager : UpdateManager {
                             }
                         }
 
+                    val remoteLatestVersion = result.optString("latest_version", "")
+                    latestVersionName.value = remoteLatestVersion
+                    downloadUrl.value = result.optString("download_url", "")
+
+                    val latestVersionCode = result.optInt("latest_version_code", currentVersionCode)
+                    _updateAvailable.value = currentVersionCode < latestVersionCode
+
                     val minVersionCode = result.optInt("min_version_code", 0)
                     if (currentVersionCode < minVersionCode) {
                         Log.i(TAG, "Force update required: current=$currentVersionCode, min=$minVersionCode")
-                        latestVersionName.value = result.optString("latest_version", "")
-                        downloadUrl.value = result.optString("download_url", "")
                         showForceUpdate.value = true
                     } else {
-                        Log.i(TAG, "App is up to date: current=$currentVersionCode, min=$minVersionCode")
+                        Log.i(TAG, "App is up to date: current=$currentVersionCode, latest=$latestVersionCode")
                     }
                 }
             } catch (e: Exception) {

@@ -26,4 +26,16 @@ interface UpdateManager {
      */
     @Composable
     fun ForceUpdateOverlay(activity: ComponentActivity) {}
+
+    /** Current app version name (e.g. "1.0.9") */
+    val currentVersion: String get() = ""
+
+    /** Latest available version from remote, or null if not yet fetched */
+    val latestVersion: String? get() = null
+
+    /** Whether an update is available (latest > current) */
+    val updateAvailable: Boolean get() = false
+
+    /** Start downloading and installing the update */
+    fun startUpdate(activity: ComponentActivity) {}
 }
