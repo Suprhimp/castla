@@ -12,7 +12,7 @@ data class StreamSettings(
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
     val targetAppPackage: String = "",
     val targetAppLabel: String = "",
-    val autoHotspot: Boolean = false
+    val autoHotspot: Boolean = true
 ) {
     enum class Resolution(val maxHeight: Int, val label: String) {
         RES_720(720, "720p (Normal)"),
@@ -48,7 +48,7 @@ data class StreamSettings(
                 } catch (_: Exception) { MirroringMode.FULL_SCREEN },
                 targetAppPackage = prefs.getString(KEY_TARGET_APP_PACKAGE, "") ?: "",
                 targetAppLabel = prefs.getString(KEY_TARGET_APP_LABEL, "") ?: "",
-                autoHotspot = prefs.getBoolean(KEY_AUTO_HOTSPOT, false)
+                autoHotspot = prefs.getBoolean(KEY_AUTO_HOTSPOT, true)
             )
         }
 
