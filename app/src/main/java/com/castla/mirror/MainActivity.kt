@@ -311,7 +311,11 @@ class MainActivity : AppCompatActivity() {
                         onToggleAutoDetect = {
                             toggleAutoDetect()
                         },
-                        thermalStatus = thermalStatus
+                        thermalStatus = thermalStatus,
+                        currentVersion = updateManager.currentVersion,
+                        latestVersion = updateManager.latestVersion,
+                        updateAvailable = updateManager.updateAvailable,
+                        onUpdateClick = { updateManager.startUpdate(this@MainActivity) }
                     )
                 }
             }
@@ -954,7 +958,11 @@ fun CastlaScreen(
     networkDiagLog: String = "",
     @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
     @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
-    @Suppress("unused") thermalStatus: Int = 0
+    @Suppress("unused") thermalStatus: Int = 0,
+    currentVersion: String = "",
+    latestVersion: String? = null,
+    updateAvailable: Boolean = false,
+    onUpdateClick: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     MeshGradientBackground {
@@ -982,6 +990,45 @@ fun CastlaScreen(
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.White.copy(alpha = 0.7f)
             )
+
+            // Version info
+            if (currentVersion.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "v$currentVersion",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                    if (updateAvailable && latestVersion != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFFF6B35).copy(alpha = 0.9f))
+                                .clickable { onUpdateClick() }
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "v$latestVersion ${stringResource(id = R.string.version_update_available)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else if (latestVersion != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(id = R.string.version_latest),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF69F0AE).copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
