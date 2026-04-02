@@ -72,6 +72,8 @@
     <string name="settings_audio_on">, audio aan</string>
     <string name="settings_auto_bitrate">Automatische bitrate</string>
     <string name="settings_app_mode">App: %s</string>
+    <string name="settings_res_auto">Automatisch</string>
+    <string name="settings_fps_auto">Automatisch</string>
     <string name="settings_res_720">720p (Normaal)</string>
     <string name="settings_res_1080">1080p (Hoog)</string>
 

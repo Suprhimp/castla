@@ -31,7 +31,8 @@ class StandaloneUpdateManager : UpdateManager {
 
     companion object {
         private const val TAG = "StandaloneUpdate"
-        private const val VERSION_CHECK_URL = "https://castla.app/api/version.json"
+        private const val GITHUB_LATEST_RELEASE_URL =
+            "https://api.github.com/repos/Suprhimp/castla/releases/latest"
         private const val CONNECT_TIMEOUT_MS = 5000
         private const val READ_TIMEOUT_MS = 5000
         private const val APK_FILE_NAME = "castla-update.apk"
@@ -66,38 +67,53 @@ class StandaloneUpdateManager : UpdateManager {
 
         activity.lifecycleScope.launch {
             try {
-                val result = fetchVersionInfo()
+                val result = fetchLatestRelease()
                 if (result != null) {
-                    val currentVersionCode = activity.packageManager
-                        .getPackageInfo(activity.packageName, 0)
-                        .let {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                                it.longVersionCode.toInt()
-                            } else {
-                                @Suppress("DEPRECATION")
-                                it.versionCode
+                    val tagName = result.optString("tag_name", "")
+                    val remoteVersion = tagName.removePrefix("v")
+                    latestVersionName.value = remoteVersion
+
+                    // Find APK asset download URL
+                    val assets = result.optJSONArray("assets")
+                    if (assets != null) {
+                        for (i in 0 until assets.length()) {
+                            val asset = assets.getJSONObject(i)
+                            val name = asset.optString("name", "")
+                            if (name.endsWith(".apk")) {
+                                downloadUrl.value = asset.optString("browser_download_url", "")
+                                break
                             }
                         }
-
-                    val remoteLatestVersion = result.optString("latest_version", "")
-                    latestVersionName.value = remoteLatestVersion
-                    downloadUrl.value = result.optString("download_url", "")
-
-                    val latestVersionCode = result.optInt("latest_version_code", currentVersionCode)
-                    _updateAvailable.value = currentVersionCode < latestVersionCode
-
-                    val minVersionCode = result.optInt("min_version_code", 0)
-                    if (currentVersionCode < minVersionCode) {
-                        Log.i(TAG, "Force update required: current=$currentVersionCode, min=$minVersionCode")
-                        showForceUpdate.value = true
-                    } else {
-                        Log.i(TAG, "App is up to date: current=$currentVersionCode, latest=$latestVersionCode")
                     }
+
+                    _updateAvailable.value = isNewerVersion(
+                        current = _currentVersion.value,
+                        remote = remoteVersion
+                    )
+
+                    Log.i(TAG, "Version check: current=${_currentVersion.value}, latest=$remoteVersion, updateAvailable=${_updateAvailable.value}")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Version check failed, skipping", e)
             }
         }
+    }
+
+    /**
+     * Compares semantic version strings (e.g. "1.0.9" vs "1.1.0").
+     * Returns true if [remote] is newer than [current].
+     */
+    private fun isNewerVersion(current: String, remote: String): Boolean {
+        val currentParts = current.split(".").mapNotNull { it.toIntOrNull() }
+        val remoteParts = remote.split(".").mapNotNull { it.toIntOrNull() }
+        val length = maxOf(currentParts.size, remoteParts.size)
+        for (i in 0 until length) {
+            val c = currentParts.getOrElse(i) { 0 }
+            val r = remoteParts.getOrElse(i) { 0 }
+            if (r > c) return true
+            if (r < c) return false
+        }
+        return false
     }
 
     @Composable
@@ -241,19 +257,20 @@ class StandaloneUpdateManager : UpdateManager {
         downloadReceiver = null
     }
 
-    private suspend fun fetchVersionInfo(): JSONObject? = withContext(Dispatchers.IO) {
+    private suspend fun fetchLatestRelease(): JSONObject? = withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
         try {
-            connection = (URL(VERSION_CHECK_URL).openConnection() as HttpURLConnection).apply {
+            connection = (URL(GITHUB_LATEST_RELEASE_URL).openConnection() as HttpURLConnection).apply {
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
                 requestMethod = "GET"
+                setRequestProperty("Accept", "application/vnd.github+json")
             }
             if (connection.responseCode == HttpURLConnection.HTTP_OK) {
                 val body = connection.inputStream.bufferedReader().readText()
                 JSONObject(body)
             } else {
-                Log.w(TAG, "Version check HTTP ${connection.responseCode}")
+                Log.w(TAG, "GitHub release check HTTP ${connection.responseCode}")
                 null
             }
         } finally {

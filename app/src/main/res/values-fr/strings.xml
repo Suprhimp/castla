@@ -72,6 +72,8 @@
     <string name="settings_audio_on">, audio activé</string>
     <string name="settings_auto_bitrate">Débit automatique</string>
     <string name="settings_app_mode">App : %s</string>
+    <string name="settings_res_auto">Automatique</string>
+    <string name="settings_fps_auto">Automatique</string>
     <string name="settings_res_720">720p (Normal)</string>
     <string name="settings_res_1080">1080p (Élevé)</string>
 

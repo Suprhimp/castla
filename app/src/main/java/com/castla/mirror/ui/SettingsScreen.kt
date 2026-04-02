@@ -188,6 +188,7 @@ fun SettingsScreen(
                 ) {
                     StreamSettings.Resolution.entries.forEach { res ->
                         val localizedLabel = when (res) {
+                            StreamSettings.Resolution.AUTO -> stringResource(R.string.settings_res_auto)
                             StreamSettings.Resolution.RES_720 -> stringResource(R.string.settings_res_720)
                             StreamSettings.Resolution.RES_1080 -> stringResource(R.string.settings_res_1080)
                         }
@@ -213,8 +214,13 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     StreamSettings.FPS_OPTIONS.forEach { fps ->
+                        val label = if (fps == StreamSettings.FPS_AUTO) {
+                            stringResource(R.string.settings_fps_auto)
+                        } else {
+                            "${fps}fps"
+                        }
                         ModernOptionChip(
-                            text = "${fps}fps",
+                            text = label,
                             selected = settings.fps == fps,
                             onClick = {
                                 if (!isStreaming) onSettingsChanged(settings.copy(fps = fps))
@@ -436,13 +442,19 @@ fun SettingsScreen(
                         stringResource(R.string.settings_full_screen)
                     }
                     val resLabel = when (settings.maxResolution) {
+                        StreamSettings.Resolution.AUTO -> stringResource(R.string.settings_res_auto)
                         StreamSettings.Resolution.RES_720 -> stringResource(R.string.settings_res_720)
                         StreamSettings.Resolution.RES_1080 -> stringResource(R.string.settings_res_1080)
                     }
+                    val fpsLabel = if (settings.fps == StreamSettings.FPS_AUTO) {
+                        stringResource(R.string.settings_fps_auto)
+                    } else {
+                        "${settings.fps}fps"
+                    }
                     val audioSuffix = if (settings.audioEnabled) stringResource(R.string.settings_audio_on) else ""
                     Text(
-                        text = "$modeText, Max $resLabel @ " +
-                            "${settings.fps}fps, ${stringResource(R.string.settings_auto_bitrate)}" +
+                        text = "$modeText, $resLabel @ " +
+                            "$fpsLabel, ${stringResource(R.string.settings_auto_bitrate)}" +
                             audioSuffix,
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.6f)

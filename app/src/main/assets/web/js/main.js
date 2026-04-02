@@ -48,6 +48,17 @@ let streamPolicy = {
     layoutMode: 'single'
 };
 
+// Auto tier toast — shown briefly when auto-scale changes tier
+let _autoTierToastTimer = null;
+function showAutoTierToast(message) {
+    const el = document.getElementById('auto-tier-toast');
+    if (!el) return;
+    el.textContent = message;
+    el.style.opacity = '1';
+    clearTimeout(_autoTierToastTimer);
+    _autoTierToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 4500);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[Main] DOM Loaded, initializing components...');
 
@@ -997,27 +1008,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Periodic quality report for auto-scale decisions.
             // Sends per-interval deltas (not cumulative totals) so the service
             // can evaluate each 10s window independently.
+            // Works with both WebCodecs (FramePacer + H264Decoder) and MJPEG (FallbackDecoder) paths.
             clearInterval(qualityReportInterval);
             // Seed prev counters from current cumulative values so the first
             // delta after reconnect reflects only the new interval, not the
             // entire lifetime of the decoder/pacer instance.
-            let _prevDropped = framePacer ? framePacer.getMetrics().droppedFrames : 0;
-            let _prevBacklog = (decoder && decoder.getBacklogMetrics) ? decoder.getBacklogMetrics().backlogDrops : 0;
+            let _prevDropped = 0, _prevBacklog = 0;
+            let _prevTotalLatency = 0, _prevRendered = 0;
+            const _seedMetrics = () => {
+                const src = framePacer || (decoder && decoder.getMetrics ? decoder : null);
+                if (src) {
+                    const m = src.getMetrics();
+                    _prevDropped = m.droppedFrames;
+                    _prevTotalLatency = m.totalLatency || 0;
+                    _prevRendered = m.renderedFrames || 0;
+                }
+                if (decoder && decoder.getBacklogMetrics) {
+                    _prevBacklog = decoder.getBacklogMetrics().backlogDrops;
+                }
+            };
+            _seedMetrics();
             qualityReportInterval = setInterval(() => {
                 if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
                 const report = { type: 'qualityReport' };
-                if (framePacer) {
-                    const m = framePacer.getMetrics();
+                // Prefer FramePacer metrics (WebCodecs path), fall back to decoder metrics (MJPEG)
+                const src = framePacer || (decoder && decoder.getMetrics ? decoder : null);
+                if (src) {
+                    const m = src.getMetrics();
                     report.droppedFrames = m.droppedFrames - _prevDropped;
                     _prevDropped = m.droppedFrames;
-                    report.avgDelayMs = m.avgRenderDelayMs;
-                    report.bufferDepth = m.bufferDepth;
+                    // Per-interval average delay (not lifetime cumulative)
+                    const intervalLatency = (m.totalLatency || 0) - _prevTotalLatency;
+                    const intervalRendered = (m.renderedFrames || 0) - _prevRendered;
+                    _prevTotalLatency = m.totalLatency || 0;
+                    _prevRendered = m.renderedFrames || 0;
+                    report.avgDelayMs = intervalRendered > 0
+                        ? parseFloat((intervalLatency / intervalRendered).toFixed(1))
+                        : 0;
                 }
                 if (decoder && decoder.getBacklogMetrics) {
                     const d = decoder.getBacklogMetrics();
                     report.backlogDrops = d.backlogDrops - _prevBacklog;
                     _prevBacklog = d.backlogDrops;
-                    report.decodeQueueSize = d.decodeQueueSize;
                 }
                 try { controlSocket.send(JSON.stringify(report)); } catch (_) {}
             }, 10_000);
@@ -1045,6 +1077,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     else blurKeyboardProxy();
                 } else if (msg.type === 'thermalStatus') {
                     handleThermalProfileSwitch(msg.level);
+                } else if (msg.type === 'autoTierChange') {
+                    const tier = msg.tier;
+                    const reason = msg.reason;
+                    let text;
+                    if (reason === 'thermal') text = `Auto reduced to ${tier} due to temperature`;
+                    else if (reason === 'congestion') text = `Auto reduced to ${tier} due to network`;
+                    else if (reason === 'quality') text = `Auto reduced to ${tier} due to playback`;
+                    else text = `Auto optimized to ${tier}`;
+                    showAutoTierToast(text);
                 }
             } catch (e) {}
         };
