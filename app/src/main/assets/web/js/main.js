@@ -12,14 +12,52 @@ let secondaryDecoder = null;
 const SPLIT_STRATEGY = 'dual_stream';
 
 let decoder = null;
+let framePacer = null;
+let secondaryFramePacer = null;
 let currentPrimaryApp = null;
 let isLauncherMode = true; // start in launcher mode
 let codecMode = 'h264'; // Default to h264, switch to mjpeg if needed
+
+// Playback profile system:
+//   userPreferredProfile — what the user manually chose (persisted in localStorage)
+//   currentThermalLevel  — last thermal status from service ("none"/"light"/"moderate"/"severe")
+//   playbackProfile      — effective profile after thermal capping (applied to pacer/decoder)
+//
+// Thermal cap is always enforced: even if the user picks "smooth", if thermal
+// level is "moderate" the effective profile is capped at "balanced".
+let userPreferredProfile = (() => {
+    try {
+        // Migrate from old key if present
+        const saved = localStorage.getItem('userPreferredProfile');
+        if (saved) return saved;
+        const legacy = localStorage.getItem('playbackProfile');
+        if (legacy) {
+            localStorage.setItem('userPreferredProfile', legacy);
+            localStorage.removeItem('playbackProfile');
+            return legacy;
+        }
+        return 'balanced';
+    }
+    catch (_) { return 'balanced'; }
+})();
+let currentThermalLevel = 'none';
+let playbackProfile = userPreferredProfile;
 let streamPolicy = {
     fitMode: 'contain',
     autoFit: false,
     layoutMode: 'single'
 };
+
+// Auto tier toast — shown briefly when auto-scale changes tier
+let _autoTierToastTimer = null;
+function showAutoTierToast(message) {
+    const el = document.getElementById('auto-tier-toast');
+    if (!el) return;
+    el.textContent = message;
+    el.style.opacity = '1';
+    clearTimeout(_autoTierToastTimer);
+    _autoTierToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 4500);
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[Main] DOM Loaded, initializing components...');
@@ -280,6 +318,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             try { secondaryVideoSocket.close(); } catch (_) {}
             secondaryVideoSocket = null;
         }
+        if (secondaryFramePacer) {
+            secondaryFramePacer.destroy();
+            secondaryFramePacer = null;
+        }
         if (secondaryDecoder) {
             secondaryDecoder.destroy?.();
             secondaryDecoder = null;
@@ -296,14 +338,24 @@ document.addEventListener('DOMContentLoaded', async () => {
             secondaryDecoder.destroy?.();
             secondaryDecoder = null;
         }
+        if (secondaryFramePacer) {
+            secondaryFramePacer.destroy();
+            secondaryFramePacer = null;
+        }
 
         if (typeof WebCodecs !== 'undefined' || window.VideoDecoder) {
             const renderer = new CanvasRenderer(secondaryCanvas);
             renderer.setFitMode(getEffectiveSecondaryFitMode());
+
+            secondaryFramePacer = new FramePacer((frame) => renderer.render(frame));
+            secondaryFramePacer.setProfile(playbackProfile);
+
             secondaryDecoder = new H264Decoder(
-                (frame) => renderer.render(frame),
+                (frame) => secondaryFramePacer.push(frame),
                 (error) => console.error('[Main] Secondary decoder error:', error)
             );
+            secondaryDecoder.setBacklogProfile(playbackProfile);
+            secondaryFramePacer.setDecoder(secondaryDecoder);
             secondaryDecoder.renderer = renderer;
             await secondaryDecoder.init(secondaryCanvas);
         } else if (typeof createImageBitmap !== 'undefined') {
@@ -753,10 +805,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.log('[Main] Using WebCodecs Decoder');
             const renderer = new CanvasRenderer(canvas);
             renderer.setFitMode(getEffectivePrimaryFitMode());
+
+            // Create frame pacer between decoder and renderer
+            if (framePacer) framePacer.destroy();
+            framePacer = new FramePacer((frame) => renderer.render(frame));
+            framePacer.setProfile(playbackProfile);
+
             decoder = new H264Decoder(
-                (frame) => renderer.render(frame),
+                (frame) => framePacer.push(frame),
                 (error) => console.error('[Main] Decoder error:', error)
             );
+            decoder.setBacklogProfile(playbackProfile);
+            framePacer.setDecoder(decoder);
             decoder.renderer = renderer;
             await decoder.init(canvas);
             codecMode = 'h264';
@@ -848,6 +908,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let reconnectTimer = null;
     let isReconnecting = false;
+    let qualityReportInterval = null;
     function scheduleReconnect() {
         if (isReconnecting) return;
         isReconnecting = true;
@@ -943,6 +1004,55 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (isLauncherMode) {
                 loadLauncherApps();
             }
+
+            // Periodic quality report for auto-scale decisions.
+            // Sends per-interval deltas (not cumulative totals) so the service
+            // can evaluate each 10s window independently.
+            // Works with both WebCodecs (FramePacer + H264Decoder) and MJPEG (FallbackDecoder) paths.
+            clearInterval(qualityReportInterval);
+            // Seed prev counters from current cumulative values so the first
+            // delta after reconnect reflects only the new interval, not the
+            // entire lifetime of the decoder/pacer instance.
+            let _prevDropped = 0, _prevBacklog = 0;
+            let _prevTotalLatency = 0, _prevRendered = 0;
+            const _seedMetrics = () => {
+                const src = framePacer || (decoder && decoder.getMetrics ? decoder : null);
+                if (src) {
+                    const m = src.getMetrics();
+                    _prevDropped = m.droppedFrames;
+                    _prevTotalLatency = m.totalLatency || 0;
+                    _prevRendered = m.renderedFrames || 0;
+                }
+                if (decoder && decoder.getBacklogMetrics) {
+                    _prevBacklog = decoder.getBacklogMetrics().backlogDrops;
+                }
+            };
+            _seedMetrics();
+            qualityReportInterval = setInterval(() => {
+                if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
+                const report = { type: 'qualityReport' };
+                // Prefer FramePacer metrics (WebCodecs path), fall back to decoder metrics (MJPEG)
+                const src = framePacer || (decoder && decoder.getMetrics ? decoder : null);
+                if (src) {
+                    const m = src.getMetrics();
+                    report.droppedFrames = m.droppedFrames - _prevDropped;
+                    _prevDropped = m.droppedFrames;
+                    // Per-interval average delay (not lifetime cumulative)
+                    const intervalLatency = (m.totalLatency || 0) - _prevTotalLatency;
+                    const intervalRendered = (m.renderedFrames || 0) - _prevRendered;
+                    _prevTotalLatency = m.totalLatency || 0;
+                    _prevRendered = m.renderedFrames || 0;
+                    report.avgDelayMs = intervalRendered > 0
+                        ? parseFloat((intervalLatency / intervalRendered).toFixed(1))
+                        : 0;
+                }
+                if (decoder && decoder.getBacklogMetrics) {
+                    const d = decoder.getBacklogMetrics();
+                    report.backlogDrops = d.backlogDrops - _prevBacklog;
+                    _prevBacklog = d.backlogDrops;
+                }
+                try { controlSocket.send(JSON.stringify(report)); } catch (_) {}
+            }, 10_000);
         };
 
         controlSocket.onmessage = (event) => {
@@ -965,11 +1075,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                 } else if (msg.type === 'hideKeyboard') {
                     if (useBubbleInput) closeInputBubble(true);
                     else blurKeyboardProxy();
+                } else if (msg.type === 'thermalStatus') {
+                    handleThermalProfileSwitch(msg.level);
+                } else if (msg.type === 'autoTierChange') {
+                    const tier = msg.tier;
+                    const reason = msg.reason;
+                    let text;
+                    if (reason === 'thermal') text = `Auto reduced to ${tier} due to temperature`;
+                    else if (reason === 'congestion') text = `Auto reduced to ${tier} due to network`;
+                    else if (reason === 'quality') text = `Auto reduced to ${tier} due to playback`;
+                    else text = `Auto optimized to ${tier}`;
+                    showAutoTierToast(text);
                 }
             } catch (e) {}
         };
 
-        controlSocket.onclose = () => scheduleReconnect();
+        controlSocket.onclose = () => {
+            clearInterval(qualityReportInterval);
+            scheduleReconnect();
+        };
     }
 
     // --- Web Launcher & Split Launcher Code ---
@@ -1411,4 +1535,142 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (mseVideo) mseVideo.style.pointerEvents = 'none';
     if (canvas) canvas.style.pointerEvents = 'auto';
     if (secondaryCanvas) secondaryCanvas.style.pointerEvents = 'auto';
+
+    // ── Playback Profile UI ──
+    // Controls client-side frame pacing / decoder backlog.
+    // Thermal-aware auto-downgrade: the service broadcasts thermalStatus
+    // messages and handleThermalProfileSwitch() auto-downgrades the profile.
+    const profileControl = document.getElementById('playback-profile-control');
+    const profileBtn = document.getElementById('playback-profile-btn');
+    const profileLabel = document.getElementById('playback-profile-label');
+    const profilePopup = document.getElementById('playback-profile-popup');
+
+    const PROFILE_OPTIONS = [
+        { value: 'low_latency', label: 'Low Latency' },
+        { value: 'balanced',    label: 'Balanced' },
+        { value: 'smooth',      label: 'Smooth' }
+    ];
+
+    // Profile rank: lower = more conservative (less buffering, less decode work)
+    const PROFILE_RANK = { low_latency: 0, balanced: 1, smooth: 2 };
+
+    // Thermal cap: the maximum profile rank allowed at each thermal level.
+    // severe -> only low_latency, moderate/light -> up to balanced, none -> uncapped
+    const THERMAL_MAX_PROFILE = {
+        severe: 'low_latency',
+        moderate: 'balanced',
+        light: 'balanced',
+        none: 'smooth'  // no cap
+    };
+
+    /**
+     * Resolve effective profile = min(userPreference, thermalCap).
+     * Always returns the most conservative of the two.
+     */
+    function resolveEffectiveProfile(preferred, thermalLevel) {
+        const cap = THERMAL_MAX_PROFILE[thermalLevel] || 'smooth';
+        const prefRank = PROFILE_RANK[preferred] ?? 1;
+        const capRank = PROFILE_RANK[cap] ?? 2;
+        return prefRank <= capRank ? preferred : cap;
+    }
+
+    /**
+     * Apply the effective profile to pacer, decoder, and UI label.
+     * Does NOT modify userPreferredProfile or localStorage.
+     */
+    function applyEffectiveProfile(profileName) {
+        playbackProfile = profileName;
+        if (framePacer) framePacer.setProfile(profileName);
+        if (secondaryFramePacer) secondaryFramePacer.setProfile(profileName);
+        if (decoder && decoder.setBacklogProfile) decoder.setBacklogProfile(profileName);
+        if (secondaryDecoder && secondaryDecoder.setBacklogProfile) secondaryDecoder.setBacklogProfile(profileName);
+        const opt = PROFILE_OPTIONS.find(p => p.value === profileName) || PROFILE_OPTIONS[1];
+        if (profileLabel) profileLabel.textContent = opt.label;
+    }
+
+    /**
+     * Recompute and apply the effective profile from current user pref + thermal level.
+     */
+    function refreshEffectiveProfile() {
+        const effective = resolveEffectiveProfile(userPreferredProfile, currentThermalLevel);
+        if (effective !== playbackProfile) {
+            console.log(`[Profile] effective=${effective} (user=${userPreferredProfile}, thermal=${currentThermalLevel})`);
+        }
+        applyEffectiveProfile(effective);
+    }
+
+    /**
+     * Called when user manually selects a profile from the popup.
+     * Saves their preference and recomputes effective (may be capped by thermal).
+     */
+    function setUserPreferredProfile(profileName) {
+        userPreferredProfile = profileName;
+        try { localStorage.setItem('userPreferredProfile', profileName); } catch (_) {}
+        refreshEffectiveProfile();
+    }
+
+    /**
+     * Called when service sends thermalStatus message.
+     */
+    function handleThermalProfileSwitch(level) {
+        const prev = currentThermalLevel;
+        currentThermalLevel = level;
+        if (prev !== level) {
+            console.log(`[Thermal] level changed: ${prev} -> ${level}`);
+        }
+        refreshEffectiveProfile();
+        buildProfilePopup(); // update "(limited)" indicators
+    }
+
+    function buildProfilePopup() {
+        if (!profilePopup) return;
+        profilePopup.innerHTML = '';
+        PROFILE_OPTIONS.forEach(p => {
+            const btn = document.createElement('button');
+            // Show thermal cap indicator if this option would be capped
+            const effective = resolveEffectiveProfile(p.value, currentThermalLevel);
+            const isCapped = effective !== p.value;
+            btn.textContent = p.label + (isCapped ? ' (limited)' : '');
+            const isActive = p.value === userPreferredProfile;
+            btn.style.cssText = `
+                display:block;width:100%;padding:10px 16px;border:none;
+                border-radius:8px;background:${isActive ? 'rgba(100,181,246,0.25)' : 'transparent'};
+                color:${isActive ? '#64B5F6' : isCapped ? 'rgba(204,204,204,0.5)' : '#ccc'};
+                font-size:14px;font-weight:${isActive ? '600' : '400'};
+                cursor:pointer;text-align:left;
+                font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            `;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                setUserPreferredProfile(p.value);
+                profilePopup.style.display = 'none';
+                buildProfilePopup();
+            });
+            profilePopup.appendChild(btn);
+        });
+    }
+
+    if (profileBtn && profilePopup) {
+        refreshEffectiveProfile();
+        buildProfilePopup();
+
+        profileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = profilePopup.style.display === 'block';
+            profilePopup.style.display = isVisible ? 'none' : 'block';
+        });
+        document.addEventListener('click', () => {
+            if (profilePopup) profilePopup.style.display = 'none';
+        });
+    }
+
+    // Show/hide playback profile control with home button
+    const profileObserver = new MutationObserver(() => {
+        if (profileControl) {
+            profileControl.style.display = homeBtn.style.display === 'none' ? 'none' : 'block';
+        }
+    });
+    if (homeBtn) {
+        profileObserver.observe(homeBtn, { attributes: true, attributeFilter: ['style'] });
+    }
 });
