@@ -36,6 +36,10 @@ import com.castla.mirror.input.TouchInjector
 import com.castla.mirror.server.MirrorServer
 import com.castla.mirror.shizuku.IPrivilegedService
 import com.castla.mirror.shizuku.ShizukuSetup
+import com.castla.mirror.ott.BrowserResolver
+import com.castla.mirror.ott.OttCatalog
+import com.castla.mirror.utils.LaunchMode
+import com.castla.mirror.utils.StreamMath
 import com.castla.mirror.ui.SplitWebPresentation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +78,25 @@ class MirrorForegroundService : Service() {
         @JvmStatic
         var instance: MirrorForegroundService? = null
             private set
+
+        /** Resolution/FPS tiers for auto mode, ordered from most conservative to highest. */
+        data class AutoTier(val maxHeight: Int, val fps: Int, val label: String)
+        val AUTO_TIERS = listOf(
+            AutoTier(720, 30, "720p30"),
+            AutoTier(720, 60, "720p60"),
+            AutoTier(1080, 30, "1080p30"),
+            AutoTier(1080, 60, "1080p60")
+        )
+        /** Number of consecutive stable intervals required before stepping up. */
+        private const val AUTO_UPSCALE_THRESHOLD = 2
+        /** Browser quality thresholds — exceeding any blocks upscale / triggers downscale */
+        private const val AUTO_QUALITY_DROP_THRESHOLD = 5      // max dropped frames per report interval
+        private const val AUTO_QUALITY_BACKLOG_THRESHOLD = 3   // max decoder backlog drops per interval
+        private const val AUTO_QUALITY_DELAY_THRESHOLD_MS = 200.0  // max avg render delay ms
+        /** Check interval for auto-scale loop */
+        private const val AUTO_SCALE_INTERVAL_MS = 10_000L
+        /** Initial delay before first auto-scale evaluation */
+        private const val AUTO_SCALE_INITIAL_DELAY_MS = 5_000L
     }
 
     /** Binder for local (same-process) binding */
@@ -135,7 +158,24 @@ class MirrorForegroundService : Service() {
     // Thermal fps/resolution overrides — applied by rebuildPipeline when non-null
     private var thermalFpsOverride: Int? = null
     private var thermalMaxHeight: Int? = null
-    
+    // Display density scale (0.85 = default, lower = smaller UI / more content)
+    private var dpiScale: Float = 0.85f
+
+    // Auto mode: dynamically adjusts resolution/fps based on conditions.
+    // When true, the service starts conservatively (720p/30fps) and steps up
+    // only when thermal/network/decoder conditions are all healthy.
+    private var autoResolution: Boolean = false
+    private var autoFps: Boolean = false
+    private var autoScaleJob: Job? = null
+    // Current auto-selected tier — index into AUTO_TIERS
+    private var autoTierIndex: Int = 0
+    // Stability counter: number of consecutive healthy check intervals
+    private var autoStableCount: Int = 0
+    // Browser quality report — updated asynchronously from control socket
+    @Volatile private var lastQualityDroppedFrames: Int = 0
+    @Volatile private var lastQualityAvgDelayMs: Double = 0.0
+    @Volatile private var lastQualityBacklogDrops: Int = 0
+
     // WakeLocks to keep streaming alive when screen is off
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -235,6 +275,9 @@ class MirrorForegroundService : Service() {
                 // Drop fps to 15 and cap resolution at 720p
                 thermalFpsOverride = 15
                 thermalMaxHeight = 720
+                // Reset auto tier to most conservative
+                autoTierIndex = 0
+                autoStableCount = 0
                 if (browserConnected) {
                     serviceScope.launch { rebuildPipeline(currentWidth, currentHeight, force = true) }
                 }
@@ -249,6 +292,9 @@ class MirrorForegroundService : Service() {
                 // Drop fps to 20
                 thermalFpsOverride = 20
                 thermalMaxHeight = null
+                // Reset auto tier to most conservative
+                autoTierIndex = 0
+                autoStableCount = 0
                 if (browserConnected) {
                     serviceScope.launch { rebuildPipeline(currentWidth, currentHeight, force = true) }
                 }
@@ -279,6 +325,25 @@ class MirrorForegroundService : Service() {
                 }
             }
         }
+
+        // Broadcast thermal status to browser for playback profile auto-switching
+        broadcastThermalStatus(status)
+    }
+
+    private fun broadcastThermalStatus(status: Int) {
+        val level = when (status) {
+            PowerManager.THERMAL_STATUS_SEVERE,
+            PowerManager.THERMAL_STATUS_CRITICAL,
+            PowerManager.THERMAL_STATUS_EMERGENCY -> "severe"
+            PowerManager.THERMAL_STATUS_MODERATE -> "moderate"
+            PowerManager.THERMAL_STATUS_LIGHT -> "light"
+            else -> "none"
+        }
+        val json = JSONObject().apply {
+            put("type", "thermalStatus")
+            put("level", level)
+        }.toString()
+        mirrorServer?.broadcastControlMessage(json)
     }
 
     private fun acquireWakeLocks() {
@@ -326,23 +391,49 @@ class MirrorForegroundService : Service() {
                 } else {
                     request.packageName
                 }
-                Log.i(TAG, "VD launch request: $component (video=${request.isVideoApp})")
+                Log.i(TAG, "VD launch request: $component (video=${request.isVideoApp}, mode=${request.launchMode})")
 
-                if (request.intentExtra != null) {
-                    val displayId = virtualDisplayManager?.getDisplayId() ?: -1
-                    dismissSplitPresentation(clearState = true)
-                    val activityClassName = component.substringAfter('/', "com.castla.mirror.ui.WebBrowserActivity")
-                    if (request.splitMode && canLaunchPrimarySplitTask()) {
-                        launchSplitWebTarget(activityClassName, displayId, request.intentExtra)
-                    } else {
-                        launchFullscreenWebTarget(activityClassName, displayId, request.intentExtra)
+                when (request.launchMode) {
+                    LaunchMode.EXTERNAL_BROWSER_URL -> {
+                        val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                        val url = request.url ?: return@collect
+                        dismissSplitPresentation(clearState = true)
+                        if (request.splitMode && canLaunchPrimarySplitTask()) {
+                            launchSplitExternalBrowserTarget(displayId, url, request.sourceAppPackage, request.allowEmbeddedFallback)
+                        } else {
+                            launchExternalBrowserTarget(displayId, url, request.sourceAppPackage, request.allowEmbeddedFallback)
+                        }
                     }
-                } else {
-                    dismissSplitPresentation(clearState = true)
-                    if (request.splitMode && canLaunchPrimarySplitTask()) {
-                        launchSplitStandardTarget(component)
-                    } else {
-                        launchFullscreenStandardTarget(component)
+                    LaunchMode.INTERNAL_WEBVIEW -> {
+                        val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                        dismissSplitPresentation(clearState = true)
+                        val activityClassName = component.substringAfter('/', "com.castla.mirror.ui.WebBrowserActivity")
+                        val url = request.url ?: request.intentExtra ?: return@collect
+                        if (request.splitMode && canLaunchPrimarySplitTask()) {
+                            launchSplitWebTarget(activityClassName, displayId, url)
+                        } else {
+                            launchFullscreenWebTarget(activityClassName, displayId, url)
+                        }
+                    }
+                    LaunchMode.STANDARD_APP -> {
+                        if (request.intentExtra != null) {
+                            // Legacy path: intentExtra means web mode
+                            val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                            dismissSplitPresentation(clearState = true)
+                            val activityClassName = component.substringAfter('/', "com.castla.mirror.ui.WebBrowserActivity")
+                            if (request.splitMode && canLaunchPrimarySplitTask()) {
+                                launchSplitWebTarget(activityClassName, displayId, request.intentExtra)
+                            } else {
+                                launchFullscreenWebTarget(activityClassName, displayId, request.intentExtra)
+                            }
+                        } else {
+                            dismissSplitPresentation(clearState = true)
+                            if (request.splitMode && canLaunchPrimarySplitTask()) {
+                                launchSplitStandardTarget(component)
+                            } else {
+                                launchFullscreenStandardTarget(component)
+                            }
+                        }
                     }
                 }
 
@@ -351,12 +442,11 @@ class MirrorForegroundService : Service() {
                 if (request.isVideoApp != isCurrentAppVideo && now - lastBitrateChangeMs > 500) {
                     isCurrentAppVideo = request.isVideoApp
                     lastBitrateChangeMs = now
-                    
-                    val baseTargetBitrate = (4_000_000L * currentWidth * currentHeight / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
-                    // Video boost capped at 1.2x; disabled entirely when thermal status >= LIGHT
+
+                    val baseTargetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(currentWidth, currentHeight)
                     val thermalActive = _thermalStatus.value >= PowerManager.THERMAL_STATUS_LIGHT
-                    targetBitrate = if (isCurrentAppVideo && !thermalActive) minOf((baseTargetBitrate * 1.2).toInt(), 15_000_000) else baseTargetBitrate
-                    
+                    targetBitrate = if (isCurrentAppVideo && !thermalActive) com.castla.mirror.utils.StreamMath.calculateOttBitrate(baseTargetBitrate) else baseTargetBitrate
+
                     if (currentBitrate > targetBitrate || (now - lastCongestionTimeMs > 2000)) {
                          currentBitrate = targetBitrate
                          videoEncoder?.setBitrate(currentBitrate)
@@ -397,8 +487,15 @@ class MirrorForegroundService : Service() {
 
         Log.i(TAG, "onStartCommand: resultCode=$resultCode, hasData=true")
 
-        currentMaxHeight = intent!!.getIntExtra(EXTRA_MAX_RESOLUTION, 720)
-        val settingsFps = intent.getIntExtra(EXTRA_FPS, 30)
+        val rawMaxHeight = intent!!.getIntExtra(EXTRA_MAX_RESOLUTION, 0)
+        autoResolution = rawMaxHeight == 0
+        currentMaxHeight = if (autoResolution) 720 else rawMaxHeight
+
+        val rawFps = intent.getIntExtra(EXTRA_FPS, 0)
+        autoFps = rawFps == 0
+        val settingsFps = if (autoFps) 30 else rawFps
+
+        Log.i(TAG, "Mode: autoRes=$autoResolution autoFps=$autoFps initialMaxHeight=$currentMaxHeight initialFps=$settingsFps")
         val audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, false)
         mirroringMode = intent.getStringExtra(EXTRA_MIRRORING_MODE) ?: "FULL_SCREEN"
         targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
@@ -502,6 +599,7 @@ class MirrorForegroundService : Service() {
 
         try { resizeJob?.cancel() } catch (_: Exception) {}
         try { abrJob?.cancel() } catch (_: Exception) {}
+        try { autoScaleJob?.cancel() } catch (_: Exception) {}
         try { serviceScope.cancel() } catch (_: Exception) {}
         try { compositionDispatcher.close() } catch (_: Exception) {}
         restoreMediaVolume()
@@ -537,6 +635,107 @@ class MirrorForegroundService : Service() {
                     videoEncoder?.setBitrate(currentBitrate)
                     Log.i(TAG, "ABR: Network stable. Increasing bitrate to ${currentBitrate / 1000}kbps")
                 }
+            }
+        }
+    }
+
+    /**
+     * Auto-scale loop: periodically checks conditions and steps resolution/fps
+     * up or down. Only runs when autoResolution or autoFps is true.
+     *
+     * Upscale requires AUTO_UPSCALE_THRESHOLD consecutive stable intervals.
+     * Downscale on thermal is immediate (handled by thermal handler, not here).
+     * This loop handles the gradual upscale when conditions improve.
+     */
+    private fun startAutoScaleLoop() {
+        if (!autoResolution && !autoFps) return
+        autoScaleJob?.cancel()
+        autoTierIndex = 0  // start at most conservative tier
+        autoStableCount = 0
+        autoScaleJob = serviceScope.launch {
+            // Short initial stabilization, then evaluate immediately
+            kotlinx.coroutines.delay(AUTO_SCALE_INITIAL_DELAY_MS)
+            while (isServiceRunning && browserConnected) {
+                evaluateAutoScale()
+                kotlinx.coroutines.delay(AUTO_SCALE_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun evaluateAutoScale() {
+        val thermalStatus = _thermalStatus.value
+        val now = android.os.SystemClock.elapsedRealtime()
+        val networkStable = now - lastCongestionTimeMs >= AUTO_SCALE_INTERVAL_MS
+        val noThermalPressure = thermalStatus == 0 // THERMAL_STATUS_NONE
+
+        // Snapshot browser quality metrics (written asynchronously from control socket)
+        val droppedFrames = lastQualityDroppedFrames
+        val avgDelayMs = lastQualityAvgDelayMs
+        val backlogDrops = lastQualityBacklogDrops
+        // Browser is struggling if it's dropping frames or decoder can't keep up
+        val browserHealthy = droppedFrames <= AUTO_QUALITY_DROP_THRESHOLD &&
+                backlogDrops <= AUTO_QUALITY_BACKLOG_THRESHOLD &&
+                avgDelayMs <= AUTO_QUALITY_DELAY_THRESHOLD_MS
+
+        // Thermal override always takes priority — force to lowest auto tier
+        // THERMAL_STATUS_MODERATE = 2
+        if (thermalStatus >= 2) {
+            if (autoTierIndex > 0) {
+                autoTierIndex = 0
+                autoStableCount = 0
+                applyAutoTier()
+                Log.i(TAG, "AutoScale: thermal $thermalStatus — dropped to ${AUTO_TIERS[autoTierIndex].label}")
+            }
+            return
+        }
+
+        // Light thermal (1): prevent upscale but don't force downscale
+        if (thermalStatus >= 1) {
+            autoStableCount = 0
+            return
+        }
+
+        if (!networkStable) {
+            // Network congestion — consider stepping down
+            if (autoTierIndex > 0) {
+                autoTierIndex--
+                autoStableCount = 0
+                applyAutoTier()
+                Log.i(TAG, "AutoScale: congestion — stepped down to ${AUTO_TIERS[autoTierIndex].label}")
+            }
+            return
+        }
+
+        // Browser playback struggling — step down
+        if (!browserHealthy && autoTierIndex > 0) {
+            autoTierIndex--
+            autoStableCount = 0
+            applyAutoTier()
+            Log.i(TAG, "AutoScale: browser quality poor (dropped=$droppedFrames backlog=$backlogDrops delay=${avgDelayMs.toInt()}ms) — stepped down to ${AUTO_TIERS[autoTierIndex].label}")
+            return
+        }
+
+        // All conditions healthy — increment stability counter
+        if (noThermalPressure && networkStable && browserHealthy) {
+            autoStableCount++
+            if (autoStableCount >= AUTO_UPSCALE_THRESHOLD && autoTierIndex < AUTO_TIERS.size - 1) {
+                autoTierIndex++
+                autoStableCount = 0
+                applyAutoTier()
+                Log.i(TAG, "AutoScale: stable for ${AUTO_UPSCALE_THRESHOLD} intervals — stepped up to ${AUTO_TIERS[autoTierIndex].label}")
+            }
+        }
+    }
+
+    private fun applyAutoTier() {
+        val tier = AUTO_TIERS[autoTierIndex]
+        // Only apply auto values for settings that are in auto mode
+        if (autoResolution) currentMaxHeight = tier.maxHeight
+        if (autoFps) currentFps = tier.fps
+        // Trigger pipeline rebuild with new settings
+        if (browserConnected && currentWidth > 0 && currentHeight > 0) {
+            serviceScope.launch {
+                rebuildPipeline(currentWidth, currentHeight, force = true)
             }
         }
     }
@@ -630,6 +829,22 @@ class MirrorForegroundService : Service() {
                     closeFreeformSplit()
                 }
 
+                server.setDisplayDensityListener { scale ->
+                    Log.i(TAG, "Display density scale changed to $scale")
+                    dpiScale = scale
+                    if (currentWidth > 0 && currentHeight > 0) {
+                        serviceScope.launch {
+                            rebuildPipeline(currentWidth, currentHeight, force = true)
+                        }
+                    }
+                }
+
+                server.setQualityReportListener { dropped, avgDelay, backlogDrops, _ ->
+                    lastQualityDroppedFrames = dropped
+                    lastQualityAvgDelayMs = avgDelay
+                    lastQualityBacklogDrops = backlogDrops
+                }
+
                 server.setBrowserConnectionListener { connected ->
                     if (connected && !browserConnected) {
                         browserConnected = true
@@ -653,16 +868,17 @@ class MirrorForegroundService : Service() {
         }
     }
     
-    private val OTT_WEB_URLS = mapOf(
-        "com.google.android.youtube" to "https://m.youtube.com",
-        "com.netflix.mediaclient" to "https://www.netflix.com",
-        "com.disney.disneyplus" to "https://www.disneyplus.com",
-        "com.disney.disneyplus.kr" to "https://www.disneyplus.com",
-        "com.wavve.player" to "https://m.wavve.com",
-        "net.cj.cjhv.gs.tving" to "https://www.tving.com",
-        "com.coupang.play" to "https://www.coupangplay.com",
-        "com.frograms.watcha" to "https://watcha.com"
+    // ActiveLaunchSession tracks what's currently running on the virtual display
+    private enum class SessionMode { STANDARD_APP, EXTERNAL_BROWSER, INTERNAL_WEBVIEW }
+    private data class ActiveLaunchSession(
+        val mode: SessionMode,
+        val launchTarget: String,
+        val url: String? = null,
+        val sourceAppPackage: String? = null,
+        val browserPackage: String? = null
     )
+    private var activeSession: ActiveLaunchSession? = null
+    private var activeSplitSession: ActiveLaunchSession? = null
 
     private fun internalComponentName(activityClassName: String): String {
         return if (activityClassName.contains('/')) activityClassName else "$packageName/$activityClassName"
@@ -678,12 +894,12 @@ class MirrorForegroundService : Service() {
     }
 
     private fun secondaryBitrate(width: Int, height: Int): Int {
-        return (3_000_000L * width * height / (1280L * 720)).toInt().coerceIn(750_000, 10_000_000)
+        return com.castla.mirror.utils.StreamMath.calculateSecondaryBitrate(width, height)
     }
 
     private fun computeVirtualDisplayDpi(width: Int, height: Int): Int {
-        val reference = minOf(width, height)
-        return (reference * 240 / 720).coerceIn(120, 320)
+        val baseDpi = StreamMath.calculateDpi(minOf(width, height))
+        return StreamMath.applyDensityScale(baseDpi, dpiScale)
     }
 
 
@@ -857,6 +1073,7 @@ class MirrorForegroundService : Service() {
         currentWebSplitMode = false
         activeSplitUrl = null
         activeSplitComponent = null
+        activeSplitSession = null
     }
 
     private fun closeFreeformSplit() {
@@ -964,21 +1181,39 @@ class MirrorForegroundService : Service() {
      * Force-stop a previously running app when navigating home.
      * Skips system apps, launchers, and our own package.
      */
+    private val BROWSER_PACKAGES = setOf(
+        "com.android.chrome",
+        "com.sec.android.app.sbrowser",
+        "org.mozilla.firefox",
+        "com.microsoft.emmx"
+    )
+
     private fun forceStopAppIfNeeded(packageName: String) {
-        if (packageName.isBlank()
-            || packageName == "HOME"
-            || packageName == "com.android.settings"
-            || packageName.startsWith("com.android.launcher")
-            || packageName.startsWith("com.sec.android.app.launcher")
-            || packageName == applicationContext.packageName
+        val pkg = packageName.substringBefore('/')
+        if (pkg.isBlank()
+            || pkg == "HOME"
+            || pkg == "com.android.settings"
+            || pkg.startsWith("com.android.launcher")
+            || pkg.startsWith("com.sec.android.app.launcher")
+            || pkg == applicationContext.packageName
         ) return
 
         try {
             val service = virtualDisplayManager?.getPrivilegedService() ?: return
-            service.execCommand("am force-stop $packageName")
-            Log.i(TAG, "Force-stopped previous app: $packageName")
+            // For browser apps, prefer task remove over force-stop to preserve user sessions
+            if (BROWSER_PACKAGES.contains(pkg)) {
+                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                val taskId = findTaskId(service, displayId, packageName)
+                if (taskId != null) {
+                    service.execCommand("am task remove $taskId")
+                    Log.i(TAG, "Removed browser task $taskId for $pkg (avoiding force-stop)")
+                    return
+                }
+            }
+            service.execCommand("am force-stop $pkg")
+            Log.i(TAG, "Force-stopped previous app: $pkg")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to force-stop $packageName", e)
+            Log.w(TAG, "Failed to force-stop $pkg", e)
         }
     }
 
@@ -1077,6 +1312,11 @@ class MirrorForegroundService : Service() {
         currentVdApp = newTarget
         currentWebUrl = url
         currentWebSplitMode = false
+        activeSession = ActiveLaunchSession(
+            mode = SessionMode.INTERNAL_WEBVIEW,
+            launchTarget = newTarget,
+            url = url
+        )
     }
 
     private fun launchSplitWebTarget(activityClassName: String, displayId: Int, url: String) {
@@ -1090,6 +1330,162 @@ class MirrorForegroundService : Service() {
         launchInternalActivity(activityClassName, displayId, url, splitMode = true)
         activeSplitUrl = url
         activeSplitComponent = componentName
+        activeSplitSession = ActiveLaunchSession(
+            mode = SessionMode.INTERNAL_WEBVIEW,
+            launchTarget = componentName,
+            url = url
+        )
+    }
+
+    /**
+     * Launch an OTT URL in an external browser app on the virtual display.
+     * Falls back to internal WebBrowserActivity if no browser is found or launch fails.
+     */
+    private fun launchExternalBrowserTarget(displayId: Int, url: String, sourceAppPackage: String? = null, allowFallback: Boolean = true) {
+        clearSplitState()
+        val previousApp = currentVdApp
+
+        val browser = BrowserResolver.resolve(this, url)
+        if (browser != null) {
+            val command = buildExternalBrowserCommand(displayId, url, browser.componentFlat, freeform = false)
+            val service = virtualDisplayManager?.getPrivilegedService()
+            if (service == null) {
+                Log.w(TAG, "Privileged service unavailable for external browser launch")
+                if (allowFallback) {
+                    Log.w(TAG, "Falling back to internal WebBrowserActivity for $url")
+                    launchFullscreenWebTarget("com.castla.mirror.ui.WebBrowserActivity", displayId, url)
+                    activeSession = ActiveLaunchSession(
+                        mode = SessionMode.INTERNAL_WEBVIEW,
+                        launchTarget = internalComponentName("com.castla.mirror.ui.WebBrowserActivity"),
+                        url = url,
+                        sourceAppPackage = sourceAppPackage
+                    )
+                }
+                return
+            }
+            val launched = try {
+                Log.i(TAG, "External browser launch: $command")
+                service.execCommand(command)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "External browser launch failed", e)
+                false
+            }
+
+            if (launched) {
+                // Compare by package name to avoid false mismatch between component and package formats
+                val previousPkg = previousApp.substringBefore('/')
+                if (previousPkg != browser.packageName) {
+                    forceStopAppIfNeeded(previousApp)
+                }
+                currentVdApp = browser.componentFlat
+                currentWebUrl = url
+                currentWebSplitMode = false
+                activeSession = ActiveLaunchSession(
+                    mode = SessionMode.EXTERNAL_BROWSER,
+                    launchTarget = browser.componentFlat,
+                    url = url,
+                    sourceAppPackage = sourceAppPackage,
+                    browserPackage = browser.packageName
+                )
+                Log.i(TAG, "External browser launched successfully: ${browser.componentFlat} -> $url")
+                return
+            }
+        }
+
+        // Fallback to internal WebBrowserActivity
+        if (allowFallback) {
+            Log.w(TAG, "Falling back to internal WebBrowserActivity for $url")
+            launchFullscreenWebTarget("com.castla.mirror.ui.WebBrowserActivity", displayId, url)
+            activeSession = ActiveLaunchSession(
+                mode = SessionMode.INTERNAL_WEBVIEW,
+                launchTarget = internalComponentName("com.castla.mirror.ui.WebBrowserActivity"),
+                url = url,
+                sourceAppPackage = sourceAppPackage
+            )
+        }
+    }
+
+    /**
+     * Launch an OTT URL in an external browser in split/freeform mode.
+     * Falls back to internal WebBrowserActivity if no browser is found or launch fails.
+     */
+    private fun launchSplitExternalBrowserTarget(displayId: Int, url: String, sourceAppPackage: String? = null, allowFallback: Boolean = true) {
+        if (!canLaunchPrimarySplitTask()) {
+            Log.w(TAG, "Split external browser launch requested without a primary app; falling back to fullscreen")
+            launchExternalBrowserTarget(displayId, url, sourceAppPackage, allowFallback)
+            return
+        }
+
+        val browser = BrowserResolver.resolve(this, url)
+        if (browser != null) {
+            val service = virtualDisplayManager?.getPrivilegedService()
+            if (service == null) {
+                Log.w(TAG, "Privileged service unavailable for split external browser launch")
+                if (allowFallback) {
+                    launchSplitWebTarget("com.castla.mirror.ui.WebBrowserActivity", displayId, url)
+                    activeSplitSession = ActiveLaunchSession(
+                        mode = SessionMode.INTERNAL_WEBVIEW,
+                        launchTarget = internalComponentName("com.castla.mirror.ui.WebBrowserActivity"),
+                        url = url,
+                        sourceAppPackage = sourceAppPackage
+                    )
+                }
+                return
+            }
+            relaunchPrimaryTaskForSplit(displayId)
+            val command = buildExternalBrowserCommand(displayId, url, browser.componentFlat, freeform = true)
+            val launched = try {
+                Log.i(TAG, "Split external browser launch: $command")
+                service.execCommand(command)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Split external browser launch failed", e)
+                false
+            }
+
+            if (launched) {
+                scheduleSplitTaskResize(displayId, browser.componentFlat)
+                activeSplitComponent = browser.componentFlat
+                activeSplitUrl = url
+                activeSplitSession = ActiveLaunchSession(
+                    mode = SessionMode.EXTERNAL_BROWSER,
+                    launchTarget = browser.componentFlat,
+                    url = url,
+                    sourceAppPackage = sourceAppPackage,
+                    browserPackage = browser.packageName
+                )
+                Log.i(TAG, "Split external browser launched successfully: ${browser.componentFlat} -> $url")
+                return
+            }
+        }
+
+        // Fallback to internal WebBrowserActivity in split mode
+        if (allowFallback) {
+            Log.w(TAG, "Falling back to internal WebBrowserActivity (split) for $url")
+            launchSplitWebTarget("com.castla.mirror.ui.WebBrowserActivity", displayId, url)
+            activeSplitSession = ActiveLaunchSession(
+                mode = SessionMode.INTERNAL_WEBVIEW,
+                launchTarget = internalComponentName("com.castla.mirror.ui.WebBrowserActivity"),
+                url = url,
+                sourceAppPackage = sourceAppPackage
+            )
+        }
+    }
+
+    /**
+     * Build an `am start` shell command to launch an external browser with ACTION_VIEW on the virtual display.
+     */
+    private fun buildExternalBrowserCommand(displayId: Int, url: String, browserComponent: String, freeform: Boolean): String {
+        return buildString {
+            append("am start -W --display $displayId -f 0x18000000 ")
+            if (freeform) {
+                append("--windowingMode 5 ")
+            }
+            append("-a android.intent.action.VIEW ")
+            append("-d ${escapeShellArg(url)} ")
+            append("-n ${escapeShellArg(browserComponent)} ")
+        }.trim()
     }
 
     private fun launchFullscreenStandardTarget(launchTarget: String) {
@@ -1104,6 +1500,7 @@ class MirrorForegroundService : Service() {
         virtualDisplayManager?.launchAppOnDisplay(resolvedTarget)
         currentVdApp = resolvedTarget
         currentWebUrl = null
+        activeSession = ActiveLaunchSession(mode = SessionMode.STANDARD_APP, launchTarget = resolvedTarget)
     }
 
     private fun launchSplitStandardTarget(launchTarget: String) {
@@ -1155,7 +1552,17 @@ class MirrorForegroundService : Service() {
         // Must force-stop and relaunch in freeform mode (fullscreen→freeform can't be done via resize)
         Log.i(TAG, "Force-restarting primary $primaryPkg in freeform mode")
         service.execCommand("am force-stop $primaryPkg")
-        val launched = if (primaryTarget.contains("WebBrowserActivity")) {
+        val isExternalBrowser = activeSession?.mode == SessionMode.EXTERNAL_BROWSER
+        val launched = if (isExternalBrowser && currentWebUrl != null) {
+            // Re-launch external browser with the same URL
+            val browser = BrowserResolver.resolve(this, currentWebUrl!!)
+            if (browser != null) {
+                val cmd = buildExternalBrowserCommand(displayId, currentWebUrl!!, browser.componentFlat, freeform = true)
+                try { service.execCommand(cmd); true } catch (_: Exception) { false }
+            } else {
+                launchTargetOnDisplay(displayId, primaryTarget, "url", currentWebUrl!!, freeform = true)
+            }
+        } else if (primaryTarget.contains("WebBrowserActivity")) {
             launchTargetOnDisplay(displayId, primaryTarget, "url", currentWebUrl ?: "https://m.youtube.com", freeform = true)
         } else {
             launchTargetOnDisplay(displayId, primaryTarget, freeform = true)
@@ -1431,10 +1838,28 @@ class MirrorForegroundService : Service() {
                 releaseSecondaryPipeline(clearState = true)
                 return
             }
-            val webUrl = OTT_WEB_URLS[pkgName]
+            val webUrl = OttCatalog.webUrlFor(pkgName)
             if (webUrl != null) {
+                // Try external browser for secondary pane OTT too
+                val browser = BrowserResolver.resolve(this, webUrl)
+                if (browser != null && secondaryDisplayId >= 0) {
+                    val service = virtualDisplayManager?.getPrivilegedService()
+                    if (service != null) {
+                        val cmd = buildExternalBrowserCommand(secondaryDisplayId, webUrl, browser.componentFlat, freeform = false)
+                        try {
+                            service.execCommand(cmd)
+                            currentSecondaryApp = browser.componentFlat
+                            currentSecondaryWebUrl = webUrl
+                            Log.i(TAG, "Web Launcher: Launched secondary OTT via external browser: $pkgName -> $webUrl")
+                            return
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Secondary external browser launch failed, falling back to WebBrowserActivity", e)
+                        }
+                    }
+                }
+                // Fallback to internal WebBrowserActivity
                 val webComponentName = internalComponentName("com.castla.mirror.ui.WebBrowserActivity")
-                Log.i(TAG, "Web Launcher: Launching secondary OTT app: $pkgName -> $webUrl")
+                Log.i(TAG, "Web Launcher: Launching secondary OTT app via WebBrowserActivity: $pkgName -> $webUrl")
                 launchSecondaryTarget(webComponentName, webUrl)
             } else {
                 val launchTarget = componentName ?: pkgName
@@ -1445,25 +1870,23 @@ class MirrorForegroundService : Service() {
         }
 
         // In freeform split mode, always launch native apps directly (skip OTT web redirect)
-        val webUrl = if (singleVdSplit && splitMode) null else OTT_WEB_URLS[pkgName]
+        val webUrl = if (singleVdSplit && splitMode) null else OttCatalog.webUrlFor(pkgName)
         val displayId = virtualDisplayManager?.getDisplayId() ?: -1
 
         if (webUrl != null) {
-            Log.i(TAG, "Web Launcher: Launching DRM-restricted OTT app: $pkgName -> $webUrl (splitMode=$splitMode)")
+            Log.i(TAG, "Web Launcher: Launching OTT app via external browser: $pkgName -> $webUrl (splitMode=$splitMode)")
 
             dismissSplitPresentation(clearState = true)
-            val webComponentName = "com.castla.mirror.ui.WebBrowserActivity"
             if (splitMode && canLaunchPrimarySplitTask()) {
-                launchSplitWebTarget(webComponentName, displayId, webUrl)
+                launchSplitExternalBrowserTarget(displayId, webUrl, pkgName)
             } else {
-                launchFullscreenWebTarget(webComponentName, displayId, webUrl)
+                launchExternalBrowserTarget(displayId, webUrl, pkgName)
             }
 
             isCurrentAppVideo = true
-            val baseTargetBitrate = (4_000_000L * currentWidth * currentHeight / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
-            // Video boost capped at 1.2x; disabled entirely when thermal status >= LIGHT
+            val baseTargetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(currentWidth, currentHeight)
             val thermalActive = _thermalStatus.value >= PowerManager.THERMAL_STATUS_LIGHT
-            targetBitrate = if (!thermalActive) minOf((baseTargetBitrate * 1.2).toInt(), 15_000_000) else baseTargetBitrate
+            targetBitrate = if (!thermalActive) com.castla.mirror.utils.StreamMath.calculateOttBitrate(baseTargetBitrate) else baseTargetBitrate
             if (currentBitrate > targetBitrate || (android.os.SystemClock.elapsedRealtime() - lastCongestionTimeMs > 2000)) {
                  currentBitrate = targetBitrate
                  videoEncoder?.setBitrate(currentBitrate)
@@ -1479,11 +1902,11 @@ class MirrorForegroundService : Service() {
             }
 
             isCurrentAppVideo = false
-            targetBitrate = (4_000_000L * currentWidth * currentHeight / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
+            targetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(currentWidth, currentHeight)
             currentBitrate = minOf(currentBitrate, targetBitrate)
             videoEncoder?.setBitrate(currentBitrate)
         }
-        
+
         if (currentCodecMode == "mjpeg") {
             touchInjector?.onTouchEvent(com.castla.mirror.server.TouchEvent("down", 0.5f, 0.5f, 99))
             serviceScope.launch {
@@ -1572,6 +1995,11 @@ class MirrorForegroundService : Service() {
     private fun onBrowserConnected() {
         acquireWakeLocks()
 
+        // Send current thermal status to new browser client for profile auto-switching
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            broadcastThermalStatus(_thermalStatus.value)
+        }
+
         if (videoEncoder != null) {
             // Reconnection — rebuild existing pipeline and restart audio
             Log.i(TAG, "Browser reconnected — rebuilding pipeline")
@@ -1594,6 +2022,7 @@ class MirrorForegroundService : Service() {
         preThermalTargetBitrate = targetBitrate
 
         startAbrLoop()
+        startAutoScaleLoop()
 
         videoEncoder = VideoEncoder(width, height, currentBitrate, fps).also { encoder ->
             val surface = encoder.createInputSurface()
@@ -1658,7 +2087,27 @@ class MirrorForegroundService : Service() {
                 } else if (hasActiveSplitSession()) {
                     val displayId = vdm.getDisplayId()
                     relaunchPrimaryTaskForSplit(displayId)
+                    // Restore split pane: prefer external browser if that was the original mode
+                    val splitSession = activeSplitSession
                     when {
+                        splitSession?.mode == SessionMode.EXTERNAL_BROWSER && activeSplitUrl != null -> {
+                            val browser = BrowserResolver.resolve(this, activeSplitUrl!!)
+                            if (browser != null) {
+                                val cmd = buildExternalBrowserCommand(displayId, activeSplitUrl!!, browser.componentFlat, freeform = true)
+                                val launched = try {
+                                    val svc = virtualDisplayManager?.getPrivilegedService()
+                                    if (svc != null) { svc.execCommand(cmd); true } else false
+                                } catch (_: Exception) { false }
+                                if (launched) {
+                                    scheduleSplitTaskResize(displayId, browser.componentFlat)
+                                } else {
+                                    // Fallback to internal WebBrowserActivity
+                                    launchInternalActivity("com.castla.mirror.ui.WebBrowserActivity", displayId, activeSplitUrl!!, splitMode = true)
+                                }
+                            } else {
+                                launchInternalActivity("com.castla.mirror.ui.WebBrowserActivity", displayId, activeSplitUrl!!, splitMode = true)
+                            }
+                        }
                         activeSplitUrl != null -> {
                             launchInternalActivity("com.castla.mirror.ui.WebBrowserActivity", displayId, activeSplitUrl!!, splitMode = true)
                         }
@@ -1668,6 +2117,23 @@ class MirrorForegroundService : Service() {
                                 scheduleSplitTaskResize(displayId, activeSplitComponent!!)
                             }
                         }
+                    }
+                } else if (activeSession?.mode == SessionMode.EXTERNAL_BROWSER && currentWebUrl != null) {
+                    // Restore external browser with URL
+                    val displayId = vdm.getDisplayId()
+                    val browser = BrowserResolver.resolve(this, currentWebUrl!!)
+                    if (browser != null) {
+                        val cmd = buildExternalBrowserCommand(displayId, currentWebUrl!!, browser.componentFlat, freeform = false)
+                        val launched = try {
+                            val svc = virtualDisplayManager?.getPrivilegedService()
+                            if (svc != null) { svc.execCommand(cmd); true } else false
+                        } catch (_: Exception) { false }
+                        if (!launched) {
+                            // Fallback to internal WebBrowserActivity
+                            launchInternalActivity("com.castla.mirror.ui.WebBrowserActivity", displayId, currentWebUrl!!, splitMode = currentWebSplitMode)
+                        }
+                    } else {
+                        launchInternalActivity("com.castla.mirror.ui.WebBrowserActivity", vdm.getDisplayId(), currentWebUrl!!, splitMode = currentWebSplitMode)
                     }
                 } else if (currentVdApp.contains("WebBrowserActivity")) {
                     val activityClassName = currentVdApp.substringAfter('/')
@@ -1719,6 +2185,11 @@ class MirrorForegroundService : Service() {
 
         abrJob?.cancel()
         abrJob = null
+
+        // Reset browser quality metrics so stale values don't affect next session
+        lastQualityDroppedFrames = 0
+        lastQualityAvgDelayMs = 0.0
+        lastQualityBacklogDrops = 0
 
         releaseWakeLocks()
 
@@ -1849,7 +2320,10 @@ class MirrorForegroundService : Service() {
 
     private fun effectiveMaxHeightForRequest(requestedHeight: Int, isSecondaryPane: Boolean = false): Int {
         val baseMax = when {
-            shouldUseRequestedHeightForSplit(isSecondaryPane) -> requestedHeight
+            shouldUseRequestedHeightForSplit(isSecondaryPane) -> {
+                // In split mode, still respect auto tier / user resolution cap
+                minOf(requestedHeight, currentMaxHeight)
+            }
             else -> currentMaxHeight
         }
         // Apply thermal resolution cap if active
@@ -1879,8 +2353,8 @@ class MirrorForegroundService : Service() {
         val height = alignedHeight
         val dpi = computeVirtualDisplayDpi(width, height)
 
-        val newTargetBitrate = (4_000_000L * width * height / (1280L * 720)).toInt().coerceIn(1_000_000, 15_000_000)
-        targetBitrate = if (isCurrentAppVideo) minOf((newTargetBitrate * 1.5).toInt(), 15_000_000) else newTargetBitrate
+        val newTargetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(width, height)
+        targetBitrate = if (isCurrentAppVideo) com.castla.mirror.utils.StreamMath.calculateOttBitrate(newTargetBitrate) else newTargetBitrate
         currentBitrate = targetBitrate
 
         Log.i(
