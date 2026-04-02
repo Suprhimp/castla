@@ -42,7 +42,15 @@ let userPreferredProfile = (() => {
 })();
 let currentThermalLevel = 'none';
 let playbackProfile = userPreferredProfile;
-let streamResolutionMode = 'auto';
+const DENSITY_STORAGE_KEY = 'castla_display_density';
+let currentDensity = (() => {
+    try {
+        const saved = parseFloat(localStorage.getItem(DENSITY_STORAGE_KEY));
+        return Number.isFinite(saved) ? saved : 0.7;
+    } catch (_) {
+        return 0.7;
+    }
+})();
 let streamPolicy = {
     fitMode: 'contain',
     autoFit: false,
@@ -65,10 +73,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const webLauncher = document.getElementById('web-launcher');
     const homeBtn = document.getElementById('home-btn');
-    const resolutionControl = document.getElementById('stream-resolution-control');
-    const resolutionBtn = document.getElementById('stream-resolution-btn');
-    const resolutionLabel = document.getElementById('stream-resolution-label');
-    const resolutionPopup = document.getElementById('stream-resolution-popup');
+    const densityControl = document.getElementById('density-control');
+    const densityBtn = document.getElementById('density-btn');
+    const densityLabel = document.getElementById('density-label');
+    const densityPopup = document.getElementById('density-popup');
     const overlay = document.getElementById('overlay');
     const statusText = document.getElementById('status');
     const launcherLoading = document.getElementById('launcher-loading');
@@ -1006,6 +1014,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 controlSocket.send(JSON.stringify({ type: 'codec', mode: 'mjpeg' }));
             }
 
+            if (controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'displayDensity', scale: currentDensity }));
+            }
+
             if (isLauncherMode) {
                 loadLauncherApps();
             }
@@ -1082,8 +1094,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     else blurKeyboardProxy();
                 } else if (msg.type === 'thermalStatus') {
                     handleThermalProfileSwitch(msg.level);
-                } else if (msg.type === 'streamSettings') {
-                    applyResolutionMode(msg.resolutionMode || 'auto');
                 } else if (msg.type === 'autoTierChange') {
                     const tier = msg.tier;
                     const reason = msg.reason;
@@ -1543,26 +1553,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (canvas) canvas.style.pointerEvents = 'auto';
     if (secondaryCanvas) secondaryCanvas.style.pointerEvents = 'auto';
 
-    // ── Stream Resolution UI ──
-    const RESOLUTION_OPTIONS = [
-        { value: 'auto', label: 'Auto' },
-        { value: '720p', label: '720p' },
-        { value: '1080p', label: '1080p' }
+    // ── Display Density UI ──
+    const DENSITY_LEVELS = [
+        { value: 1.0, label: 'Large' },
+        { value: 0.85, label: 'Default' },
+        { value: 0.7, label: 'Small' },
+        { value: 0.55, label: 'Compact' }
     ];
 
-    function applyResolutionMode(mode) {
-        streamResolutionMode = RESOLUTION_OPTIONS.some(opt => opt.value === mode) ? mode : 'auto';
-        const opt = RESOLUTION_OPTIONS.find(p => p.value === streamResolutionMode) || RESOLUTION_OPTIONS[0];
-        if (resolutionLabel) resolutionLabel.textContent = opt.label;
-        if (resolutionPopup) buildResolutionPopup();
+    function normalizeDensity(scale) {
+        return DENSITY_LEVELS.some(level => level.value === scale) ? scale : 0.7;
     }
 
-    function buildResolutionPopup() {
-        if (!resolutionPopup) return;
-        resolutionPopup.innerHTML = '';
-        RESOLUTION_OPTIONS.forEach(option => {
+    function applyDensity(scale) {
+        currentDensity = normalizeDensity(scale);
+        try { localStorage.setItem(DENSITY_STORAGE_KEY, String(currentDensity)); } catch (_) {}
+        const level = DENSITY_LEVELS.find(item => item.value === currentDensity) || DENSITY_LEVELS[2];
+        if (densityLabel) densityLabel.textContent = level.label;
+        if (densityPopup) buildDensityPopup();
+    }
+
+    function sendDensity(scale) {
+        applyDensity(scale);
+        if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            controlSocket.send(JSON.stringify({ type: 'displayDensity', scale: currentDensity }));
+        }
+    }
+
+    function buildDensityPopup() {
+        if (!densityPopup) return;
+        densityPopup.innerHTML = '';
+        DENSITY_LEVELS.forEach(option => {
             const btn = document.createElement('button');
-            const isActive = option.value === streamResolutionMode;
+            const isActive = option.value === currentDensity;
             btn.textContent = option.label;
             btn.style.cssText = `
                 display:block;width:100%;padding:10px 16px;border:none;
@@ -1574,24 +1597,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             `;
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                applyResolutionMode(option.value);
-                resolutionPopup.style.display = 'none';
-                buildResolutionPopup();
-                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
-                    controlSocket.send(JSON.stringify({
-                        type: 'streamSettings',
-                        resolutionMode: option.value
-                    }));
-                }
+                sendDensity(option.value);
+                densityPopup.style.display = 'none';
             });
-            resolutionPopup.appendChild(btn);
+            densityPopup.appendChild(btn);
         });
     }
 
     function updateOverlayControlsVisibility() {
         const isVisible = homeBtn && homeBtn.style.display !== 'none';
         if (profileControl) profileControl.style.display = isVisible ? 'block' : 'none';
-        if (resolutionControl) resolutionControl.style.display = isVisible ? 'block' : 'none';
+        if (densityControl) densityControl.style.display = isVisible ? 'block' : 'none';
     }
 
     // ── Playback Profile UI ──
@@ -1722,17 +1738,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    if (resolutionBtn && resolutionPopup) {
-        applyResolutionMode(streamResolutionMode);
-        buildResolutionPopup();
+    if (densityBtn && densityPopup) {
+        applyDensity(currentDensity);
+        buildDensityPopup();
 
-        resolutionBtn.addEventListener('click', (e) => {
+        densityBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const isVisible = resolutionPopup.style.display === 'block';
-            resolutionPopup.style.display = isVisible ? 'none' : 'block';
+            const isVisible = densityPopup.style.display === 'block';
+            densityPopup.style.display = isVisible ? 'none' : 'block';
         });
         document.addEventListener('click', () => {
-            if (resolutionPopup) resolutionPopup.style.display = 'none';
+            if (densityPopup) densityPopup.style.display = 'none';
         });
     }
 
