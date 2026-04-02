@@ -35,14 +35,31 @@ object StreamMath {
     fun calculateBaseBitrate(width: Int, height: Int): Int {
         val pixels = width.toLong() * height
         val basePixels = 1280L * 720
-        return ((3_000_000L * pixels) / basePixels).toInt().coerceIn(1_000_000, 8_000_000)
+        return ((4_000_000L * pixels) / basePixels).toInt().coerceIn(1_000_000, 15_000_000)
     }
 
     /**
-     * Calculates OTT boosted bitrate (1.5x)
+     * Calculates bitrate for secondary/split-screen streams.
+     * Uses a lower base (3Mbps) and tighter ceiling since secondary
+     * content shares bandwidth with the primary stream.
      */
+    fun calculateSecondaryBitrate(width: Int, height: Int): Int {
+        val pixels = width.toLong() * height
+        val basePixels = 1280L * 720
+        return ((3_000_000L * pixels) / basePixels).toInt().coerceIn(750_000, 10_000_000)
+    }
+
+    /**
+     * Applies OTT/video-app bitrate boost (1.2x, capped at 15Mbps).
+     * Only call when thermal status is NONE (no throttling).
+     */
+    fun calculateOttBitrate(baseBitrate: Int): Int {
+        return minOf((baseBitrate * 1.2).toInt(), 15_000_000)
+    }
+
+    @Deprecated("Use calculateOttBitrate instead", replaceWith = ReplaceWith("calculateOttBitrate(baseBitrate)"))
     fun calculateVideoAppBitrate(baseBitrate: Int): Int {
-        return minOf((baseBitrate * 1.25).toInt(), 8_000_000)
+        return calculateOttBitrate(baseBitrate)
     }
 
     /**
@@ -50,5 +67,21 @@ object StreamMath {
      */
     fun calculateDpi(height: Int): Int {
         return (height * 240 / 720).coerceIn(120, 320)
+    }
+
+    /** Default display density scale. */
+    const val DENSITY_SCALE_DEFAULT = 0.85f
+
+    /** All supported density scale values, from largest (original) to most compact. */
+    val DENSITY_SCALE_OPTIONS = listOf(1.0f, 0.85f, 0.7f, 0.55f)
+
+    /**
+     * Applies a display density scale to the base DPI.
+     * @param baseDpi DPI computed by [calculateDpi]
+     * @param scale density scale factor (1.0 = large, 0.85 = default, 0.7/0.55 = compact)
+     * @return scaled DPI, clamped to [100, 320]
+     */
+    fun applyDensityScale(baseDpi: Int, scale: Float): Int {
+        return (baseDpi * scale).toInt().coerceIn(100, 320)
     }
 }
