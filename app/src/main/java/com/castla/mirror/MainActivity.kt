@@ -314,6 +314,7 @@ class MainActivity : AppCompatActivity() {
                         onToggleHotspot = { toggleHotspot() },
                         autoHotspot = streamSettings.autoHotspot,
                         onAutoHotspotChanged = { enabled ->
+                            Log.i(TAG, "Auto-hotspot changed: $enabled")
                             streamSettings = streamSettings.copy(autoHotspot = enabled)
                             StreamSettings.save(this@MainActivity, streamSettings)
                         },
