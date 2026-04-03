@@ -144,12 +144,21 @@ class AudioPolicyTest {
     }
 
     @Test
-    fun `first codec request with null current does restart`() {
+    fun `pcm request with null current restarts - different from default opus`() {
         val decision = AudioPolicy.evaluate(input(
             audioEnabled = true, browserConnected = true,
             requestedCodec = "pcm", currentCodec = null, captureActive = true
         ))
         assertTrue(decision.restartRequired)
+    }
+
+    @Test
+    fun `opus request with null current does not restart - same as default`() {
+        val decision = AudioPolicy.evaluate(input(
+            audioEnabled = true, browserConnected = true,
+            requestedCodec = "opus", currentCodec = null, captureActive = true
+        ))
+        assertFalse(decision.restartRequired)
     }
 
     // ── Consistency: same policy for any app type ──

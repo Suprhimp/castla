@@ -38,7 +38,9 @@ object AudioPolicy {
         val shouldCapture = input.audioEnabled && input.browserConnected
         val codecMode = if (shouldCapture) (input.requestedCodec ?: input.currentCodec) else null
         val shouldMuteLocal = shouldCapture && input.muteLocalAudio
-        val codecChanged = input.requestedCodec != null && input.requestedCodec != input.currentCodec
+        // null currentCodec means default start (opus). Treat "opus" request against null as same-path.
+        val effectiveCurrent = input.currentCodec ?: "opus"
+        val codecChanged = input.requestedCodec != null && input.requestedCodec != effectiveCurrent
         val restartRequired = shouldCapture && input.captureActive && codecChanged
 
         return AudioPolicyDecision(
