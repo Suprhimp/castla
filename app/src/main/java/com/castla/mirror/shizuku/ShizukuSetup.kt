@@ -3,11 +3,15 @@ package com.castla.mirror.shizuku
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import rikka.shizuku.Shizuku
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 sealed class ShizukuState {
     object NotInstalled : ShizukuState()
@@ -20,6 +24,7 @@ class ShizukuSetup {
     companion object {
         private const val TAG = "ShizukuSetup"
         private const val REQUEST_CODE = 1001
+        const val USER_SERVICE_VERSION = 107
     }
 
     private val _state = MutableStateFlow<ShizukuState>(ShizukuState.NotInstalled)
@@ -36,16 +41,19 @@ class ShizukuSetup {
             com.castla.mirror.BuildConfig.APPLICATION_ID,
             PrivilegedService::class.java.name
         )
-    ).daemon(false).processNameSuffix("privileged").version(107)
+    ).daemon(false).processNameSuffix("privileged").version(USER_SERVICE_VERSION)
 
     /** Guard to prevent duplicate bind calls while a bind is in progress. */
     private var bindingInProgress = false
+    private var userServiceBound = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             privilegedService = IPrivilegedService.Stub.asInterface(binder)
             _serviceConnected.value = true
             bindingInProgress = false
+            userServiceBound = true
             Log.i(TAG, "Privileged service connected")
         }
 
@@ -53,6 +61,7 @@ class ShizukuSetup {
             privilegedService = null
             _serviceConnected.value = false
             bindingInProgress = false
+            userServiceBound = false
             Log.i(TAG, "Privileged service disconnected")
         }
     }
@@ -81,15 +90,21 @@ class ShizukuSetup {
         }
     }
 
-    fun init() {
+    fun init(bindService: Boolean = true) {
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionResultListener)
         updateState()
         // Auto-bind if already permitted
-        if (isAvailable() && hasPermission()) {
+        if (bindService && isAvailable() && hasPermission()) {
             bindPrivilegedService()
         }
+    }
+
+    fun attachPrivilegedService(service: IPrivilegedService?) {
+        privilegedService = service
+        _serviceConnected.value = service != null
+        bindingInProgress = false
     }
 
     fun requestPermission() {
@@ -116,7 +131,7 @@ class ShizukuSetup {
         }
     }
 
-    private fun bindPrivilegedService() {
+    fun bindPrivilegedService() {
         if (_serviceConnected.value) {
             Log.d(TAG, "bindPrivilegedService skipped: already connected")
             return
@@ -127,12 +142,35 @@ class ShizukuSetup {
         }
         try {
             bindingInProgress = true
-            Shizuku.bindUserService(serviceArgs, serviceConnection)
+            runOnMainSync {
+                Shizuku.bindUserService(serviceArgs, serviceConnection)
+            }
+            userServiceBound = true
             Log.i(TAG, "Binding privileged service...")
         } catch (e: Exception) {
             bindingInProgress = false
             Log.e(TAG, "Failed to bind privileged service", e)
         }
+    }
+
+    private fun runOnMainSync(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+            return
+        }
+        val latch = CountDownLatch(1)
+        var error: Throwable? = null
+        mainHandler.post {
+            try {
+                block()
+            } catch (t: Throwable) {
+                error = t
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await(2, TimeUnit.SECONDS)
+        error?.let { throw it }
     }
 
     private fun updateState() {
@@ -243,12 +281,17 @@ class ShizukuSetup {
     }
 
     fun release() {
-        try {
-            Shizuku.unbindUserService(serviceArgs, serviceConnection, true)
-        } catch (_: Exception) {}
+        if (userServiceBound) {
+            try {
+                runOnMainSync {
+                    Shizuku.unbindUserService(serviceArgs, serviceConnection, true)
+                }
+            } catch (_: Exception) {}
+        }
         privilegedService = null
         _serviceConnected.value = false
         bindingInProgress = false
+        userServiceBound = false
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
         Shizuku.removeRequestPermissionResultListener(permissionResultListener)

@@ -311,8 +311,12 @@ class MainActivity : AppCompatActivity() {
                         shizukuDownloadProgress = shizukuDownloadProgress,
                         networkDiagLog = networkDiagLog,
                         isHotspotActive = isHotspotActive,
-                        shizukuServiceConnected = shizukuSetup.serviceConnected.collectAsState().value,
                         onToggleHotspot = { toggleHotspot() },
+                        autoHotspot = streamSettings.autoHotspot,
+                        onAutoHotspotChanged = { enabled ->
+                            streamSettings = streamSettings.copy(autoHotspot = enabled)
+                            StreamSettings.save(this@MainActivity, streamSettings)
+                        },
                         teslaAutoDetectEnabled = teslaAutoDetectEnabled,
                         onToggleAutoDetect = {
                             toggleAutoDetect()
@@ -534,11 +538,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toggleHotspot() {
-        if (!shizukuSetup.serviceConnected.value) {
-            Toast.makeText(this, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
-            return
-        }
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // If privileged service is not connected, try to bind and wait
+            if (!shizukuSetup.serviceConnected.value) {
+                if (shizukuSetup.isAvailable() && shizukuSetup.hasPermission()) {
+                    shizukuSetup.bindPrivilegedService()
+                    // Wait up to 3 seconds for connection
+                    var waited = 0
+                    while (!shizukuSetup.serviceConnected.value && waited < 3000) {
+                        kotlinx.coroutines.delay(200)
+                        waited += 200
+                    }
+                }
+                if (!shizukuSetup.serviceConnected.value) {
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+            }
+
             if (isHotspotActive) {
                 disableHotspot()
                 runOnUiThread {
@@ -1029,8 +1048,9 @@ fun CastlaScreen(
     shizukuDownloadProgress: Float = -1f,
     networkDiagLog: String = "",
     isHotspotActive: Boolean = false,
-    shizukuServiceConnected: Boolean = false,
     onToggleHotspot: () -> Unit = {},
+    autoHotspot: Boolean = false,
+    onAutoHotspotChanged: (Boolean) -> Unit = {},
     @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
     @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
     @Suppress("unused") thermalStatus: Int = 0,
@@ -1191,38 +1211,74 @@ fun CastlaScreen(
                 }
             }
 
-            // Hotspot toggle button — only visible when streaming and Shizuku is available
-            AnimatedVisibility(visible = isStreaming && shizukuServiceConnected) {
+            // Hotspot toggle button + auto-hotspot switch — only visible when streaming
+            AnimatedVisibility(visible = isStreaming) {
                 Column {
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = onToggleHotspot,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = if (isHotspotActive) {
-                            ButtonDefaults.buttonColors(containerColor = Color(0xFF69F0AE))
-                        } else {
-                            ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.15f))
-                        },
-                        border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Wifi,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = if (isHotspotActive) Color.Black else Color.White
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isHotspotActive)
-                                stringResource(id = R.string.btn_hotspot_on)
-                            else
-                                stringResource(id = R.string.btn_hotspot_off),
-                            fontWeight = FontWeight.Bold,
-                            color = if (isHotspotActive) Color.Black else Color.White
-                        )
+                        Button(
+                            onClick = onToggleHotspot,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = if (isHotspotActive) {
+                                ButtonDefaults.buttonColors(containerColor = Color(0xFF69F0AE))
+                            } else {
+                                ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.15f))
+                            },
+                            border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Wifi,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = if (isHotspotActive) Color.Black else Color.White
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isHotspotActive)
+                                    stringResource(id = R.string.btn_hotspot_on)
+                                else
+                                    stringResource(id = R.string.btn_hotspot_off),
+                                fontWeight = FontWeight.Bold,
+                                color = if (isHotspotActive) Color.Black else Color.White
+                            )
+                        }
+                        // Auto-hotspot toggle
+                        Box(
+                            modifier = Modifier
+                                .height(52.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White.copy(alpha = 0.1f))
+                                .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = stringResource(id = R.string.btn_auto_hotspot),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Switch(
+                                    checked = autoHotspot,
+                                    onCheckedChange = onAutoHotspotChanged,
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF69F0AE),
+                                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                                        uncheckedTrackColor = Color.White.copy(alpha = 0.2f)
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }

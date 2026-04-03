@@ -92,6 +92,7 @@
     <string name="dialog_hotspot_off_yes">끄기</string>
     <string name="btn_hotspot_on">핫스팟 켜짐</string>
     <string name="btn_hotspot_off">핫스팟 켜기</string>
+    <string name="btn_auto_hotspot">자동</string>
     <string name="dialog_hotspot_off_no">유지</string>
 
     <!-- Language -->
