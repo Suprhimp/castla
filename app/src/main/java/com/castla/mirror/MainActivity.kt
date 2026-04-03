@@ -663,6 +663,7 @@ class MainActivity : AppCompatActivity() {
                     if (success) {
                         Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabled), Toast.LENGTH_SHORT).show()
                         isHotspotActive = true
+                        hotspotEnabledByApp = true
                     } else {
                         Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
                     }
@@ -1131,7 +1132,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopMirrorService(askHotspot: Boolean = true, preservePreparingState: Boolean = false) {
-        val shouldAskHotspot = askHotspot && hotspotEnabledByApp && shizukuSetup.serviceConnected.value
+        val shouldAskHotspot = askHotspot && hotspotEnabledByApp
 
         if (serviceBound || bindRequested) {
             try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
