@@ -587,11 +587,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshHotspotStatus() {
-        if (!shizukuSetup.serviceConnected.value) {
+        // Check hotspot status without requiring Shizuku by inspecting network interfaces directly
+        try {
+            val hotspotNames = listOf("swlan0", "wlan1", "ap0", "softap0")
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            val active = interfaces.any { iface ->
+                iface.isUp && hotspotNames.any { name -> iface.name.contains(name) }
+            }
+            isHotspotActive = active
+            Log.d(TAG, "refreshHotspotStatus: active=$active (interfaces=${interfaces.map { it.name }})")
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshHotspotStatus failed", e)
             isHotspotActive = false
-            return
         }
-        isHotspotActive = findHotspotInterface() != null
     }
 
     private fun toggleHotspot() {
@@ -1023,6 +1031,7 @@ class MainActivity : AppCompatActivity() {
             val alreadyActive = findHotspotInterface() != null
             if (alreadyActive) {
                 Log.i(TAG, "Hotspot already active — skipping enableHotspot, starting service directly")
+                isHotspotActive = true
                 launchMirrorService(resultCode, data)
             } else {
                 Toast.makeText(this, getString(R.string.toast_hotspot_enabling), Toast.LENGTH_SHORT).show()
@@ -1032,6 +1041,7 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         if (success) {
                             Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabled), Toast.LENGTH_SHORT).show()
+                            isHotspotActive = true
                         } else {
                             Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
                         }
