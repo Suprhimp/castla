@@ -3,12 +3,17 @@ package com.castla.mirror.capture
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.hardware.display.VirtualDisplay
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import com.castla.mirror.shizuku.IPrivilegedService
 import com.castla.mirror.shizuku.PrivilegedService
+import com.castla.mirror.shizuku.ShizukuSetup
 import rikka.shizuku.Shizuku
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Creates a virtual display using Shizuku for independent phone + Tesla operation.
@@ -25,8 +30,30 @@ class VirtualDisplayManager {
     private var privilegedService: IPrivilegedService? = null
     private var displayId: Int = -1
     private var isBound = false
+    private var bindingInProgress = false
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var serviceConnection: ServiceConnection? = null
     private var userServiceArgs: Shizuku.UserServiceArgs? = null
+
+    private fun runOnMainSync(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+            return
+        }
+        val latch = CountDownLatch(1)
+        var error: Throwable? = null
+        mainHandler.post {
+            try {
+                block()
+            } catch (t: Throwable) {
+                error = t
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await(2, TimeUnit.SECONDS)
+        error?.let { throw it }
+    }
 
     /** Called when Shizuku service reconnects after a death — caller should recreate VD + launch home */
     var reconnectListener: (() -> Unit)? = null
@@ -44,8 +71,13 @@ class VirtualDisplayManager {
             callback(true)
             return true
         }
+        if (bindingInProgress) {
+            Log.d(TAG, "bindShizukuService skipped: bind already in progress")
+            return true
+        }
 
         return try {
+            bindingInProgress = true
             val args = Shizuku.UserServiceArgs(
                 ComponentName(
                     com.castla.mirror.BuildConfig.APPLICATION_ID,
@@ -55,13 +87,14 @@ class VirtualDisplayManager {
                 .daemon(false)
                 .processNameSuffix("privileged")
                 .debuggable(true)
-                .version(102)
+                .version(ShizukuSetup.USER_SERVICE_VERSION)
             userServiceArgs = args
 
             var callbackFired = false
             val connection = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                     privilegedService = IPrivilegedService.Stub.asInterface(binder)
+                    bindingInProgress = false
                     
                     try {
                         privilegedService?.registerDeathToken(android.os.Binder())
@@ -87,15 +120,17 @@ class VirtualDisplayManager {
                 override fun onServiceDisconnected(name: ComponentName?) {
                     privilegedService = null
                     isBound = false
+                    bindingInProgress = false
                     displayId = -1
                     Log.i(TAG, "Shizuku privileged service disconnected")
                 }
             }
             serviceConnection = connection
 
-            Shizuku.bindUserService(args, connection)
+            runOnMainSync { Shizuku.bindUserService(args, connection) }
             true
         } catch (e: Exception) {
+            bindingInProgress = false
             Log.w(TAG, "Failed to bind Shizuku service", e)
             callback(false)
             false
@@ -327,15 +362,16 @@ class VirtualDisplayManager {
         val args = userServiceArgs
         val conn = serviceConnection
         if (args != null && conn != null) {
-            try { Shizuku.unbindUserService(args, conn, true) } catch (_: Exception) {}
+            try { runOnMainSync { Shizuku.unbindUserService(args, conn, true) } } catch (_: Exception) {}
         }
 
         privilegedService = null
+        isBound = false
+        bindingInProgress = false
+        serviceConnection = null
+        userServiceArgs = null
         virtualDisplay?.release()
         virtualDisplay = null
         displayId = -1
-        isBound = false
-        serviceConnection = null
-        userServiceArgs = null
     }
 }
