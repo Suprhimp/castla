@@ -89,6 +89,9 @@
     <string name="dialog_hotspot_off_message">De hotspot werd ingeschakeld voor mirroring. Wil je deze uitschakelen?</string>
     <string name="dialog_hotspot_off_yes">Uitschakelen</string>
     <string name="dialog_hotspot_off_no">Aanlaten</string>
+    <string name="btn_hotspot_on">Hotspot AAN</string>
+    <string name="btn_hotspot_off">Hotspot inschakelen</string>
+    <string name="btn_auto_hotspot">Auto</string>
 
     <!-- Language -->
     <string name="settings_language">Taal</string>

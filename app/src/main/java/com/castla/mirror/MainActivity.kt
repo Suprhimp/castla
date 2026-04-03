@@ -41,6 +41,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -78,6 +79,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val MIRROR_START_TIMEOUT_MS = 15_000L
         private const val TESLA_VIRTUAL_IP = "100.99.9.9"
         private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
@@ -98,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private var networkDiagLog by mutableStateOf("")
     private var teslaAutoDetectEnabled by mutableStateOf(false)
     private var hotspotEnabledByApp = false
+    private var isHotspotActive by mutableStateOf(false)
     private var teslaBleScanner: TeslaBleScanner? = null
 
     // Shizuku download state
@@ -194,7 +197,7 @@ class MainActivity : AppCompatActivity() {
         shizukuInstalled = isShizukuInstalled()
         shizukuSetup = ShizukuSetup()
         if (shizukuInstalled) {
-            shizukuSetup.init()
+            shizukuSetup.init(bindService = false)
         }
 
         loadAutoDetectState()
@@ -307,6 +310,14 @@ class MainActivity : AppCompatActivity() {
                         onGrantShizukuPermission = { shizukuSetup.requestPermission() },
                         shizukuDownloadProgress = shizukuDownloadProgress,
                         networkDiagLog = networkDiagLog,
+                        isHotspotActive = isHotspotActive,
+                        onToggleHotspot = { toggleHotspot() },
+                        autoHotspot = streamSettings.autoHotspot,
+                        onAutoHotspotChanged = { enabled ->
+                            Log.i(TAG, "Auto-hotspot changed: $enabled")
+                            streamSettings = streamSettings.copy(autoHotspot = enabled)
+                            StreamSettings.save(this@MainActivity, streamSettings)
+                        },
                         teslaAutoDetectEnabled = teslaAutoDetectEnabled,
                         onToggleAutoDetect = {
                             toggleAutoDetect()
@@ -371,7 +382,7 @@ class MainActivity : AppCompatActivity() {
         val wasInstalled = shizukuInstalled
         shizukuInstalled = isShizukuInstalled()
         if (shizukuInstalled && !wasInstalled) {
-            shizukuSetup.init()
+            shizukuSetup.init(bindService = false)
         }
         loadAutoDetectState()
 
@@ -517,6 +528,59 @@ class MainActivity : AppCompatActivity() {
         }
         val success = shizukuSetup.stopWifiTethering()
         Log.i(TAG, "disableHotspot: stopWifiTethering returned $success")
+    }
+
+    private fun refreshHotspotStatus() {
+        if (!shizukuSetup.serviceConnected.value) {
+            isHotspotActive = false
+            return
+        }
+        isHotspotActive = findHotspotInterface() != null
+    }
+
+    private fun toggleHotspot() {
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // If privileged service is not connected, try to bind and wait
+            if (!shizukuSetup.serviceConnected.value) {
+                if (shizukuSetup.isAvailable() && shizukuSetup.hasPermission()) {
+                    shizukuSetup.bindPrivilegedService()
+                    // Wait up to 3 seconds for connection
+                    var waited = 0
+                    while (!shizukuSetup.serviceConnected.value && waited < 3000) {
+                        kotlinx.coroutines.delay(200)
+                        waited += 200
+                    }
+                }
+                if (!shizukuSetup.serviceConnected.value) {
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+            }
+
+            if (isHotspotActive) {
+                disableHotspot()
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_disabled), Toast.LENGTH_SHORT).show()
+                    isHotspotActive = false
+                }
+            } else {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabling), Toast.LENGTH_SHORT).show()
+                }
+                val success = enableHotspot()
+                runOnUiThread {
+                    if (success) {
+                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabled), Toast.LENGTH_SHORT).show()
+                        isHotspotActive = true
+                    } else {
+                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+                    }
+                    updateServerUrl()
+                }
+            }
+        }
     }
 
     private fun findHotspotInterface(): String? {
@@ -777,6 +841,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun clearPreparingState(message: String? = null, stopServiceIfNeeded: Boolean = false) {
+        isPreparing = false
+        if (stopServiceIfNeeded) {
+            try { stopService(Intent(this, MirrorForegroundService::class.java)) } catch (_: Exception) {}
+            mirrorService = null
+            isStreaming = false
+            if (serviceBound || bindRequested) {
+                try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
+                serviceBound = false
+                bindRequested = false
+            }
+        }
+        if (!message.isNullOrBlank()) {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun onStartMirroring() {
         Log.i(TAG, "onStartMirroring called")
         isPreparing = true
@@ -828,7 +909,7 @@ class MainActivity : AppCompatActivity() {
             mediaProjectionLauncher.launch(captureIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch screen capture intent", e)
-            Toast.makeText(this, getString(R.string.toast_error, e.message), Toast.LENGTH_LONG).show()
+            clearPreparingState(getString(R.string.toast_error, e.message ?: "screen capture intent failed"))
         }
     }
 
@@ -869,6 +950,7 @@ class MainActivity : AppCompatActivity() {
                 if (streamSettings.isAutoResolution) 0 else streamSettings.maxResolution.maxHeight)
             putExtra(MirrorForegroundService.EXTRA_FPS, streamSettings.fps) // FPS_AUTO is already 0
             putExtra(MirrorForegroundService.EXTRA_AUDIO, streamSettings.audioEnabled)
+            putExtra(MirrorForegroundService.EXTRA_MUTE_LOCAL_AUDIO, streamSettings.muteLocalAudio)
             putExtra(MirrorForegroundService.EXTRA_MIRRORING_MODE, streamSettings.mirroringMode.name)
             putExtra(MirrorForegroundService.EXTRA_TARGET_PACKAGE, streamSettings.targetAppPackage)
         }
@@ -880,16 +962,24 @@ class MainActivity : AppCompatActivity() {
         }
         bindRequested = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         isStreaming = true
+        refreshHotspotStatus()
         Log.i(TAG, "isStreaming=true, isPreparing=$isPreparing (service started)")
 
         // 서비스 바인드 + 서버 실행 확인 후 최소 2초 뒤에 preparing 해제
         lifecycleScope.launch {
             val startTime = System.currentTimeMillis()
-            // 서비스가 실제로 바인드되고 서버가 실행될 때까지 대기
             while (mirrorService?.isRunning != true && isPreparing) {
+                val elapsed = System.currentTimeMillis() - startTime
+                if (elapsed >= MIRROR_START_TIMEOUT_MS) {
+                    Log.w(TAG, "Mirror service start timed out after ${elapsed}ms")
+                    clearPreparingState(
+                        message = getString(R.string.toast_error, "mirroring start timed out"),
+                        stopServiceIfNeeded = true
+                    )
+                    return@launch
+                }
                 kotlinx.coroutines.delay(100)
             }
-            // 최소 표시 시간 보장 (2초)
             val elapsed = System.currentTimeMillis() - startTime
             val remaining = 2000L - elapsed
             if (remaining > 0) {
@@ -914,6 +1004,7 @@ class MainActivity : AppCompatActivity() {
         mirrorService = null
         isStreaming = false
         isPreparing = false
+        isHotspotActive = false
         updateServerUrl()
         com.castla.mirror.widget.MirrorWidgetProvider.updateAllWidgets(this)
 
@@ -957,6 +1048,10 @@ fun CastlaScreen(
     onGrantShizukuPermission: () -> Unit = {},
     shizukuDownloadProgress: Float = -1f,
     networkDiagLog: String = "",
+    isHotspotActive: Boolean = false,
+    onToggleHotspot: () -> Unit = {},
+    autoHotspot: Boolean = false,
+    onAutoHotspotChanged: (Boolean) -> Unit = {},
     @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
     @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
     @Suppress("unused") thermalStatus: Int = 0,
@@ -1113,6 +1208,78 @@ fun CastlaScreen(
                             textAlign = TextAlign.Center
                         )
 
+                    }
+                }
+            }
+
+            // Hotspot toggle button + auto-hotspot switch — only visible when streaming
+            AnimatedVisibility(visible = isStreaming) {
+                Column {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onToggleHotspot,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = if (isHotspotActive) {
+                                ButtonDefaults.buttonColors(containerColor = Color(0xFF69F0AE))
+                            } else {
+                                ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.15f))
+                            },
+                            border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Wifi,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = if (isHotspotActive) Color.Black else Color.White
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isHotspotActive)
+                                    stringResource(id = R.string.btn_hotspot_on)
+                                else
+                                    stringResource(id = R.string.btn_hotspot_off),
+                                fontWeight = FontWeight.Bold,
+                                color = if (isHotspotActive) Color.Black else Color.White
+                            )
+                        }
+                        // Auto-hotspot toggle
+                        Box(
+                            modifier = Modifier
+                                .height(52.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White.copy(alpha = 0.1f))
+                                .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = stringResource(id = R.string.btn_auto_hotspot),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Switch(
+                                    checked = autoHotspot,
+                                    onCheckedChange = onAutoHotspotChanged,
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF69F0AE),
+                                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                                        uncheckedTrackColor = Color.White.copy(alpha = 0.2f)
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }

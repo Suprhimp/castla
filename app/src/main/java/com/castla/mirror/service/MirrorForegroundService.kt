@@ -28,6 +28,7 @@ import androidx.core.app.ServiceCompat
 import com.castla.mirror.R
 import com.castla.mirror.widget.MirrorWidgetProvider
 import com.castla.mirror.capture.AudioCapture
+
 import com.castla.mirror.capture.JpegEncoder
 import com.castla.mirror.capture.ScreenCaptureManager
 import com.castla.mirror.capture.VideoEncoder
@@ -66,6 +67,7 @@ class MirrorForegroundService : Service() {
         const val EXTRA_MAX_RESOLUTION = "max_resolution"
         const val EXTRA_FPS = "fps"
         const val EXTRA_AUDIO = "audio_enabled"
+        const val EXTRA_MUTE_LOCAL_AUDIO = "mute_local_audio"
         const val EXTRA_MIRRORING_MODE = "mirroring_mode"
         const val EXTRA_TARGET_PACKAGE = "target_package"
 
@@ -94,6 +96,8 @@ class MirrorForegroundService : Service() {
         private const val AUTO_SCALE_INTERVAL_MS = 10_000L
         /** Initial delay before first auto-scale evaluation */
         private const val AUTO_SCALE_INITIAL_DELAY_MS = 5_000L
+        /** Grace period to survive browser refresh without tearing down the pipeline. */
+        private const val BROWSER_DISCONNECT_GRACE_MS = 3_000L
     }
 
     /** Binder for local (same-process) binding */
@@ -108,6 +112,7 @@ class MirrorForegroundService : Service() {
     private var videoEncoder: VideoEncoder? = null
     private var jpegEncoder: JpegEncoder? = null
     private var audioCapture: AudioCapture? = null
+    private var audioOrchestrator: AudioCaptureOrchestrator? = null
     private var touchInjector: TouchInjector? = null
     private var virtualDisplayManager: VirtualDisplayManager? = null
     private var shizukuSetup: ShizukuSetup? = null
@@ -124,6 +129,7 @@ class MirrorForegroundService : Service() {
     @Volatile private var cleanupCompleted = false
     private var serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var resizeJob: Job? = null
+    private var pendingBrowserDisconnectJob: Job? = null
     private var browserConnected = false
     private var currentVdApp: String = "com.android.settings" // what's running on main VD
     private var currentWebUrl: String? = null
@@ -179,6 +185,8 @@ class MirrorForegroundService : Service() {
 
     // Deferred pipeline state: heavy capture/encoding starts only when browser connects
     private var pendingAudioEnabled = false
+    private var pendingMuteLocalAudio = false
+    private var deferredAudioStartJob: Job? = null
 
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
     private var screenOffReceiver: BroadcastReceiver? = null
@@ -266,9 +274,7 @@ class MirrorForegroundService : Service() {
                 jpegEncoder?.setFps(8)
                 // Stop audio on SEVERE to reduce CPU load
                 Log.w(TAG, "Thermal SEVERE — stopping audio capture to reduce CPU load")
-                try { audioCapture?.stop() } catch (_: Exception) {}
-                audioCapture = null
-                restoreMediaVolume()
+                audioOrchestrator?.stop()
                 // Drop fps to 15 and cap resolution at 720p
                 thermalFpsOverride = 15
                 thermalMaxHeight = 720
@@ -494,10 +500,11 @@ class MirrorForegroundService : Service() {
 
         Log.i(TAG, "Mode: autoRes=$autoResolution autoFps=$autoFps initialMaxHeight=$currentMaxHeight initialFps=$settingsFps")
         val audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, false)
+        val muteLocalAudio = intent.getBooleanExtra(EXTRA_MUTE_LOCAL_AUDIO, false)
         mirroringMode = intent.getStringExtra(EXTRA_MIRRORING_MODE) ?: "FULL_SCREEN"
         targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
 
-        startPipeline(resultCode, data, settingsFps, audioEnabled)
+        startPipeline(resultCode, data, settingsFps, audioEnabled, muteLocalAudio)
 
         return START_NOT_STICKY
     }
@@ -591,19 +598,19 @@ class MirrorForegroundService : Service() {
         // Stop audio capture FIRST to prevent AudioCapture-Opus thread crash.
         // If the app crashes while VD is alive, system_server tries to launch home
         // on the orphaned VD and hits a NPE → phone reboots.
-        try { audioCapture?.stop() } catch (_: Exception) {}
-        audioCapture = null
+        audioOrchestrator?.stop()
 
         try { resizeJob?.cancel() } catch (_: Exception) {}
         try { abrJob?.cancel() } catch (_: Exception) {}
         try { autoScaleJob?.cancel() } catch (_: Exception) {}
         try { serviceScope.cancel() } catch (_: Exception) {}
         try { compositionDispatcher.close() } catch (_: Exception) {}
-        restoreMediaVolume()
 
         dismissSplitPresentation(clearState = true)
         releaseSecondaryPipeline(clearState = true)
         try { removeAllVdTasks() } catch (e: Exception) { Log.w(TAG, "Failed to remove VD tasks", e) }
+        try { pendingBrowserDisconnectJob?.cancel() } catch (_: Exception) {}
+        pendingBrowserDisconnectJob = null
         try { virtualDisplayManager?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release virtual display manager", e) }
         try { shizukuSetup?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release shizuku setup", e) }
         try { screenCapture?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release screen capture", e) }
@@ -730,7 +737,8 @@ class MirrorForegroundService : Service() {
         resultCode: Int,
         data: Intent,
         fps: Int,
-        audioEnabled: Boolean
+        audioEnabled: Boolean,
+        muteLocalAudio: Boolean = false
     ) {
         try {
             // Only initialize projection and server — defer encoder/capture until browser connects
@@ -758,6 +766,46 @@ class MirrorForegroundService : Service() {
             currentHeight = height
             currentFps = fps
             pendingAudioEnabled = audioEnabled
+            pendingMuteLocalAudio = muteLocalAudio
+
+            audioOrchestrator = AudioCaptureOrchestrator(object : AudioCaptureOrchestrator.Actions {
+                override fun startCapture(codec: String?) {
+                    val projection = screenCapture?.getMediaProjection() ?: run {
+                        Log.w(TAG, "Audio requested but MediaProjection not available")
+                        return
+                    }
+                    audioCapture = AudioCapture(projection, shizukuSetup?.privilegedService).also { audio ->
+                        if (codec == "pcm") {
+                            audio.startPcmOnly { audioData -> mirrorServer?.broadcastAudio(audioData) }
+                        } else {
+                            audio.start { audioData -> mirrorServer?.broadcastAudio(audioData) }
+                        }
+                    }
+                    Log.i(TAG, "Audio capture started (codec=${codec ?: "default"})")
+                }
+                override fun stopCapture() {
+                    try { audioCapture?.stop() } catch (_: Exception) {}
+                    audioCapture = null
+                }
+                override fun applyMute(shouldMute: Boolean) {
+                    if (shouldMute) muteMediaVolume() else restoreMediaVolume()
+                }
+                override fun grantAudioPermission() {
+                    tryGrantAudioCapturePermission()
+                }
+                override fun scheduleDeferredStart(delayMs: Long): Any? {
+                    val job = serviceScope.launch(Dispatchers.IO) {
+                        kotlinx.coroutines.delay(delayMs)
+                        audioOrchestrator?.onDeferredTimerExpired()
+                    }
+                    deferredAudioStartJob = job
+                    return job
+                }
+                override fun cancelDeferredStart(handle: Any?) {
+                    (handle as? Job)?.cancel()
+                    if (deferredAudioStartJob == handle) deferredAudioStartJob = null
+                }
+            })
 
             touchInjector = TouchInjector(width, height)
 
@@ -791,6 +839,7 @@ class MirrorForegroundService : Service() {
                 server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
                 server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
                 server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
+                server.setAudioSocketConnectedListener { audioOrchestrator?.onAudioSocketConnected() }
                 server.setGoHomeListener {
                     Log.i(TAG, "Navigating to home requested by Web Launcher")
                     val previousApp = currentVdApp
@@ -801,7 +850,11 @@ class MirrorForegroundService : Service() {
                     // Force-stop BEFORE going home so the old app's screen
                     // is removed before the home animation starts
                     forceStopAppIfNeeded(previousApp)
-                    virtualDisplayManager?.launchHomeOnDisplay()
+                    if (virtualDisplayManager?.hasVirtualDisplay() == true) {
+                        virtualDisplayManager?.launchHomeOnDisplay()
+                    } else {
+                        Log.w(TAG, "Skipping HOME launch: virtual display is not active")
+                    }
                     currentVdApp = "HOME"
                     currentWebUrl = null
                     clearSplitState()
@@ -833,14 +886,18 @@ class MirrorForegroundService : Service() {
 
 
                 server.setBrowserConnectionListener { connected ->
-                    if (connected && !browserConnected) {
-                        browserConnected = true
-                        onBrowserConnected()
-                    } else if (!connected && browserConnected) {
-                        browserConnected = false
-                        onBrowserDisconnected()
+                    if (connected) {
+                        cancelPendingBrowserDisconnect("browser_reconnected")
+                        if (!browserConnected) {
+                            browserConnected = true
+                            onBrowserConnected()
+                        }
+                        browserConnectionListener?.invoke(true)
+                    } else if (browserConnected) {
+                        scheduleBrowserDisconnect()
+                    } else {
+                        browserConnectionListener?.invoke(false)
                     }
-                    browserConnectionListener?.invoke(connected)
                 }
 
                 server.start(0)
@@ -1913,13 +1970,17 @@ class MirrorForegroundService : Service() {
         val safeResult = { success: Boolean ->
             if (!resultDelivered) {
                 resultDelivered = true
+                if (!success) {
+                    releaseShizukuSession("virtual_display_setup_failed")
+                }
                 onResult(success)
             }
         }
 
         try {
+            releaseShizukuSession("before_virtual_display_setup")
             val setup = ShizukuSetup()
-            setup.init()
+            setup.init(bindService = false)
 
             if (!setup.isAvailable() || !setup.hasPermission()) {
                 Log.i(TAG, "Shizuku not available/permitted")
@@ -1932,7 +1993,11 @@ class MirrorForegroundService : Service() {
             val vdm = VirtualDisplayManager()
             virtualDisplayManager = vdm
 
-            vdm.reconnectListener = {
+            vdm.reconnectListener = reconnect@ {
+                if (!browserConnected) {
+                    Log.w(TAG, "Ignoring stale Shizuku reconnect after browser disconnect")
+                    return@reconnect
+                }
                 val surf = currentEncoderSurface
                 if (surf != null) {
                     vdm.createVirtualDisplay(currentWidth, currentHeight, 160, surf)
@@ -1947,6 +2012,11 @@ class MirrorForegroundService : Service() {
 
             vdm.bindShizukuService { bound ->
                 try {
+                    if (!browserConnected) {
+                        Log.w(TAG, "Ignoring stale virtual display bind callback after browser disconnect")
+                        safeResult(false)
+                        return@bindShizukuService
+                    }
                     if (bound) {
                         // Enable freeform windowing support for split mode
                         try {
@@ -1960,6 +2030,7 @@ class MirrorForegroundService : Service() {
                         }
                         vdm.createVirtualDisplay(width, height, 160, surface)
                         if (vdm.hasVirtualDisplay()) {
+                            setup.attachPrivilegedService(vdm.getPrivilegedService())
                             touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                                 vdm.injectInput(action, x, y, pointerId)
                             }
@@ -1979,87 +2050,116 @@ class MirrorForegroundService : Service() {
         }
     }
 
-    private fun onBrowserConnected() {
-        acquireWakeLocks()
-
-        // Send current thermal status to new browser client for profile auto-switching
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            broadcastThermalStatus(_thermalStatus.value)
-        }
-
-        if (videoEncoder != null) {
-            // Reconnection — rebuild existing pipeline and restart audio
-            Log.i(TAG, "Browser reconnected — rebuilding pipeline")
-            serviceScope.launch {
-                rebuildPipeline(currentWidth, currentHeight, force = true)
-            }
-            startAudioCapture()
-            return
-        }
-
-        // First connection — start encoder, VD, audio, ABR
-        Log.i(TAG, "Browser connected — starting active pipeline")
-        val width = currentWidth
-        val height = currentHeight
-        val fps = thermalFpsOverride ?: currentFps
-
-        val baseTargetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(width, height)
-        targetBitrate = baseTargetBitrate
-        currentBitrate = targetBitrate
-        preThermalTargetBitrate = targetBitrate
-
-        startAbrLoop()
-        startAutoScaleLoop()
-
-        videoEncoder = VideoEncoder(width, height, currentBitrate, fps).also { encoder ->
-            val surface = encoder.createInputSurface()
-            currentEncoderSurface = surface
-
-            mirrorServer?.setKeyframeRequester("primary") { encoder.requestKeyFrame() }
-
-            encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
-            encoder.start { frameData, isKeyFrame ->
-                mirrorServer?.broadcastFrame(frameData, isKeyFrame)
-            }
-
-            trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
-                if (shizukuActive) {
-                    screenCapture?.stopCapture()
-                    currentVdApp = "HOME"
-                } else {
-                    try {
-                        screenCapture?.startCapture(surface, width, height)
-                        Log.w(TAG, "Fallback: MediaProjection mirroring at ${width}x${height} (raw phone screen)")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "MediaProjection fallback failed", e)
-                    }
-                }
-            }
-        }
-
-        startAudioCapture()
+    private fun cancelPendingBrowserDisconnect(reason: String) {
+        val job = pendingBrowserDisconnectJob ?: return
+        Log.i(TAG, "Cancelling pending browser disconnect: $reason")
+        job.cancel()
+        pendingBrowserDisconnectJob = null
     }
 
-    private fun startAudioCapture() {
-        if (!pendingAudioEnabled || !AudioCapture.isSupported()) return
-        // Guard against duplicate start — stop existing instance first
-        if (audioCapture != null) {
-            try { audioCapture?.stop() } catch (_: Exception) {}
-            audioCapture = null
-            restoreMediaVolume()
-        }
-        val projection = screenCapture?.getMediaProjection() ?: run {
-            Log.w(TAG, "Audio requested but MediaProjection not available")
+    private fun scheduleBrowserDisconnect() {
+        if (pendingBrowserDisconnectJob != null) {
+            Log.d(TAG, "Browser disconnect already pending")
             return
         }
-        tryGrantAudioCapturePermission()
-        muteMediaVolume()
-        audioCapture = AudioCapture(projection, shizukuSetup?.privilegedService).also { audio ->
-            audio.start { audioData ->
-                mirrorServer?.broadcastAudio(audioData)
+        pendingBrowserDisconnectJob = serviceScope.launch {
+            Log.i(TAG, "Scheduling browser disconnect grace window: ${BROWSER_DISCONNECT_GRACE_MS}ms")
+            kotlinx.coroutines.delay(BROWSER_DISCONNECT_GRACE_MS)
+            pendingBrowserDisconnectJob = null
+            val stillConnected = mirrorServer?.isBrowserConnected() == true
+            if (stillConnected) {
+                Log.i(TAG, "Browser reconnected during grace window; keeping pipeline alive")
+                return@launch
             }
+            if (browserConnected) {
+                browserConnected = false
+                onBrowserDisconnected()
+            }
+            browserConnectionListener?.invoke(false)
         }
-        Log.i(TAG, "Audio capture enabled")
+    }
+
+    private fun onBrowserConnected() {
+        try {
+            acquireWakeLocks()
+
+            // Send current thermal status to new browser client for profile auto-switching
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                broadcastThermalStatus(_thermalStatus.value)
+            }
+
+            if (videoEncoder != null) {
+                // Reconnection — rebuild existing pipeline and restart audio
+                Log.i(TAG, "Browser reconnected — rebuilding pipeline")
+                serviceScope.launch {
+                    rebuildPipeline(currentWidth, currentHeight, force = true)
+                }
+                ensureAudioCaptureState()
+                return
+            }
+
+            // First connection — start encoder, VD, audio, ABR
+            Log.i(TAG, "Browser connected — starting active pipeline")
+            val width = currentWidth
+            val height = currentHeight
+            val fps = thermalFpsOverride ?: currentFps
+
+            val baseTargetBitrate = com.castla.mirror.utils.StreamMath.calculateBaseBitrate(width, height)
+            targetBitrate = baseTargetBitrate
+            currentBitrate = targetBitrate
+            preThermalTargetBitrate = targetBitrate
+
+            startAbrLoop()
+            startAutoScaleLoop()
+
+            videoEncoder = VideoEncoder(width, height, currentBitrate, fps).also { encoder ->
+                val surface = encoder.createInputSurface()
+                currentEncoderSurface = surface
+
+                mirrorServer?.setKeyframeRequester("primary") { encoder.requestKeyFrame() }
+
+                encoder.onSpsPps = { spsPps -> mirrorServer?.broadcastSpsPps(spsPps) }
+                encoder.start { frameData, isKeyFrame ->
+                    mirrorServer?.broadcastFrame(frameData, isKeyFrame)
+                }
+
+                trySetupVirtualDisplay(width, height, surface) { shizukuActive ->
+                    if (shizukuActive) {
+                        screenCapture?.stopCapture()
+                        currentVdApp = "HOME"
+                    } else {
+                        try {
+                            screenCapture?.startCapture(surface, width, height)
+                            Log.w(TAG, "Fallback: MediaProjection mirroring at ${width}x${height} (raw phone screen)")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "MediaProjection fallback failed", e)
+                        }
+                    }
+                    // Start audio after privilegedService is attached so REMOTE_SUBMIX is available
+                    ensureAudioCaptureState()
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Browser connection activation failed", t)
+            requestStopAsync("browser_connect_failure")
+        }
+    }
+
+    private fun releaseShizukuSession(reason: String) {
+        Log.i(TAG, "Releasing Shizuku session: $reason")
+        try { touchInjector?.setVirtualDisplayInjector(null) } catch (_: Exception) {}
+        try { virtualDisplayManager?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release virtual display manager", e) }
+        try { shizukuSetup?.release() } catch (e: Exception) { Log.w(TAG, "Failed to release shizuku setup", e) }
+        virtualDisplayManager = null
+        shizukuSetup = null
+    }
+
+    private fun ensureAudioCaptureState(codecOverride: String? = null) {
+        val orch = audioOrchestrator ?: return
+        orch.audioEnabled = pendingAudioEnabled && AudioCapture.isSupported()
+        orch.muteLocalAudio = pendingMuteLocalAudio
+        orch.browserConnected = browserConnected
+        orch.ensure(codecOverride)
     }
 
     private fun restoreCurrentVdContent() {
@@ -2136,28 +2236,21 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onAudioCodecRequest(codec: String) {
-        if (codec != "pcm") return
         serviceScope.launch(Dispatchers.IO) {
-            audioCapture?.stop()
-            audioCapture = null
-
-            val projection = screenCapture?.getMediaProjection() ?: return@launch
-            audioCapture = AudioCapture(projection, shizukuSetup?.privilegedService).also { audio ->
-                audio.startPcmOnly { audioData ->
-                    mirrorServer?.broadcastAudio(audioData)
-                }
-            }
+            ensureAudioCaptureState(codecOverride = codec)
         }
     }
 
     private fun onBrowserDisconnected() {
         Log.i(TAG, "Browser disconnected — suspending pipeline")
+        pendingBrowserDisconnectJob = null
+        browserConnected = false
         dismissSplitPresentation(clearState = false)
         if (!singleVdSplit) {
             releaseSecondaryPipeline(clearState = false)
         }
         try { removeAllVdTasks() } catch (e: Exception) { Log.w(TAG, "Failed to remove VD tasks on disconnect", e) }
-        virtualDisplayManager?.releaseVirtualDisplay()
+        releaseShizukuSession("browser_disconnected")
         
         screenCapture?.stopCapture()
         videoEncoder?.release()
@@ -2166,9 +2259,7 @@ class MirrorForegroundService : Service() {
         jpegEncoder = null
         currentEncoderSurface = null
 
-        try { audioCapture?.stop() } catch (_: Exception) {}
-        audioCapture = null
-        restoreMediaVolume()
+        audioOrchestrator?.stop()
 
         abrJob?.cancel()
         abrJob = null
@@ -2179,8 +2270,6 @@ class MirrorForegroundService : Service() {
         lastQualityBacklogDrops = 0
 
         releaseWakeLocks()
-
-        browserConnected = false
     }
 
     private fun activeInputDisplayId(): Int {
@@ -2517,16 +2606,15 @@ class MirrorForegroundService : Service() {
     private fun tryGrantAudioCapturePermission() {
         try {
             val setup = shizukuSetup
-            if (setup != null && setup.isAvailable() && setup.hasPermission()) {
+            val service = setup?.privilegedService
+            if (setup != null && service != null && setup.isAvailable() && setup.hasPermission()) {
                 val pkg = packageName
-                // appops is the most reliable way to grant this at ADB level
-                val result = setup.exec("appops set $pkg CAPTURE_AUDIO_OUTPUT allow")
+                val result = service.execCommand("appops set $pkg CAPTURE_AUDIO_OUTPUT allow")
                 Log.i(TAG, "CAPTURE_AUDIO_OUTPUT grant via appops: $result")
-                // Also try pm grant as fallback
-                val result2 = setup.exec("pm grant $pkg android.permission.CAPTURE_AUDIO_OUTPUT")
+                val result2 = service.execCommand("pm grant $pkg android.permission.CAPTURE_AUDIO_OUTPUT")
                 Log.i(TAG, "CAPTURE_AUDIO_OUTPUT grant via pm: $result2")
             } else {
-                Log.w(TAG, "Shizuku not available for audio capture permission grant")
+                Log.i(TAG, "Skipping audio capture permission grant: privileged service not connected")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to grant CAPTURE_AUDIO_OUTPUT", e)
@@ -2562,12 +2650,14 @@ class MirrorForegroundService : Service() {
             // that bypasses normal stream volume controls
             try {
                 val setup = shizukuSetup
-                if (setup != null && setup.isAvailable() && setup.hasPermission()) {
-                    // Force mute all audio output via media commands
+                val service = setup?.privilegedService
+                if (setup != null && service != null && setup.isAvailable() && setup.hasPermission()) {
                     for (stream in streamsToMute) {
-                        setup.exec("media volume --show --stream $stream --set 0")
+                        service.execCommand("media volume --show --stream $stream --set 0")
                     }
                     Log.i(TAG, "Shizuku force-muted all audio streams")
+                } else {
+                    Log.i(TAG, "Skipping Shizuku mute: privileged service not connected")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Shizuku stream mute failed", e)
@@ -2589,9 +2679,10 @@ class MirrorForegroundService : Service() {
             // Also restore via Shizuku
             try {
                 val setup = shizukuSetup
-                if (setup != null && setup.isAvailable() && setup.hasPermission()) {
+                val service = setup?.privilegedService
+                if (setup != null && service != null && setup.isAvailable() && setup.hasPermission()) {
                     for ((stream, volume) in savedVolumes) {
-                        setup.exec("media volume --show --stream $stream --set $volume")
+                        service.execCommand("media volume --show --stream $stream --set $volume")
                     }
                 }
             } catch (_: Exception) {}

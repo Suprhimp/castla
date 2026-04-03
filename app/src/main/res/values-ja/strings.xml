@@ -89,6 +89,9 @@
     <string name="dialog_hotspot_off_message">ミラーリングのためにホットスポットがオンになりました。オフにしますか？</string>
     <string name="dialog_hotspot_off_yes">オフにする</string>
     <string name="dialog_hotspot_off_no">そのまま</string>
+    <string name="btn_hotspot_on">ホットスポット ON</string>
+    <string name="btn_hotspot_off">ホットスポットをオン</string>
+    <string name="btn_auto_hotspot">自動</string>
 
     <!-- Language -->
     <string name="settings_language">言語</string>
