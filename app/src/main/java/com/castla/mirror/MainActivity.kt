@@ -41,7 +41,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,6 +79,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val MIRROR_START_TIMEOUT_MS = 15_000L
+        private const val PROJECTION_RESULT_TIMEOUT_MS = 8_000L
+        private const val PROJECTION_FOCUS_RETURN_TIMEOUT_MS = 1_500L
         private const val TESLA_VIRTUAL_IP = "100.99.9.9"
         private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
@@ -115,6 +116,11 @@ class MainActivity : AppCompatActivity() {
     private var serviceBound = false
     private var bindRequested = false
     private var teslaIpReady by mutableStateOf(false)
+    private var awaitingProjectionResult = false
+    private var projectionResultTimeoutJob: kotlinx.coroutines.Job? = null
+    private var projectionFocusRecoveryJob: kotlinx.coroutines.Job? = null
+    private var isCleanupInProgress by mutableStateOf(false)
+    private var pendingStartAfterCleanup = false
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -144,6 +150,11 @@ class MainActivity : AppCompatActivity() {
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        awaitingProjectionResult = false
+        projectionResultTimeoutJob?.cancel()
+        projectionResultTimeoutJob = null
+        projectionFocusRecoveryJob?.cancel()
+        projectionFocusRecoveryJob = null
         Log.i(TAG, "MediaProjection result: code=${result.resultCode}, data=${result.data != null}")
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             Toast.makeText(this, getString(R.string.toast_screen_capture_granted), Toast.LENGTH_SHORT).show()
@@ -232,7 +243,9 @@ class MainActivity : AppCompatActivity() {
                 MirrorForegroundService.serviceRunningFlow.collect { running ->
                     if (!running && isStreaming) {
                         isStreaming = false
-                        isPreparing = false
+                        if (!pendingStartAfterCleanup && !awaitingProjectionResult) {
+                            isPreparing = false
+                        }
                         mirrorService = null
                         if (serviceBound || bindRequested) {
                             try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
@@ -241,13 +254,27 @@ class MainActivity : AppCompatActivity() {
                         }
                         updateServerUrl()
                         // Clean up hotspot that was auto-enabled by the app
-                        if (hotspotEnabledByApp && shizukuSetup.serviceConnected.value) {
+                        if (!pendingStartAfterCleanup && hotspotEnabledByApp && shizukuSetup.serviceConnected.value) {
                             hotspotEnabledByApp = false
                             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 disableHotspot()
                                 Log.i(TAG, "Auto-disabled hotspot after external service stop")
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                MirrorForegroundService.cleanupInProgressFlow.collect { cleanupInProgress ->
+                    val wasCleanupInProgress = isCleanupInProgress
+                    isCleanupInProgress = cleanupInProgress
+                    if (wasCleanupInProgress && !cleanupInProgress && pendingStartAfterCleanup) {
+                        pendingStartAfterCleanup = false
+                        Log.i(TAG, "Cleanup finished — continuing queued mirroring start")
+                        beginMirroringStartFlow("cleanup_completed")
                     }
                 }
             }
@@ -377,6 +404,33 @@ class MainActivity : AppCompatActivity() {
         updateManager.onResume(this)
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!awaitingProjectionResult) {
+            projectionFocusRecoveryJob?.cancel()
+            projectionFocusRecoveryJob = null
+            return
+        }
+        if (hasFocus) {
+            projectionFocusRecoveryJob?.cancel()
+            projectionFocusRecoveryJob = lifecycleScope.launch {
+                kotlinx.coroutines.delay(PROJECTION_FOCUS_RETURN_TIMEOUT_MS)
+                if (awaitingProjectionResult && hasWindowFocus()) {
+                    Log.w(TAG, "MediaProjection result missing after focus returned")
+                    awaitingProjectionResult = false
+                    projectionResultTimeoutJob?.cancel()
+                    projectionResultTimeoutJob = null
+                    clearPreparingState(
+                        getString(R.string.toast_error, "screen capture result missing")
+                    )
+                }
+            }
+        } else {
+            projectionFocusRecoveryJob?.cancel()
+            projectionFocusRecoveryJob = null
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         val wasInstalled = shizukuInstalled
@@ -402,6 +456,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        projectionResultTimeoutJob?.cancel()
+        projectionFocusRecoveryJob?.cancel()
         updateManager.destroy()
         networkMonitor.stopMonitoring()
         stopAutoDetect()
@@ -858,8 +914,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onStartMirroring() {
-        Log.i(TAG, "onStartMirroring called")
+    private fun queueStartAfterCleanup(reason: String) {
+        pendingStartAfterCleanup = true
+        isPreparing = true
+        Log.i(TAG, "Queued mirroring start until cleanup completes: $reason")
+    }
+
+    private fun beginMirroringStartFlow(reason: String) {
+        Log.i(TAG, "Beginning mirroring start flow: $reason")
         isPreparing = true
         Log.i(TAG, "isPreparing=true (starting permission flow)")
 
@@ -880,6 +942,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         proceedAfterNotificationPermission()
+    }
+
+    private fun onStartMirroring() {
+        Log.i(TAG, "onStartMirroring called")
+
+        if (awaitingProjectionResult) {
+            Log.i(TAG, "Ignoring duplicate start: awaiting MediaProjection result")
+            return
+        }
+
+        if (isCleanupInProgress || MirrorForegroundService.isCleanupInProgress) {
+            queueStartAfterCleanup("cleanup_in_progress")
+            return
+        }
+
+        if (MirrorForegroundService.isServiceRunning || mirrorService?.isRunning == true) {
+            queueStartAfterCleanup("service_still_running")
+            stopMirrorService(askHotspot = false, preservePreparingState = true)
+            return
+        }
+
+        beginMirroringStartFlow("user_request")
     }
 
     private fun proceedAfterNotificationPermission() {
@@ -905,9 +989,28 @@ class MainActivity : AppCompatActivity() {
                 projectionManager.createScreenCaptureIntent()
             }
             Log.i(TAG, "Launching screen capture consent dialog")
+            awaitingProjectionResult = true
+            projectionResultTimeoutJob?.cancel()
+            projectionResultTimeoutJob = lifecycleScope.launch {
+                kotlinx.coroutines.delay(PROJECTION_RESULT_TIMEOUT_MS)
+                if (awaitingProjectionResult && isPreparing) {
+                    awaitingProjectionResult = false
+                    projectionFocusRecoveryJob?.cancel()
+                    projectionFocusRecoveryJob = null
+                    Log.w(TAG, "MediaProjection result timed out after ${PROJECTION_RESULT_TIMEOUT_MS}ms")
+                    clearPreparingState(
+                        getString(R.string.toast_error, "screen capture request timed out")
+                    )
+                }
+            }
             Toast.makeText(this, getString(R.string.toast_requesting_screen_capture), Toast.LENGTH_SHORT).show()
             mediaProjectionLauncher.launch(captureIntent)
         } catch (e: Exception) {
+            awaitingProjectionResult = false
+            projectionResultTimeoutJob?.cancel()
+            projectionResultTimeoutJob = null
+            projectionFocusRecoveryJob?.cancel()
+            projectionFocusRecoveryJob = null
             Log.e(TAG, "Failed to launch screen capture intent", e)
             clearPreparingState(getString(R.string.toast_error, e.message ?: "screen capture intent failed"))
         }
@@ -992,8 +1095,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun stopMirrorService() {
-        val shouldAskHotspot = hotspotEnabledByApp && shizukuSetup.serviceConnected.value
+    private fun stopMirrorService(askHotspot: Boolean = true, preservePreparingState: Boolean = false) {
+        val shouldAskHotspot = askHotspot && hotspotEnabledByApp && shizukuSetup.serviceConnected.value
 
         if (serviceBound || bindRequested) {
             try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
@@ -1003,7 +1106,9 @@ class MainActivity : AppCompatActivity() {
         stopService(Intent(this, MirrorForegroundService::class.java))
         mirrorService = null
         isStreaming = false
-        isPreparing = false
+        if (!preservePreparingState) {
+            isPreparing = false
+        }
         isHotspotActive = false
         updateServerUrl()
         com.castla.mirror.widget.MirrorWidgetProvider.updateAllWidgets(this)
@@ -1234,13 +1339,6 @@ fun CastlaScreen(
                             },
                             border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Wifi,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = if (isHotspotActive) Color.Black else Color.White
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (isHotspotActive)
                                     stringResource(id = R.string.btn_hotspot_on)
