@@ -87,21 +87,21 @@ The APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 ## Architecture
 
 ```
-┌─────────────┐     WebSocket      ┌──────────────────┐
-│  Android     │ ◄───────────────► │  Tesla Browser    │
-│              │                    │                   │
-│  MediaCodec  │  H.264 frames     │  WebCodecs API    │
-│  (H.264 enc) │ ─────────────►   │  (H.264 dec)      │
-│              │                    │                   │
-│  AudioCapture│  AAC stream       │  AudioContext      │
-│              │ ─────────────►   │                   │
-│              │                    │                   │
-│  Shizuku     │  Touch events     │  Canvas + Touch   │
-│  (InputMgr)  │ ◄─────────────   │  event listeners  │
-└─────────────┘                    └──────────────────┘
-        │
-        │ Local Network Only (WiFi / Hotspot)
-        │ No internet required
++---------------+     WebSocket      +--------------------+
+|  Android      | <=================> |  Tesla Browser     |
+|               |                     |                    |
+|  MediaCodec   |  H.264 frames      |  WebCodecs API     |
+|  (H.264 enc)  | =================> |  (H.264 dec)       |
+|               |                     |                    |
+|  AudioCapture |  AAC stream         |  AudioContext       |
+|               | =================> |                    |
+|               |                     |                    |
+|  Shizuku      |  Touch events       |  Canvas + Touch    |
+|  (InputMgr)   | <================= |  event listeners   |
++---------------+                     +--------------------+
+        |
+        |  Local Network Only (WiFi / Hotspot)
+        |  No internet required
 ```
 
 - **Server**: NanoHTTPD WebSocket server (port 8192)
