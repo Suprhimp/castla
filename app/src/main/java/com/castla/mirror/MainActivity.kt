@@ -98,6 +98,7 @@ class MainActivity : AppCompatActivity() {
     private var shizukuRunning by mutableStateOf(false)
     private var shizukuPermitted by mutableStateOf(false)
     private var showShizukuPermissionDialog by mutableStateOf(false)
+    private var showHotspotOffDialog by mutableStateOf(false)
     private var networkDiagLog by mutableStateOf("")
     private var teslaAutoDetectEnabled by mutableStateOf(false)
     private var hotspotEnabledByApp = false
@@ -366,6 +367,89 @@ class MainActivity : AppCompatActivity() {
                         updateAvailable = updateManager.updateAvailable,
                         onUpdateClick = { updateManager.startUpdate(this@MainActivity) }
                     )
+                }
+
+                // Hotspot turn-off dialog
+                if (showHotspotOffDialog) {
+                    androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(Color(0xFF1A1A2E))
+                                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                                .padding(24.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = stringResource(id = R.string.dialog_hotspot_off_title),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = stringResource(id = R.string.dialog_hotspot_off_message),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(24.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            showHotspotOffDialog = false
+                                            hotspotEnabledByApp = false
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp),
+                                        shape = RoundedCornerShape(14.dp),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
+                                    ) {
+                                        Text(
+                                            text = stringResource(id = R.string.dialog_hotspot_off_no),
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Button(
+                                        onClick = {
+                                            showHotspotOffDialog = false
+                                            hotspotEnabledByApp = false
+                                            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                                disableHotspot()
+                                                runOnUiThread {
+                                                    Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_disabled), Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFFFF5252)
+                                        )
+                                    ) {
+                                        Text(
+                                            text = stringResource(id = R.string.dialog_hotspot_off_yes),
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1151,23 +1235,7 @@ class MainActivity : AppCompatActivity() {
 
         // Ask user whether to turn off hotspot
         if (shouldAskHotspot) {
-            android.app.AlertDialog.Builder(this)
-                .setTitle(R.string.dialog_hotspot_off_title)
-                .setMessage(R.string.dialog_hotspot_off_message)
-                .setPositiveButton(R.string.dialog_hotspot_off_yes) { _, _ ->
-                    hotspotEnabledByApp = false
-                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        disableHotspot()
-                        runOnUiThread {
-                            Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_disabled), Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-                .setNegativeButton(R.string.dialog_hotspot_off_no) { _, _ ->
-                    hotspotEnabledByApp = false
-                }
-                .setCancelable(false)
-                .show()
+            showHotspotOffDialog = true
         }
     }
 }
