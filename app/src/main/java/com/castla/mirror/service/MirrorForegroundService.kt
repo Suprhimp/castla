@@ -75,10 +75,18 @@ class MirrorForegroundService : Service() {
         private val _serviceRunningFlow = MutableStateFlow(false)
         val serviceRunningFlow: StateFlow<Boolean> = _serviceRunningFlow
 
+        /** True while the service is actively tearing down the previous session. */
+        private val _cleanupInProgressFlow = MutableStateFlow(false)
+        val cleanupInProgressFlow: StateFlow<Boolean> = _cleanupInProgressFlow
+
 
         var isServiceRunning: Boolean
             get() = _serviceRunningFlow.value
             set(value) { _serviceRunningFlow.value = value }
+
+        var isCleanupInProgress: Boolean
+            get() = _cleanupInProgressFlow.value
+            set(value) { _cleanupInProgressFlow.value = value }
 
         @JvmStatic
         var instance: MirrorForegroundService? = null
@@ -211,6 +219,7 @@ class MirrorForegroundService : Service() {
         super.onCreate()
         instance = this
         isServiceRunning = true
+        isCleanupInProgress = false
         createNotificationChannel()
         observeAppLaunchRequests()
 
@@ -569,8 +578,7 @@ class MirrorForegroundService : Service() {
         }
         cleanupCompleted = true // set immediately under lock to prevent reentrant race
         Log.i(TAG, "Performing cleanup: $reason")
-        isServiceRunning = false
-        instance = null
+        isCleanupInProgress = true
 
         // Physical display power-off is disabled by default, so physicalDisplayOff
         // should always be false. Safety net in case it was re-enabled experimentally.
@@ -626,6 +634,11 @@ class MirrorForegroundService : Service() {
         jpegEncoder = null
         touchInjector = null
         mirrorServer = null
+
+        instance = null
+        isCleanupInProgress = false
+        isServiceRunning = false
+        Log.i(TAG, "Cleanup completed: $reason")
     }
 
     private fun startAbrLoop() {
