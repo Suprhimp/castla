@@ -89,6 +89,8 @@
     <string name="btn_hotspot_on">Hotspot ON</string>
     <string name="btn_hotspot_off">Turn on Hotspot</string>
     <string name="btn_auto_hotspot">Auto</string>
+    <string name="btn_screen_off">Screen Off</string>
+    <string name="btn_screen_on">Screen On</string>
     <string name="toast_thermal_warning">⚠️ Device is very hot. Mirroring quality may be reduced.</string>
 
     <!-- Language -->

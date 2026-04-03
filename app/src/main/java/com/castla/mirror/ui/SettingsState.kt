@@ -9,7 +9,7 @@ data class StreamSettings(
     val maxResolution: Resolution = Resolution.AUTO,
     val fps: Int = FPS_AUTO,
     val audioEnabled: Boolean = false,
-    val muteLocalAudio: Boolean = false,
+    val muteLocalAudio: Boolean = true,
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
     val targetAppPackage: String = "",
     val targetAppLabel: String = "",
@@ -55,7 +55,7 @@ data class StreamSettings(
                 maxResolution = resolution,
                 fps = fps,
                 audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
-                muteLocalAudio = prefs.getBoolean(KEY_MUTE_LOCAL_AUDIO, false),
+                muteLocalAudio = prefs.getBoolean(KEY_MUTE_LOCAL_AUDIO, true),
                 mirroringMode = try {
                     MirroringMode.valueOf(prefs.getString(KEY_MIRRORING_MODE, MirroringMode.FULL_SCREEN.name)!!)
                 } catch (_: Exception) { MirroringMode.FULL_SCREEN },

@@ -102,6 +102,7 @@ class MainActivity : AppCompatActivity() {
     private var teslaAutoDetectEnabled by mutableStateOf(false)
     private var hotspotEnabledByApp = false
     private var isHotspotActive by mutableStateOf(false)
+    private var isPanelOff by mutableStateOf(false)
     private var teslaBleScanner: TeslaBleScanner? = null
 
     // Shizuku download state
@@ -282,6 +283,14 @@ class MainActivity : AppCompatActivity() {
 
 
         lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                MirrorForegroundService.panelOffStateFlow.collect { state ->
+                    isPanelOff = state != com.castla.mirror.policy.ScreenOffState.ACTIVE
+                }
+            }
+        }
+
+        lifecycleScope.launch {
             shizukuSetup.state.collect { shizukuState ->
                 Log.i(TAG, "Shizuku state: $shizukuState")
                 shizukuRunning = shizukuState is com.castla.mirror.shizuku.ShizukuState.Running
@@ -339,6 +348,8 @@ class MainActivity : AppCompatActivity() {
                         networkDiagLog = networkDiagLog,
                         isHotspotActive = isHotspotActive,
                         onToggleHotspot = { toggleHotspot() },
+                        isPanelOff = isPanelOff,
+                        onTogglePanelOff = { togglePanelOff() },
                         autoHotspot = streamSettings.autoHotspot,
                         onAutoHotspotChanged = { enabled ->
                             Log.i(TAG, "Auto-hotspot changed: $enabled")
@@ -599,6 +610,20 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.w(TAG, "refreshHotspotStatus failed", e)
             isHotspotActive = false
+        }
+    }
+
+    private fun togglePanelOff() {
+        val service = mirrorService ?: MirrorForegroundService.instance ?: return
+        if (isPanelOff) {
+            service.restorePhysicalPanel()
+        } else {
+            val success = service.turnPanelOffForMirroring()
+            if (!success) {
+                android.widget.Toast.makeText(
+                    this, "Screen off not available", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -1165,6 +1190,8 @@ fun CastlaScreen(
     networkDiagLog: String = "",
     isHotspotActive: Boolean = false,
     onToggleHotspot: () -> Unit = {},
+    isPanelOff: Boolean = false,
+    onTogglePanelOff: () -> Unit = {},
     autoHotspot: Boolean = false,
     onAutoHotspotChanged: (Boolean) -> Unit = {},
     @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
@@ -1388,6 +1415,35 @@ fun CastlaScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // Screen off (panel-off) button — only visible when streaming
+            AnimatedVisibility(visible = isStreaming) {
+                Column {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = onTogglePanelOff,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = if (isPanelOff) {
+                            ButtonDefaults.buttonColors(containerColor = Color(0xFF69F0AE))
+                        } else {
+                            ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.15f))
+                        },
+                        border = if (!isPanelOff) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
+                    ) {
+                        Text(
+                            text = if (isPanelOff)
+                                stringResource(id = R.string.btn_screen_on)
+                            else
+                                stringResource(id = R.string.btn_screen_off),
+                            fontWeight = FontWeight.Bold,
+                            color = if (isPanelOff) Color.Black else Color.White
+                        )
                     }
                 }
             }
