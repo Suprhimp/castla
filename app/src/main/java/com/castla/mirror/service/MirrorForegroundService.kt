@@ -43,6 +43,10 @@ import com.castla.mirror.utils.LaunchMode
 import com.castla.mirror.policy.AutoScaleDecision
 import com.castla.mirror.policy.AutoScaleInput
 import com.castla.mirror.policy.AutoScalePolicy
+import com.castla.mirror.policy.DisconnectPolicy
+import com.castla.mirror.policy.ScreenOffAction
+import com.castla.mirror.policy.ScreenOffPolicy
+import com.castla.mirror.policy.ScreenOffState
 import com.castla.mirror.utils.StreamMath
 import com.castla.mirror.ui.SplitWebPresentation
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +83,10 @@ class MirrorForegroundService : Service() {
         private val _cleanupInProgressFlow = MutableStateFlow(false)
         val cleanupInProgressFlow: StateFlow<Boolean> = _cleanupInProgressFlow
 
+        /** Current panel-off state — UI observes this for button state. */
+        private val _panelOffStateFlow = MutableStateFlow(ScreenOffState.ACTIVE)
+        val panelOffStateFlow: StateFlow<ScreenOffState> = _panelOffStateFlow
+
 
         var isServiceRunning: Boolean
             get() = _serviceRunningFlow.value
@@ -104,8 +112,9 @@ class MirrorForegroundService : Service() {
         private const val AUTO_SCALE_INTERVAL_MS = 10_000L
         /** Initial delay before first auto-scale evaluation */
         private const val AUTO_SCALE_INITIAL_DELAY_MS = 5_000L
-        /** Grace period to survive browser refresh without tearing down the pipeline. */
-        private const val BROWSER_DISCONNECT_GRACE_MS = 3_000L
+        // Grace period constants are now in DisconnectPolicy
+        /** Interval for poking the VD awake while the physical screen is off. */
+        private const val VD_KEEP_ALIVE_INTERVAL_MS = 30_000L
     }
 
     /** Binder for local (same-process) binding */
@@ -199,10 +208,62 @@ class MirrorForegroundService : Service() {
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
     private var screenOffReceiver: BroadcastReceiver? = null
     private var vdKeepAliveJob: Job? = null
-    private var physicalDisplayOff = false
+    private val screenOffPolicy = ScreenOffPolicy()
+    private val keyguardManager by lazy {
+        getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+    }
 
     val isRunning: Boolean
         get() = mirrorServer != null
+
+    /** Whether this device supports panel-off (false after first failure). */
+    val isPanelOffSupported: Boolean
+        get() = screenOffPolicy.isPanelOffSupported
+
+    /**
+     * Turn off the physical display panel while keeping mirroring alive.
+     * Called from UI button — NOT from power button / ACTION_SCREEN_OFF.
+     * @return true if panel-off was initiated, false if preconditions not met
+     */
+    fun turnPanelOffForMirroring(): Boolean {
+        if (!isRunning) {
+            Log.w(TAG, "turnPanelOffForMirroring: service not running")
+            return false
+        }
+        if (!browserConnected) {
+            Log.w(TAG, "turnPanelOffForMirroring: browser not connected")
+            return false
+        }
+        if (virtualDisplayManager?.hasVirtualDisplay() != true) {
+            Log.w(TAG, "turnPanelOffForMirroring: no active virtual display")
+            return false
+        }
+        if (screenOffPolicy.isScreenOff) {
+            Log.d(TAG, "turnPanelOffForMirroring: already off")
+            return true
+        }
+
+        // Ensure wake locks are held before turning panel off
+        acquireWakeLocks()
+
+        val action = screenOffPolicy.onScreenOff(panelOffSupported = true)
+        logScreenState("Panel OFF requested via button (action=$action)")
+        executeScreenOffAction(action)
+        _panelOffStateFlow.value = screenOffPolicy.state
+        return screenOffPolicy.state == ScreenOffState.PANEL_OFF_ACTIVE
+    }
+
+    /**
+     * Restore the physical display panel.
+     * Called from UI button, or automatically on cleanup.
+     */
+    fun restorePhysicalPanel() {
+        if (!screenOffPolicy.isScreenOff) return
+        val action = screenOffPolicy.onScreenOn()
+        logScreenState("Panel ON requested via button (action=$action)")
+        executeScreenOnAction(action)
+        _panelOffStateFlow.value = screenOffPolicy.state
+    }
 
     /** Current thermal throttle level exposed to the UI. 0 = normal, higher = hotter. */
     private val _thermalStatus = MutableStateFlow(0)
@@ -552,17 +613,97 @@ class MirrorForegroundService : Service() {
         }.start()
     }
 
+    private fun logScreenState(event: String) {
+        val keyguardLocked = keyguardManager.isKeyguardLocked
+        val deviceLocked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1)
+            keyguardManager.isDeviceLocked else keyguardLocked
+        val vdId = virtualDisplayManager?.getDisplayId() ?: -1
+        Log.i(TAG, "[BUILD:screen-off-v3] $event — " +
+                "state=${screenOffPolicy.state}, keyguardLocked=$keyguardLocked, deviceLocked=$deviceLocked, " +
+                "browserConnected=$browserConnected, serverConnected=${mirrorServer?.isBrowserConnected()}, " +
+                "wakeLockHeld=${wakeLock?.isHeld == true}, vdId=$vdId, panelOffSupported=${screenOffPolicy.isPanelOffSupported}")
+    }
+
     private fun onPhoneScreenOff() {
-        // Physical display power-off is DISABLED by default — it caused recovery
-        // difficulties when cleanup failed, and users reported the phone appearing
-        // to have shut down.  The VD keeps rendering via the partial wake-lock
-        // without needing to cut physical panel power.
-        Log.i(TAG, "Screen OFF detected — VD continues via wake-lock (display power-off disabled)")
+        val action = screenOffPolicy.onScreenOff(panelOffSupported = screenOffPolicy.isPanelOffSupported)
+        logScreenState("Screen OFF (action=$action)")
+        executeScreenOffAction(action)
+        _panelOffStateFlow.value = screenOffPolicy.state
     }
 
     private fun onPhoneScreenOn() {
-        Log.i(TAG, "Screen ON detected")
+        val action = screenOffPolicy.onScreenOn()
+        logScreenState("Screen ON (action=$action)")
+        executeScreenOnAction(action)
+        _panelOffStateFlow.value = screenOffPolicy.state
+
+        // Cancel any pending (extended) grace job — we re-evaluate immediately
+        cancelPendingBrowserDisconnect("screen_on")
+
+        val stillConnected = mirrorServer?.isBrowserConnected() == true
+        if (!stillConnected && browserConnected && !isCleanupInProgress) {
+            Log.i(TAG, "Screen ON — browser gone while screen was off, executing deferred teardown")
+            serviceScope.launch {
+                onBrowserDisconnected()
+                browserConnectionListener?.invoke(false)
+            }
+        }
+    }
+
+    private fun executeScreenOffAction(action: ScreenOffAction) {
+        when (action) {
+            ScreenOffAction.TURN_PANEL_OFF -> {
+                val vdm = virtualDisplayManager
+                if (vdm == null) {
+                    Log.w(TAG, "Panel-off requested but no VirtualDisplayManager — falling back")
+                    val fallback = screenOffPolicy.onPanelOffResult(success = false)
+                    executeScreenOffAction(fallback)
+                    return
+                }
+                val success = vdm.setPhysicalDisplayPower(false)
+                Log.i(TAG, "Physical panel OFF result: success=$success")
+                val fallback = screenOffPolicy.onPanelOffResult(success)
+                if (fallback != ScreenOffAction.NONE) {
+                    executeScreenOffAction(fallback)
+                }
+            }
+            ScreenOffAction.START_KEEP_ALIVE -> {
+                startVdKeepAlive()
+            }
+            ScreenOffAction.NONE -> {}
+            else -> Log.w(TAG, "Unexpected screen-off action: $action")
+        }
+    }
+
+    private fun executeScreenOnAction(action: ScreenOffAction) {
+        when (action) {
+            ScreenOffAction.RESTORE_PANEL -> {
+                stopVdKeepAlive()
+                val restored = virtualDisplayManager?.setPhysicalDisplayPower(true) ?: false
+                Log.i(TAG, "Physical panel restored: success=$restored")
+            }
+            ScreenOffAction.STOP_KEEP_ALIVE -> {
+                stopVdKeepAlive()
+            }
+            ScreenOffAction.NONE -> {}
+            else -> Log.w(TAG, "Unexpected screen-on action: $action")
+        }
+    }
+
+    private fun startVdKeepAlive() {
         stopVdKeepAlive()
+        val vdm = virtualDisplayManager ?: run {
+            Log.w(TAG, "VD keep-alive skipped — no VirtualDisplayManager")
+            return
+        }
+        vdKeepAliveJob = serviceScope.launch {
+            Log.i(TAG, "[BUILD:screen-off-v3] VD keep-alive starting (interval=${VD_KEEP_ALIVE_INTERVAL_MS}ms, vdId=${vdm.getDisplayId()})")
+            vdm.keepDisplayAwake()
+            while (true) {
+                kotlinx.coroutines.delay(VD_KEEP_ALIVE_INTERVAL_MS)
+                vdm.keepDisplayAwake()
+            }
+        }
     }
 
     private fun stopVdKeepAlive() {
@@ -580,10 +721,9 @@ class MirrorForegroundService : Service() {
         Log.i(TAG, "Performing cleanup: $reason")
         isCleanupInProgress = true
 
-        // Physical display power-off is disabled by default, so physicalDisplayOff
-        // should always be false. Safety net in case it was re-enabled experimentally.
-        if (physicalDisplayOff) {
-            physicalDisplayOff = false
+        // Always restore physical display panel on cleanup — safety net
+        if (screenOffPolicy.state == ScreenOffState.PANEL_OFF_ACTIVE ||
+            screenOffPolicy.state == ScreenOffState.PANEL_OFF_PENDING) {
             try {
                 virtualDisplayManager?.setPhysicalDisplayPower(true)
                 Log.i(TAG, "Physical display restored to ON during cleanup")
@@ -591,6 +731,8 @@ class MirrorForegroundService : Service() {
                 Log.e(TAG, "Failed to restore physical display", e)
             }
         }
+        screenOffPolicy.reset()
+        _panelOffStateFlow.value = ScreenOffState.ACTIVE
 
         try { screenOffReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
         screenOffReceiver = null
@@ -2075,13 +2217,19 @@ class MirrorForegroundService : Service() {
             Log.d(TAG, "Browser disconnect already pending")
             return
         }
+        val screenOff = screenOffPolicy.isScreenOff
+        val graceMs = DisconnectPolicy.graceMs(screenOff)
         pendingBrowserDisconnectJob = serviceScope.launch {
-            Log.i(TAG, "Scheduling browser disconnect grace window: ${BROWSER_DISCONNECT_GRACE_MS}ms")
-            kotlinx.coroutines.delay(BROWSER_DISCONNECT_GRACE_MS)
+            Log.i(TAG, "Scheduling browser disconnect grace window: ${graceMs}ms (screenOff=$screenOff)")
+            kotlinx.coroutines.delay(graceMs)
             pendingBrowserDisconnectJob = null
             val stillConnected = mirrorServer?.isBrowserConnected() == true
             if (stillConnected) {
                 Log.i(TAG, "Browser reconnected during grace window; keeping pipeline alive")
+                return@launch
+            }
+            if (!DisconnectPolicy.shouldTeardown(screenOffPolicy.isScreenOff, isBrowserConnected = false)) {
+                Log.i(TAG, "Screen is off — deferring teardown until screen turns on")
                 return@launch
             }
             if (browserConnected) {
