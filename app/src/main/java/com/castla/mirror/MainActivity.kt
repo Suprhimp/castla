@@ -1340,11 +1340,6 @@ fun CastlaScreen(
                             border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
                         ) {
                             Text(
-                                text = "\uD83D\uDCF6",
-                                fontSize = 16.sp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
                                 text = if (isHotspotActive)
                                     stringResource(id = R.string.btn_hotspot_on)
                                 else
