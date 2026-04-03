@@ -836,6 +836,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
     }
 
     override fun wakeUpDisplay(displayId: Int) {
+        Log.i(TAG, "[BUILD:screen-off-v2] wakeUpDisplay($displayId) ENTRY")
         try {
             // Do NOT use PowerManager.wakeUp() — it wakes the physical screen too.
             // Instead, use display-targeted methods that only affect the VD.
@@ -904,6 +905,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
     private val POWER_MODE_NORMAL = 2
 
     override fun setPhysicalDisplayPower(on: Boolean) {
+        Log.i(TAG, "[BUILD:screen-off-v2] setPhysicalDisplayPower($on) ENTRY")
         val mode = if (on) POWER_MODE_NORMAL else POWER_MODE_OFF
         try {
             val scClass = Class.forName("android.view.SurfaceControl")
