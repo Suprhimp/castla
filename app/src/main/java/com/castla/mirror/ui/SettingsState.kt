@@ -9,6 +9,7 @@ data class StreamSettings(
     val maxResolution: Resolution = Resolution.AUTO,
     val fps: Int = FPS_AUTO,
     val audioEnabled: Boolean = false,
+    val muteLocalAudio: Boolean = false,
     val mirroringMode: MirroringMode = MirroringMode.FULL_SCREEN,
     val targetAppPackage: String = "",
     val targetAppLabel: String = "",
@@ -34,6 +35,7 @@ data class StreamSettings(
         private const val KEY_MIRRORING_MODE = "mirroring_mode"
         private const val KEY_TARGET_APP_PACKAGE = "target_app_package"
         private const val KEY_TARGET_APP_LABEL = "target_app_label"
+        private const val KEY_MUTE_LOCAL_AUDIO = "mute_local_audio"
         private const val KEY_AUTO_HOTSPOT = "auto_hotspot"
 
         /** Sentinel value indicating auto FPS mode. Must not collide with real FPS values. */
@@ -53,6 +55,7 @@ data class StreamSettings(
                 maxResolution = resolution,
                 fps = fps,
                 audioEnabled = prefs.getBoolean(KEY_AUDIO, false),
+                muteLocalAudio = prefs.getBoolean(KEY_MUTE_LOCAL_AUDIO, false),
                 mirroringMode = try {
                     MirroringMode.valueOf(prefs.getString(KEY_MIRRORING_MODE, MirroringMode.FULL_SCREEN.name)!!)
                 } catch (_: Exception) { MirroringMode.FULL_SCREEN },
@@ -67,6 +70,7 @@ data class StreamSettings(
                 .putString(KEY_RESOLUTION, settings.maxResolution.name)
                 .putInt(KEY_FPS, settings.fps)
                 .putBoolean(KEY_AUDIO, settings.audioEnabled)
+                .putBoolean(KEY_MUTE_LOCAL_AUDIO, settings.muteLocalAudio)
                 .putString(KEY_MIRRORING_MODE, settings.mirroringMode.name)
                 .putString(KEY_TARGET_APP_PACKAGE, settings.targetAppPackage)
                 .putString(KEY_TARGET_APP_LABEL, settings.targetAppLabel)

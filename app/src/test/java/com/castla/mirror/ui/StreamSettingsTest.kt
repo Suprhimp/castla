@@ -29,6 +29,7 @@ class StreamSettingsTest {
         assertTrue(settings.isAutoResolution)
         assertTrue(settings.isAutoFps)
         assertFalse(settings.audioEnabled)
+        assertFalse(settings.muteLocalAudio)
     }
 
     @Test
@@ -39,6 +40,7 @@ class StreamSettingsTest {
         assertTrue(settings.isAutoResolution)
         assertTrue(settings.isAutoFps)
         assertFalse(settings.audioEnabled)
+        assertFalse(settings.muteLocalAudio)
     }
 
     @Test
