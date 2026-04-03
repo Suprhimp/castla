@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val MIRROR_START_TIMEOUT_MS = 15_000L
         private const val TESLA_VIRTUAL_IP = "100.99.9.9"
         private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
@@ -194,7 +195,7 @@ class MainActivity : AppCompatActivity() {
         shizukuInstalled = isShizukuInstalled()
         shizukuSetup = ShizukuSetup()
         if (shizukuInstalled) {
-            shizukuSetup.init()
+            shizukuSetup.init(bindService = false)
         }
 
         loadAutoDetectState()
@@ -371,7 +372,7 @@ class MainActivity : AppCompatActivity() {
         val wasInstalled = shizukuInstalled
         shizukuInstalled = isShizukuInstalled()
         if (shizukuInstalled && !wasInstalled) {
-            shizukuSetup.init()
+            shizukuSetup.init(bindService = false)
         }
         loadAutoDetectState()
 
@@ -777,6 +778,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun clearPreparingState(message: String? = null, stopServiceIfNeeded: Boolean = false) {
+        isPreparing = false
+        if (stopServiceIfNeeded) {
+            try { stopService(Intent(this, MirrorForegroundService::class.java)) } catch (_: Exception) {}
+            mirrorService = null
+            isStreaming = false
+            if (serviceBound || bindRequested) {
+                try { unbindService(serviceConnection) } catch (_: IllegalArgumentException) {}
+                serviceBound = false
+                bindRequested = false
+            }
+        }
+        if (!message.isNullOrBlank()) {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun onStartMirroring() {
         Log.i(TAG, "onStartMirroring called")
         isPreparing = true
@@ -828,7 +846,7 @@ class MainActivity : AppCompatActivity() {
             mediaProjectionLauncher.launch(captureIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch screen capture intent", e)
-            Toast.makeText(this, getString(R.string.toast_error, e.message), Toast.LENGTH_LONG).show()
+            clearPreparingState(getString(R.string.toast_error, e.message ?: "screen capture intent failed"))
         }
     }
 
@@ -869,6 +887,7 @@ class MainActivity : AppCompatActivity() {
                 if (streamSettings.isAutoResolution) 0 else streamSettings.maxResolution.maxHeight)
             putExtra(MirrorForegroundService.EXTRA_FPS, streamSettings.fps) // FPS_AUTO is already 0
             putExtra(MirrorForegroundService.EXTRA_AUDIO, streamSettings.audioEnabled)
+            putExtra(MirrorForegroundService.EXTRA_MUTE_LOCAL_AUDIO, streamSettings.muteLocalAudio)
             putExtra(MirrorForegroundService.EXTRA_MIRRORING_MODE, streamSettings.mirroringMode.name)
             putExtra(MirrorForegroundService.EXTRA_TARGET_PACKAGE, streamSettings.targetAppPackage)
         }
@@ -885,11 +904,18 @@ class MainActivity : AppCompatActivity() {
         // 서비스 바인드 + 서버 실행 확인 후 최소 2초 뒤에 preparing 해제
         lifecycleScope.launch {
             val startTime = System.currentTimeMillis()
-            // 서비스가 실제로 바인드되고 서버가 실행될 때까지 대기
             while (mirrorService?.isRunning != true && isPreparing) {
+                val elapsed = System.currentTimeMillis() - startTime
+                if (elapsed >= MIRROR_START_TIMEOUT_MS) {
+                    Log.w(TAG, "Mirror service start timed out after ${elapsed}ms")
+                    clearPreparingState(
+                        message = getString(R.string.toast_error, "mirroring start timed out"),
+                        stopServiceIfNeeded = true
+                    )
+                    return@launch
+                }
                 kotlinx.coroutines.delay(100)
             }
-            // 최소 표시 시간 보장 (2초)
             val elapsed = System.currentTimeMillis() - startTime
             val remaining = 2000L - elapsed
             if (remaining > 0) {

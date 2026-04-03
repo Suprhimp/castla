@@ -269,6 +269,47 @@ fun SettingsScreen(
                         )
                     )
                 }
+
+                // Mute local audio toggle — only shown when audio is enabled
+                if (settings.audioEnabled) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.settings_mute_local_audio),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(R.string.settings_mute_local_audio_description),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.6f)
+                            )
+                        }
+                        Switch(
+                            checked = settings.muteLocalAudio,
+                            onCheckedChange = { enabled ->
+                                if (!isStreaming) onSettingsChanged(settings.copy(muteLocalAudio = enabled))
+                            },
+                            enabled = !isStreaming,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFF2979FF),
+                                uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                                uncheckedTrackColor = Color.White.copy(alpha = 0.2f),
+                                uncheckedBorderColor = Color.Transparent
+                            )
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))

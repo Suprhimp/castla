@@ -67,6 +67,8 @@
     <string name="settings_audio_experimental">오디오 (실험적)</string>
     <string name="settings_stream_device_audio">기기 오디오 스트리밍</string>
     <string name="settings_audio_description">Android 10 이상 필요. 시스템 출력을 캡처합니다.</string>
+    <string name="settings_mute_local_audio">로컬 오디오 음소거</string>
+    <string name="settings_mute_local_audio_description">Tesla로 오디오 스트리밍 중 폰 스피커를 음소거합니다.</string>
 <string name="settings_current_config">현재 설정</string>
     <string name="settings_full_screen">전체 화면</string>
     <string name="settings_audio_on">, 오디오 켜짐</string>
