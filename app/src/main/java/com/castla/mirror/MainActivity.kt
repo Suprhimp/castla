@@ -41,7 +41,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1340,11 +1339,9 @@ fun CastlaScreen(
                             },
                             border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Wifi,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = if (isHotspotActive) Color.Black else Color.White
+                            Text(
+                                text = "\uD83D\uDCF6",
+                                fontSize = 16.sp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
