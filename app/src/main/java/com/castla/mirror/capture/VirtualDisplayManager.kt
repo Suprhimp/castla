@@ -242,13 +242,20 @@ class VirtualDisplayManager {
     /**
      * Turn the physical display panel on/off via SurfaceControl (scrcpy approach).
      * When off, device stays awake and VD keeps rendering. Physical screen goes dark.
+     * @return true if the call succeeded, false on error or no service
      */
-    fun setPhysicalDisplayPower(on: Boolean) {
-        try {
-            privilegedService?.setPhysicalDisplayPower(on)
+    fun setPhysicalDisplayPower(on: Boolean): Boolean {
+        return try {
+            val svc = privilegedService ?: run {
+                Log.w(TAG, "setPhysicalDisplayPower: no privileged service")
+                return false
+            }
+            svc.setPhysicalDisplayPower(on)
             Log.i(TAG, "Physical display power: ${if (on) "ON" else "OFF"}")
+            true
         } catch (e: Exception) {
             Log.w(TAG, "setPhysicalDisplayPower failed", e)
+            false
         }
     }
 
