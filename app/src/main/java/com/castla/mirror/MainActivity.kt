@@ -41,6 +41,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -99,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private var networkDiagLog by mutableStateOf("")
     private var teslaAutoDetectEnabled by mutableStateOf(false)
     private var hotspotEnabledByApp = false
+    private var isHotspotActive by mutableStateOf(false)
     private var teslaBleScanner: TeslaBleScanner? = null
 
     // Shizuku download state
@@ -308,6 +310,9 @@ class MainActivity : AppCompatActivity() {
                         onGrantShizukuPermission = { shizukuSetup.requestPermission() },
                         shizukuDownloadProgress = shizukuDownloadProgress,
                         networkDiagLog = networkDiagLog,
+                        isHotspotActive = isHotspotActive,
+                        shizukuServiceConnected = shizukuSetup.serviceConnected.collectAsState().value,
+                        onToggleHotspot = { toggleHotspot() },
                         teslaAutoDetectEnabled = teslaAutoDetectEnabled,
                         onToggleAutoDetect = {
                             toggleAutoDetect()
@@ -518,6 +523,44 @@ class MainActivity : AppCompatActivity() {
         }
         val success = shizukuSetup.stopWifiTethering()
         Log.i(TAG, "disableHotspot: stopWifiTethering returned $success")
+    }
+
+    private fun refreshHotspotStatus() {
+        if (!shizukuSetup.serviceConnected.value) {
+            isHotspotActive = false
+            return
+        }
+        isHotspotActive = findHotspotInterface() != null
+    }
+
+    private fun toggleHotspot() {
+        if (!shizukuSetup.serviceConnected.value) {
+            Toast.makeText(this, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (isHotspotActive) {
+                disableHotspot()
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_disabled), Toast.LENGTH_SHORT).show()
+                    isHotspotActive = false
+                }
+            } else {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabling), Toast.LENGTH_SHORT).show()
+                }
+                val success = enableHotspot()
+                runOnUiThread {
+                    if (success) {
+                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_enabled), Toast.LENGTH_SHORT).show()
+                        isHotspotActive = true
+                    } else {
+                        Toast.makeText(this@MainActivity, getString(R.string.toast_hotspot_failed), Toast.LENGTH_SHORT).show()
+                    }
+                    updateServerUrl()
+                }
+            }
+        }
     }
 
     private fun findHotspotInterface(): String? {
@@ -899,6 +942,7 @@ class MainActivity : AppCompatActivity() {
         }
         bindRequested = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         isStreaming = true
+        refreshHotspotStatus()
         Log.i(TAG, "isStreaming=true, isPreparing=$isPreparing (service started)")
 
         // 서비스 바인드 + 서버 실행 확인 후 최소 2초 뒤에 preparing 해제
@@ -940,6 +984,7 @@ class MainActivity : AppCompatActivity() {
         mirrorService = null
         isStreaming = false
         isPreparing = false
+        isHotspotActive = false
         updateServerUrl()
         com.castla.mirror.widget.MirrorWidgetProvider.updateAllWidgets(this)
 
@@ -983,6 +1028,9 @@ fun CastlaScreen(
     onGrantShizukuPermission: () -> Unit = {},
     shizukuDownloadProgress: Float = -1f,
     networkDiagLog: String = "",
+    isHotspotActive: Boolean = false,
+    shizukuServiceConnected: Boolean = false,
+    onToggleHotspot: () -> Unit = {},
     @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
     @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
     @Suppress("unused") thermalStatus: Int = 0,
@@ -1139,6 +1187,42 @@ fun CastlaScreen(
                             textAlign = TextAlign.Center
                         )
 
+                    }
+                }
+            }
+
+            // Hotspot toggle button — only visible when streaming and Shizuku is available
+            AnimatedVisibility(visible = isStreaming && shizukuServiceConnected) {
+                Column {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = onToggleHotspot,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = if (isHotspotActive) {
+                            ButtonDefaults.buttonColors(containerColor = Color(0xFF69F0AE))
+                        } else {
+                            ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.15f))
+                        },
+                        border = if (!isHotspotActive) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Wifi,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = if (isHotspotActive) Color.Black else Color.White
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isHotspotActive)
+                                stringResource(id = R.string.btn_hotspot_on)
+                            else
+                                stringResource(id = R.string.btn_hotspot_off),
+                            fontWeight = FontWeight.Bold,
+                            color = if (isHotspotActive) Color.Black else Color.White
+                        )
                     }
                 }
             }
