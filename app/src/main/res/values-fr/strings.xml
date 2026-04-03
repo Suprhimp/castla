@@ -89,6 +89,9 @@
     <string name="dialog_hotspot_off_message">Le hotspot a été activé pour la mise en miroir. Voulez-vous le désactiver ?</string>
     <string name="dialog_hotspot_off_yes">Désactiver</string>
     <string name="dialog_hotspot_off_no">Garder activé</string>
+    <string name="btn_hotspot_on">Hotspot activé</string>
+    <string name="btn_hotspot_off">Activer le hotspot</string>
+    <string name="btn_auto_hotspot">Auto</string>
 
     <!-- Language -->
     <string name="settings_language">Langue</string>

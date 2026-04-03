@@ -44,6 +44,7 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     // Track active connection status
     private var isBrowserConnected = false
     private var onBrowserConnectionListener: ((Boolean) -> Unit)? = null
+    private var onAudioSocketConnectedListener: (() -> Unit)? = null
 
     // Cached thermal status JSON — sent immediately to new control sockets
     // to prevent race where browser connects before thermal broadcast arrives.
@@ -93,6 +94,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         if (isBrowserConnected) listener?.invoke(true)
     }
 
+    fun setAudioSocketConnectedListener(listener: (() -> Unit)?) {
+        onAudioSocketConnectedListener = listener
+    }
+
     fun setGoHomeListener(listener: () -> Unit) {
         onGoHomeListener = listener
     }
@@ -112,6 +117,8 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     fun setQualityReportListener(listener: (Int, Double, Int) -> Unit) {
         onQualityReportListener = listener
     }
+
+    fun isBrowserConnected(): Boolean = isBrowserConnected
 
 
     fun onCloseSplitRequest() {
@@ -174,6 +181,7 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     fun registerAudioSocket(socket: AudioStreamSocket) {
         audioSockets.add(socket)
         Log.i(TAG, "Audio client connected (total: ${audioSockets.size})")
+        onAudioSocketConnectedListener?.invoke()
         cachedAudioConfig?.let {
             socket.sendBinary(it)
             Log.i(TAG, "Replayed audio config to new client (${it.size} bytes)")

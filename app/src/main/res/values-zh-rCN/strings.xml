@@ -89,6 +89,9 @@
     <string name="dialog_hotspot_off_message">热点是为镜像而开启的。是否要关闭？</string>
     <string name="dialog_hotspot_off_yes">关闭</string>
     <string name="dialog_hotspot_off_no">保持开启</string>
+    <string name="btn_hotspot_on">热点已开启</string>
+    <string name="btn_hotspot_off">开启热点</string>
+    <string name="btn_auto_hotspot">自动</string>
 
     <!-- Language -->
     <string name="settings_language">语言</string>
