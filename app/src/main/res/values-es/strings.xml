@@ -89,6 +89,9 @@
     <string name="dialog_hotspot_off_message">El hotspot se encendió para la duplicación. ¿Deseas apagarlo?</string>
     <string name="dialog_hotspot_off_yes">Apagar</string>
     <string name="dialog_hotspot_off_no">Mantener</string>
+    <string name="btn_hotspot_on">Hotspot activado</string>
+    <string name="btn_hotspot_off">Activar hotspot</string>
+    <string name="btn_auto_hotspot">Auto</string>
 
     <!-- Language -->
     <string name="settings_language">Idioma</string>

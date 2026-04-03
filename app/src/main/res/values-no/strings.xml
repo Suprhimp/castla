@@ -89,6 +89,9 @@
     <string name="dialog_hotspot_off_message">Hotspot ble slått på for speiling. Vil du slå den av?</string>
     <string name="dialog_hotspot_off_yes">Slå av</string>
     <string name="dialog_hotspot_off_no">Behold på</string>
+    <string name="btn_hotspot_on">Hotspot PÅ</string>
+    <string name="btn_hotspot_off">Slå på hotspot</string>
+    <string name="btn_auto_hotspot">Auto</string>
 
     <!-- Language -->
     <string name="settings_language">Språk</string>
