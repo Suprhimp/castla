@@ -50,6 +50,26 @@ object StreamMath {
     }
 
     /**
+     * Bitrate for the video pane in split mode — boosted 1.5x over secondary base
+     * to prioritize video quality. Capped at 12Mbps to leave headroom for the companion pane.
+     */
+    fun calculateSplitVideoBitrate(width: Int, height: Int): Int {
+        val pixels = width.toLong() * height
+        val basePixels = 1280L * 720
+        return ((3_000_000L * pixels * 15) / (basePixels * 10)).toInt().coerceIn(750_000, 12_000_000)
+    }
+
+    /**
+     * Bitrate for the non-video companion pane in split mode — reduced to 0.6x of secondary base.
+     * Frees bandwidth for the video pane while keeping the companion usable.
+     */
+    fun calculateSplitCompanionBitrate(width: Int, height: Int): Int {
+        val pixels = width.toLong() * height
+        val basePixels = 1280L * 720
+        return ((3_000_000L * pixels * 6) / (basePixels * 10)).toInt().coerceIn(500_000, 6_000_000)
+    }
+
+    /**
      * Applies OTT/video-app bitrate boost (1.2x, capped at 15Mbps).
      * Only call when thermal status is NONE (no throttling).
      */

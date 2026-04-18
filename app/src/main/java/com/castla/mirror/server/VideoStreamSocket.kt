@@ -15,7 +15,7 @@ class VideoStreamSocket(
 
     companion object {
         private const val TAG = "VideoStreamSocket"
-        private const val MAX_QUEUE = 5
+        private const val MAX_QUEUE = 8
         private const val MIN_KEYFRAME_REQUEST_INTERVAL_MS = 500L
     }
 

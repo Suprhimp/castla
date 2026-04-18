@@ -168,4 +168,78 @@ class StreamMathTest {
         // 320 * 1.0 = 320 (exactly at cap)
         assertEquals(320, StreamMath.applyDensityScale(320, 1.0f))
     }
+
+    // ── Split OTT bitrate rebalance ──
+
+    @Test
+    fun `test split OTT video pane gets boosted bitrate`() {
+        // 720p video pane: base 3M * 1.5 = 4,500,000
+        val videoBitrate = StreamMath.calculateSplitVideoBitrate(1280, 720)
+        assertEquals(4_500_000, videoBitrate)
+    }
+
+    @Test
+    fun `test split OTT video pane bitrate is capped`() {
+        // 4K: huge pixels, should cap at 12Mbps
+        val capped = StreamMath.calculateSplitVideoBitrate(3840, 2160)
+        assertEquals(12_000_000, capped)
+    }
+
+    @Test
+    fun `test split companion pane gets reduced bitrate`() {
+        // 720p companion: base 3M * 0.6 = 1,800,000
+        val companionBitrate = StreamMath.calculateSplitCompanionBitrate(1280, 720)
+        assertEquals(1_800_000, companionBitrate)
+    }
+
+    @Test
+    fun `test split companion pane bitrate has floor`() {
+        // Tiny res: should not go below 500kbps
+        val floor = StreamMath.calculateSplitCompanionBitrate(320, 240)
+        assertEquals(500_000, floor)
+    }
+
+    @Test
+    fun `test split video pane at 1080p`() {
+        // 1920x1080 = 2.25x pixels of 720p
+        // 3M * 2.25 * 1.5 = 10,125,000
+        val bitrate = StreamMath.calculateSplitVideoBitrate(1920, 1080)
+        assertEquals(10_125_000, bitrate)
+    }
+
+    @Test
+    fun `test split companion pane at 1080p`() {
+        // 1920x1080: 3M * 2.25 * 0.6 = 4,050,000
+        val bitrate = StreamMath.calculateSplitCompanionBitrate(1920, 1080)
+        assertEquals(4_050_000, bitrate)
+    }
+
+    @Test
+    fun `test split companion pane bitrate is capped`() {
+        // 4K: huge pixels, should cap at 6Mbps
+        val capped = StreamMath.calculateSplitCompanionBitrate(3840, 2160)
+        assertEquals(6_000_000, capped)
+    }
+
+    @Test
+    fun `test split video pane has floor`() {
+        // Tiny res: should not go below 750kbps
+        val floor = StreamMath.calculateSplitVideoBitrate(320, 240)
+        assertEquals(750_000, floor)
+    }
+
+    @Test
+    fun `test split rebalance saves total bandwidth vs equal split`() {
+        // At 720p: video(4.5M) + companion(1.8M) = 6.3M < base(4M) + secondary(3M) = 7M
+        val videoBitrate = StreamMath.calculateSplitVideoBitrate(1280, 720)
+        val companionBitrate = StreamMath.calculateSplitCompanionBitrate(1280, 720)
+        val baseBitrate = StreamMath.calculateBaseBitrate(1280, 720)
+        val secondaryBitrate = StreamMath.calculateSecondaryBitrate(1280, 720)
+
+        assertTrue(videoBitrate + companionBitrate <= baseBitrate + secondaryBitrate)
+        // Video pane should get more than default secondary
+        assertTrue(videoBitrate > secondaryBitrate)
+        // Companion pane should get less than default secondary
+        assertTrue(companionBitrate < secondaryBitrate)
+    }
 }
