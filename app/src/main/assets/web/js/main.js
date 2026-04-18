@@ -16,6 +16,7 @@ let framePacer = null;
 let secondaryFramePacer = null;
 let currentPrimaryApp = null;
 let isLauncherMode = true; // start in launcher mode
+let launchGuardUntil = 0; // block accidental launches after splash dismiss
 let codecMode = 'h264'; // Default to h264, switch to mjpeg if needed
 
 // Playback profile system:
@@ -41,6 +42,7 @@ let userPreferredProfile = (() => {
     catch (_) { return 'balanced'; }
 })();
 let currentThermalLevel = 'none';
+let ottProfileActive = false;  // server-driven OTT profile hint
 let playbackProfile = userPreferredProfile;
 const DENSITY_STORAGE_KEY = 'castla_display_density';
 let currentDensity = (() => {
@@ -474,7 +476,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         secondaryTouchHandler = new TouchHandler(secondaryCanvas, getActiveSecondaryRenderer(), controlSocket, 'secondary');
         applyActiveFitModes();
         connectSecondaryVideo();
-        requestAnimationFrame(() => sendViewportSize());
+        // Send viewport immediately — the 500ms debounce can cause the primary
+        // VD to stay at full-screen size when entering split mode
+        requestAnimationFrame(() => sendViewportSize(true));
         setTimeout(() => sendSecondaryLaunchRequest(), 120);
     }
 
@@ -642,9 +646,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function submitBubbleInput() {
         if (!bubbleText) return;
-        // Force-finish any ongoing IME composition (e.g. Korean)
-        bubbleText.blur();
+        // Read value BEFORE blur — blur() may discard uncommitted Korean
+        // IME composition on some WebView implementations instead of
+        // committing it, which would leave the value empty.
         const text = bubbleText.value;
+        bubbleText.blur();
         if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
             if (text) {
                 controlSocket.send(JSON.stringify({ type: 'textInput', text }));
@@ -944,7 +950,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             : 'none';
     }
 
-    function sendViewportSize() {
+    function sendViewportSize(immediate = false) {
         if (!controlSocket || controlSocket.readyState !== WebSocket.OPEN) return;
         if (codecMode === 'mjpeg' && !streamPolicy.autoFit) return;
 
@@ -953,7 +959,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (livePrimaryWidth <= 0 || livePrimaryHeight <= 0) return;
 
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
+        const doSend = () => {
             const primaryViewport = browserSplitState.active && browserSplitState.lockedPrimaryViewport
                 ? browserSplitState.lockedPrimaryViewport
                 : { width: livePrimaryWidth, height: livePrimaryHeight };
@@ -984,7 +990,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 fitMode: getEffectivePrimaryFitMode(),
                 layoutMode: streamPolicy.layoutMode
             }));
-        }, 500);
+        };
+        if (immediate) doSend();
+        else resizeTimer = setTimeout(doSend, 500);
     }
 
     function connectControl() {
@@ -1001,7 +1009,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 secondaryTouchHandler = new TouchHandler(secondaryCanvas, getActiveSecondaryRenderer(), controlSocket, 'secondary');
             }
 
-            sendViewportSize();
+            // Send viewport IMMEDIATELY and BEFORE displayDensity so the
+            // server knows the correct dimensions before density triggers a
+            // force rebuild (which otherwise uses stale full-screen size).
+            sendViewportSize(true);
 
             if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active) {
                 if (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED) {
@@ -1094,6 +1105,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     else blurKeyboardProxy();
                 } else if (msg.type === 'thermalStatus') {
                     handleThermalProfileSwitch(msg.level);
+                } else if (msg.type === 'ottProfileHint') {
+                    ottProfileActive = !!msg.active;
+                    refreshEffectiveProfile();
+                    console.log(`[Profile] OTT hint: active=${ottProfileActive}`);
                 } else if (msg.type === 'autoTierChange') {
                     const tier = msg.tier;
                     const reason = msg.reason;
@@ -1235,6 +1250,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function launchApp(app, isSplit = false) {
+        // Block accidental launches right after splash dismiss
+        if (Date.now() < launchGuardUntil) {
+            console.log(`[Launcher] Blocked accidental launch: ${app.packageName} (guard active)`);
+            return;
+        }
         const pkgName = app.packageName;
         const componentName = app.componentName || null;
         console.log(`[Launcher] Launching app: ${pkgName} (split=${isSplit})`);
@@ -1536,6 +1556,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         document.removeEventListener('click', dismissSplash);
         document.removeEventListener('touchstart', dismissSplash);
+        // Prevent the splash-dismiss tap from accidentally launching an app
+        // cell that sits underneath the splash overlay
+        launchGuardUntil = Date.now() + 600;
         if (splashScreen) {
             splashScreen.classList.add('hidden');
             setTimeout(() => splashScreen.classList.add('removed'), 500);
@@ -1643,9 +1666,11 @@ document.addEventListener('DOMContentLoaded', async () => {
      */
     function resolveEffectiveProfile(preferred, thermalLevel) {
         const cap = THERMAL_MAX_PROFILE[thermalLevel] || 'smooth';
-        const prefRank = PROFILE_RANK[preferred] ?? 1;
+        // OTT hint: boost to at least smooth for video apps (more buffering = less stutter)
+        const base = ottProfileActive ? 'smooth' : preferred;
+        const baseRank = PROFILE_RANK[base] ?? 1;
         const capRank = PROFILE_RANK[cap] ?? 2;
-        return prefRank <= capRank ? preferred : cap;
+        return baseRank <= capRank ? base : cap;
     }
 
     /**

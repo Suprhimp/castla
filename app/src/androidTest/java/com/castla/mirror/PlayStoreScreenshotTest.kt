@@ -121,11 +121,7 @@ class PlayStoreScreenshotTest {
                 intent.putExtra("open_settings", true)
                 context.startActivity(intent)
             }
-            "desktop" -> {
-                val intent = Intent().setClassName(pkg, "com.castla.mirror.ui.DesktopActivity")
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                context.startActivity(intent)
-            }
+            // "desktop" screen removed — DesktopActivity has been deleted
         }
     }
 

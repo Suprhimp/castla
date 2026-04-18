@@ -24,7 +24,7 @@ data class AppLaunchRequest(
 )
 
 /**
- * Singleton bus to pass launch requests from UI (DesktopActivity) to the running MirrorService.
+ * Singleton bus to pass launch requests from UI to the running MirrorService.
  */
 object AppLaunchBus {
     private val _events = MutableSharedFlow<AppLaunchRequest>(extraBufferCapacity = 5)

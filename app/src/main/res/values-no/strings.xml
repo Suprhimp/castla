@@ -8,13 +8,7 @@
 
     <string name="toast_screen_capture_granted">Skjermopptak tillatt!</string>
     <string name="toast_screen_capture_denied">Skjermopptak nektet (kode=%d)</string>
-    <string name="toast_vpn_permission_required">VPN-tillatelse kreves for Tesla-tilkobling</string>
-    <string name="toast_tesla_pairing_cancelled">Tesla-paring avbrutt</string>
-    <string name="toast_could_not_open_browser">Kunne ikke åpne nettleseren. Vennligst installer Shizuku manuelt.</string>
-    <string name="toast_tesla_pairing_failed">Tesla-paring mislyktes: %s</string>
-    <string name="toast_tesla_paired_device">Tesla paret: %s</string>
     <string name="toast_tesla_paired">Tesla paret!</string>
-    <string name="toast_bluetooth_permission_missing">Mangler Bluetooth-tillatelse. Automatisk gjenkjenning fungerer kanskje ikke.</string>
     <string name="toast_tesla_paired_auto_detect">Tesla paret! Automatisk gjenkjenning aktivert.</string>
     <string name="toast_tesla_auto_detect_disabled">Tesla automatisk gjenkjenning deaktivert</string>
     <string name="title_ble_fallback">BLE Reserveskanner</string>
@@ -27,10 +21,6 @@
 
     <string name="subtitle_tesla_screen_mirroring">Tesla skjermspeiling</string>
     <string name="btn_settings">Innstillinger</string>
-<string name="title_tesla_auto_detect_on">Tesla autogjenkjenning PÅ</string>
-    <string name="title_tesla_auto_detect">Tesla autogjenkjenning</string>
-    <string name="desc_tesla_auto_detect_on">Du vil få et varsel når Tesla kobler til</string>
-    <string name="desc_tesla_auto_detect_off">Få varsel når din Tesla er i nærheten</string>
     <string name="status_streaming_active">Strømming aktiv</string>
     <string name="status_preparing">Forbereder…</string>
     <string name="status_ready_to_stream">Klar til å strømme</string>
@@ -42,7 +32,6 @@
     <string name="desc_shizuku_setup_steps">1. Innstillinger &gt; Om telefonen &gt; Programvareinformasjon\n   &gt; Trykk på byggnummeret 7 ganger\n2. Innstillinger &gt; Utvikleralternativer\n   &gt; Trådløs feilsøking &gt; PÅ\n3. Åpne Shizuku &gt; \"Start via trådløs feilsøking\"</string>
     <string name="btn_open_shizuku">Åpne Shizuku</string>
     <string name="btn_setup_guide">Oppsettsveiledning</string>
-    <string name="status_shizuku_running_setup">Shizuku kjører. Setter opp Tesla-tilkobling...</string>
     <string name="desc_shizuku_permission_required">Shizuku kjører, men Castla har ikke tillatelse ennå.\nUten tillatelse er kun grunnleggende skjermspeiling tilgjengelig — berøringsinndata og appstart vil ikke fungere.</string>
     <string name="btn_grant_shizuku_permission">Gi Shizuku-tillatelse</string>
     <string name="btn_stop_mirroring">Stopp speiling</string>
@@ -51,8 +40,6 @@
     <string name="version_latest">Nyeste</string>
     <string name="title_how_to_use">Slik bruker du det</string>
     <string name="desc_how_to_use">1. Koble telefon og Tesla til samme WiFi\n2. Trykk på \"Start speiling\" ovenfor\n3. Åpne URL-en i Teslas nettleser\n4. Telefonskjermen din vil vises på Tesla</string>
-    <string name="title_network_setup_log">Nettverksoppsettlogg</string>
-    <string name="btn_copy">Kopier</string>
 
     <!-- Settings Screen -->
     <string name="settings_back">Tilbake</string>

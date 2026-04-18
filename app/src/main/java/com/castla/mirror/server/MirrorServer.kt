@@ -6,6 +6,8 @@ import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
 import fi.iki.elonen.NanoWSD.WebSocket
 import org.json.JSONObject
+import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.MirrorDiagnostics
 import com.castla.mirror.utils.AppCategoryClassifier
 import com.castla.mirror.ott.OttCatalog
 
@@ -133,6 +135,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         val connected = primaryVideoSockets.isNotEmpty() || secondaryVideoSockets.isNotEmpty() || controlSockets.isNotEmpty()
         if (connected != isBrowserConnected) {
             isBrowserConnected = connected
+            if (!connected) {
+                MirrorDiagnostics.log(DiagnosticEvent.SOCKET_DISCONNECTED,
+                    "all browser sockets closed")
+            }
             onBrowserConnectionListener?.invoke(connected)
         }
     }

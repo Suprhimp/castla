@@ -256,4 +256,113 @@ class AutoScalePolicyTest {
         ))
         assertTrue(decision is AutoScaleDecision.Hold)
     }
+
+    // ── OTT tier boost ──
+
+    @Test
+    fun `ottMinTier returns OTT_MIN_TIER when video app at tier 0`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 0,
+            tierCount = 4
+        )
+        assertEquals(AutoScalePolicy.OTT_MIN_TIER, result)
+    }
+
+    @Test
+    fun `ottMinTier returns null when not video app`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = false,
+            thermalStatus = 0,
+            tierCount = 4
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `ottMinTier returns null when already at or above min tier`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 1,
+            isVideoApp = true,
+            thermalStatus = 0,
+            tierCount = 4
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `ottMinTier returns null under thermal pressure`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 1,
+            tierCount = 4
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `ottMinTier clamped to max available tier`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 0,
+            tierCount = 1
+        )
+        assertNull(result) // only 1 tier available, can't go higher
+    }
+
+    @Test
+    fun `ottMinTier returns null under severe thermal`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 3,
+            tierCount = 4
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `ottMinTier returns null when above min tier`() {
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 2,
+            isVideoApp = true,
+            thermalStatus = 0,
+            tierCount = 4
+        )
+        assertNull(result) // tier 2 > OTT_MIN_TIER(1), no boost needed
+    }
+
+    @Test
+    fun `ottMinTier returns null for two tier system when min tier equals max`() {
+        // tierCount=2 means tiers 0,1 — OTT_MIN_TIER=1 is valid
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 0,
+            tierCount = 2
+        )
+        assertEquals(AutoScalePolicy.OTT_MIN_TIER, result)
+    }
+
+    @Test
+    fun `ottMinTier constant is 1`() {
+        // Ensure OTT minimum tier is 720p60 (tier index 1)
+        assertEquals(1, AutoScalePolicy.OTT_MIN_TIER)
+    }
+
+    @Test
+    fun `ottMinTier returns null when thermal LIGHT even at tier 0`() {
+        // thermalStatus=1 (LIGHT) should block boost
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 1,
+            tierCount = 4
+        )
+        assertNull(result)
+    }
 }

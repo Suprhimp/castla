@@ -8,13 +8,7 @@
 
     <string name="toast_screen_capture_granted">Capture d\'écran autorisée !</string>
     <string name="toast_screen_capture_denied">Capture d\'écran refusée (code=%d)</string>
-    <string name="toast_vpn_permission_required">L\'autorisation VPN est requise pour la connexion Tesla</string>
-    <string name="toast_tesla_pairing_cancelled">Le couplage Tesla a été annulé</string>
-    <string name="toast_could_not_open_browser">Impossible d\'ouvrir le navigateur. Veuillez installer Shizuku manuellement.</string>
-    <string name="toast_tesla_pairing_failed">Échec du couplage Tesla : %s</string>
-    <string name="toast_tesla_paired_device">Tesla couplée : %s</string>
     <string name="toast_tesla_paired">Tesla couplée !</string>
-    <string name="toast_bluetooth_permission_missing">Autorisation Bluetooth manquante. La détection automatique peut ne pas fonctionner.</string>
     <string name="toast_tesla_paired_auto_detect">Tesla couplée ! Détection automatique activée.</string>
     <string name="toast_tesla_auto_detect_disabled">Détection automatique Tesla désactivée</string>
     <string name="title_ble_fallback">Scanner BLE de secours</string>
@@ -27,10 +21,6 @@
 
     <string name="subtitle_tesla_screen_mirroring">Mise en miroir de l\'écran Tesla</string>
     <string name="btn_settings">Paramètres</string>
-<string name="title_tesla_auto_detect_on">Détection auto Tesla ACTIVÉE</string>
-    <string name="title_tesla_auto_detect">Détection automatique Tesla</string>
-    <string name="desc_tesla_auto_detect_on">Vous recevrez une notification lorsque Tesla se connectera</string>
-    <string name="desc_tesla_auto_detect_off">Soyez averti lorsque votre Tesla est à proximité</string>
     <string name="status_streaming_active">Streaming actif</string>
     <string name="status_preparing">Préparation…</string>
     <string name="status_ready_to_stream">Prêt pour le streaming</string>
@@ -42,7 +32,6 @@
     <string name="desc_shizuku_setup_steps">1. Paramètres &gt; À propos du téléphone &gt; Infos sur le logiciel\n   &gt; Appuyez 7 fois sur le numéro de version\n2. Paramètres &gt; Options pour les développeurs\n   &gt; Débogage sans fil &gt; ACTIVÉ\n3. Ouvrez Shizuku &gt; \"Démarrer via le débogage sans fil\"</string>
     <string name="btn_open_shizuku">Ouvrir Shizuku</string>
     <string name="btn_setup_guide">Guide d\'installation</string>
-    <string name="status_shizuku_running_setup">Shizuku est en cours d\'exécution. Configuration de la connexion Tesla...</string>
     <string name="desc_shizuku_permission_required">Shizuku est en cours d\'exécution, mais Castla n\'a pas encore l\'autorisation.\nSans autorisation, seule la mise en miroir de base est disponible — la saisie tactile et le lancement d\'applications ne fonctionneront pas.</string>
     <string name="btn_grant_shizuku_permission">Accorder l\'autorisation Shizuku</string>
     <string name="btn_stop_mirroring">Arrêter la mise en miroir</string>
@@ -51,8 +40,6 @@
     <string name="version_latest">À jour</string>
     <string name="title_how_to_use">Comment utiliser</string>
     <string name="desc_how_to_use">1. Connectez le téléphone et Tesla au même WiFi\n2. Appuyez sur \"Démarrer la mise en miroir\" ci-dessus\n3. Ouvrez l\'URL dans le navigateur de Tesla\n4. L\'écran de votre téléphone apparaîtra sur Tesla</string>
-    <string name="title_network_setup_log">Journal de configuration réseau</string>
-    <string name="btn_copy">Copier</string>
 
     <!-- Settings Screen -->
     <string name="settings_back">Retour</string>

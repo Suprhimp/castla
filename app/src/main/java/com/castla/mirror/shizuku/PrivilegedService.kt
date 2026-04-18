@@ -248,8 +248,16 @@ class PrivilegedService : IPrivilegedService.Stub() {
             val output = process.inputStream.bufferedReader().readText()
             val error = process.errorStream.bufferedReader().readText()
             process.waitFor()
-            if (error.isNotEmpty()) Log.w(TAG, "stderr: $error")
+            if (error.isNotEmpty()) {
+                Log.w(TAG, "stderr: $error")
+                // Propagate display-related SecurityExceptions so callers can detect stale displays
+                if (error.contains("SecurityException") || error.contains("Permission Denial")) {
+                    throw SecurityException(error.trim())
+                }
+            }
             output
+        } catch (e: SecurityException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "exec failed: $command", e)
             ""
@@ -477,6 +485,9 @@ class PrivilegedService : IPrivilegedService.Stub() {
             val cmd = buildLaunchCommand(displayId, packageName)
             execCommand(cmd)
             Log.i(TAG, "Launched $packageName on display $displayId")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Failed to launch $packageName on display $displayId (display not found?)", e)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
         }
@@ -487,6 +498,9 @@ class PrivilegedService : IPrivilegedService.Stub() {
             val cmd = buildLaunchCommand(displayId, packageName, extraKey, extraValue)
             execCommand(cmd)
             Log.i(TAG, "Launched $packageName with extra on display $displayId")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Failed to launch $packageName with extra on display $displayId (display not found?)", e)
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageName on display $displayId", e)
         }
@@ -881,7 +895,7 @@ class PrivilegedService : IPrivilegedService.Stub() {
         val vd = virtualDisplays[displayId]
         if (vd == null) {
             Log.w(TAG, "resizeVirtualDisplay: no display with id=$displayId")
-            return
+            throw IllegalStateException("Virtual display $displayId not found")
         }
         vd.resize(width, height, densityDpi)
         Log.i(TAG, "Resized virtual display $displayId to ${width}x${height} @ ${densityDpi}dpi")

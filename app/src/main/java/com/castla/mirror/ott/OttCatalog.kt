@@ -2,7 +2,7 @@ package com.castla.mirror.ott
 
 /**
  * Single source of truth for OTT app metadata.
- * Replaces duplicated URL maps in DesktopActivity, MirrorServer, and MirrorForegroundService.
+ * Replaces duplicated URL maps in MirrorServer and MirrorForegroundService.
  */
 object OttCatalog {
 
@@ -34,7 +34,4 @@ object OttCatalog {
 
     /** Check if a package is a known OTT app. */
     fun isOtt(packageName: String): Boolean = byPackage.containsKey(packageName)
-
-    /** All known OTT package names. */
-    val allPackages: Set<String> get() = byPackage.keys
 }

@@ -15,6 +15,7 @@ import android.widget.FrameLayout
 import android.util.Log
 import android.content.pm.ActivityInfo
 import android.view.Gravity
+import android.content.res.Configuration
 
 class WebBrowserActivity : Activity() {
 
@@ -111,8 +112,25 @@ class WebBrowserActivity : Activity() {
         root.addView(fullScreenContainer)
         setContentView(root)
 
-        Log.i(TAG, "Loading URL: $url (Split: $isSplit)")
-        webView.loadUrl(url)
+        // Restore WebView state if activity was recreated (e.g. VD resize
+        // that wasn't caught by configChanges)
+        if (savedInstanceState != null) {
+            webView.restoreState(savedInstanceState)
+            Log.i(TAG, "Restored WebView state (URL: ${webView.url})")
+        } else {
+            Log.i(TAG, "Loading URL: $url (Split: $isSplit)")
+            webView.loadUrl(url)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        webView.saveState(outState)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d(TAG, "Configuration changed: ${newConfig.screenWidthDp}x${newConfig.screenHeightDp} dpi=${newConfig.densityDpi}")
     }
 
     private fun setupWebView(webView: WebView, isSplit: Boolean) {

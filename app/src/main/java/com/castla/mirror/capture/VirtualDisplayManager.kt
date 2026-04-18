@@ -8,6 +8,8 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.Surface
+import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.MirrorDiagnostics
 import com.castla.mirror.shizuku.IPrivilegedService
 import com.castla.mirror.shizuku.PrivilegedService
 import com.castla.mirror.shizuku.ShizukuSetup
@@ -28,8 +30,8 @@ class VirtualDisplayManager {
 
     private var virtualDisplay: VirtualDisplay? = null
     private var privilegedService: IPrivilegedService? = null
-    private var displayId: Int = -1
-    private var isBound = false
+    @Volatile private var displayId: Int = -1
+    @Volatile private var isBound = false
     private var bindingInProgress = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var serviceConnection: ServiceConnection? = null
@@ -104,6 +106,7 @@ class VirtualDisplayManager {
 
                     isBound = true
                     Log.i(TAG, "Shizuku privileged service connected")
+                    MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_READY, "via VirtualDisplayManager")
                     if (!callbackFired) {
                         callbackFired = true
                         callback(true)
@@ -123,6 +126,7 @@ class VirtualDisplayManager {
                     bindingInProgress = false
                     displayId = -1
                     Log.i(TAG, "Shizuku privileged service disconnected")
+                    MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_DEAD, "via VirtualDisplayManager")
                 }
             }
             serviceConnection = connection
@@ -173,6 +177,7 @@ class VirtualDisplayManager {
                 }
                 displayId = id
                 Log.i(TAG, "Virtual display created via Shizuku: id=$id, ${width}x${height}, surface attached")
+                MirrorDiagnostics.log(DiagnosticEvent.VD_CREATED, "id=$id ${width}x${height}")
                 null
             } else {
                 Log.e(TAG, "Shizuku returned invalid display ID")
@@ -313,26 +318,36 @@ class VirtualDisplayManager {
 
     /** Launch an app on the virtual display. */
     fun launchAppOnDisplay(packageName: String): Boolean {
-        if (displayId < 0 || packageName.isEmpty()) return false
+        val id = displayId
+        if (id < 0 || packageName.isEmpty()) return false
         return try {
-            privilegedService?.launchAppOnDisplay(displayId, packageName)
-            Log.i(TAG, "Launched $packageName on virtual display $displayId")
+            privilegedService?.launchAppOnDisplay(id, packageName)
+            Log.i(TAG, "Launched $packageName on virtual display $id")
             true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Display $id is stale (SecurityException), invalidating", e)
+            displayId = -1
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch $packageName on virtual display", e)
+            Log.e(TAG, "Failed to launch $packageName on virtual display $id", e)
             false
         }
     }
-    
+
     /** Launch an app on the virtual display with string intent extra. */
     fun launchAppWithExtraOnDisplay(packageName: String, extraKey: String, extraValue: String): Boolean {
-        if (displayId < 0 || packageName.isEmpty()) return false
+        val id = displayId
+        if (id < 0 || packageName.isEmpty()) return false
         return try {
-            privilegedService?.launchAppWithExtraOnDisplay(displayId, packageName, extraKey, extraValue)
-            Log.i(TAG, "Launched $packageName with extra on virtual display $displayId")
+            privilegedService?.launchAppWithExtraOnDisplay(id, packageName, extraKey, extraValue)
+            Log.i(TAG, "Launched $packageName with extra on virtual display $id")
             true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Display $id is stale (SecurityException), invalidating", e)
+            displayId = -1
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch $packageName on virtual display", e)
+            Log.e(TAG, "Failed to launch $packageName on virtual display $id", e)
             false
         }
     }
@@ -342,12 +357,14 @@ class VirtualDisplayManager {
      * Use this when rebuilding the pipeline with new dimensions.
      */
     fun releaseVirtualDisplay() {
-        if (displayId >= 0) {
+        val releasedId = displayId
+        if (releasedId >= 0) {
             try {
-                privilegedService?.releaseVirtualDisplay(displayId)
+                privilegedService?.releaseVirtualDisplay(releasedId)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to release virtual display", e)
             }
+            MirrorDiagnostics.log(DiagnosticEvent.VD_STOPPED, "id=$releasedId")
         }
         virtualDisplay?.release()
         virtualDisplay = null
@@ -355,12 +372,14 @@ class VirtualDisplayManager {
     }
 
     fun release() {
-        if (displayId >= 0) {
+        val releasedId = displayId
+        if (releasedId >= 0) {
             try {
-                privilegedService?.releaseVirtualDisplay(displayId)
+                privilegedService?.releaseVirtualDisplay(releasedId)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to release virtual display", e)
             }
+            MirrorDiagnostics.log(DiagnosticEvent.VD_STOPPED, "id=$releasedId (full release)")
         }
         try {
             privilegedService?.destroy()
