@@ -47,6 +47,8 @@ import com.castla.mirror.policy.DisconnectPolicy
 import com.castla.mirror.policy.ScreenOffAction
 import com.castla.mirror.policy.ScreenOffPolicy
 import com.castla.mirror.policy.ScreenOffState
+import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.MirrorDiagnostics
 import com.castla.mirror.utils.StreamMath
 import com.castla.mirror.ui.SplitWebPresentation
 import kotlinx.coroutines.CoroutineScope
@@ -303,10 +305,19 @@ class MirrorForegroundService : Service() {
                     android.content.Intent.ACTION_SCREEN_OFF -> {
                         Log.i(TAG, "Screen OFF detected — using scrcpy approach")
                         onPhoneScreenOff()
+                        // Check keyguard shortly after screen off (keyguard engages with a small delay)
+                        mainHandler.postDelayed({
+                            if (keyguardManager.isKeyguardLocked) {
+                                MirrorDiagnostics.log(DiagnosticEvent.KEYGUARD_LOCKED)
+                            }
+                        }, 500)
                     }
                     android.content.Intent.ACTION_SCREEN_ON -> {
                         Log.i(TAG, "Screen ON detected")
                         onPhoneScreenOn()
+                    }
+                    android.content.Intent.ACTION_USER_PRESENT -> {
+                        MirrorDiagnostics.log(DiagnosticEvent.KEYGUARD_UNLOCKED)
                     }
                 }
             }
@@ -314,6 +325,7 @@ class MirrorForegroundService : Service() {
         val filter = android.content.IntentFilter().apply {
             addAction(android.content.Intent.ACTION_SCREEN_OFF)
             addAction(android.content.Intent.ACTION_SCREEN_ON)
+            addAction(android.content.Intent.ACTION_USER_PRESENT)
         }
         registerReceiver(screenOffReceiver, filter)
     }
@@ -656,6 +668,7 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onPhoneScreenOff() {
+        MirrorDiagnostics.log(DiagnosticEvent.SCREEN_OFF)
         val action = screenOffPolicy.onScreenOff(panelOffSupported = screenOffPolicy.isPanelOffSupported)
         logScreenState("Screen OFF (action=$action)")
         executeScreenOffAction(action)
@@ -663,6 +676,7 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onPhoneScreenOn() {
+        MirrorDiagnostics.log(DiagnosticEvent.SCREEN_ON)
         val action = screenOffPolicy.onScreenOn()
         logScreenState("Screen ON (action=$action)")
         executeScreenOnAction(action)
@@ -750,6 +764,7 @@ class MirrorForegroundService : Service() {
         }
         cleanupCompleted = true // set immediately under lock to prevent reentrant race
         Log.i(TAG, "Performing cleanup: $reason")
+        MirrorDiagnostics.endSession(reason)
         isCleanupInProgress = true
 
         // Always restore physical display panel on cleanup — safety net
@@ -927,6 +942,8 @@ class MirrorForegroundService : Service() {
         muteLocalAudio: Boolean = false
     ) {
         try {
+            MirrorDiagnostics.onSessionStart()
+
             // Only initialize projection and server — defer encoder/capture until browser connects
             screenCapture = ScreenCaptureManager(this).also {
                 it.initProjection(resultCode, data)

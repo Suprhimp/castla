@@ -18,6 +18,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.IBinder
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -196,6 +198,7 @@ class MainActivity : AppCompatActivity() {
 
         loadAutoDetectState()
         requestStartupPermissions()
+        requestBatteryOptimizationExemption()
 
         // Handle intent extra to open settings (e.g. from screenshot automation)
         if (intent?.getBooleanExtra("open_settings", false) == true) {
@@ -916,6 +919,21 @@ class MainActivity : AppCompatActivity() {
         if (needed.isNotEmpty()) {
             Log.i(TAG, "Requesting startup permissions: $needed")
             startupPermissionLauncher.launch(needed.toTypedArray())
+        }
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            Log.i(TAG, "Requesting battery optimization exemption")
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            try {
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to request battery optimization exemption", e)
+            }
         }
     }
 

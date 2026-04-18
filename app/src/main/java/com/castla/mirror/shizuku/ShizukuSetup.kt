@@ -7,6 +7,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.MirrorDiagnostics
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import rikka.shizuku.Shizuku
@@ -41,7 +43,7 @@ class ShizukuSetup {
             com.castla.mirror.BuildConfig.APPLICATION_ID,
             PrivilegedService::class.java.name
         )
-    ).daemon(false).processNameSuffix("privileged").version(USER_SERVICE_VERSION)
+    ).daemon(true).processNameSuffix("privileged").version(USER_SERVICE_VERSION)
 
     /** Guard to prevent duplicate bind calls while a bind is in progress. */
     private var bindingInProgress = false
@@ -68,11 +70,13 @@ class ShizukuSetup {
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Log.i(TAG, "Shizuku binder received")
+        MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_READY)
         updateState()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         Log.i(TAG, "Shizuku binder dead")
+        MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_DEAD)
         privilegedService = null
         _serviceConnected.value = false
         bindingInProgress = false

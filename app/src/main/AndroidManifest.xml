@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 필수: 화면이 꺼졌을 때 스트리밍이 멈추는 것을 방지하기 위한 WakeLock 권한 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 배터리 최적화 제외 요청: Shizuku 데몬 + 스트리밍 안정성 확보 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Bluetooth permissions for CDM device address retrieval -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />

@@ -8,6 +8,8 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import android.view.Surface
+import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.MirrorDiagnostics
 import com.castla.mirror.shizuku.IPrivilegedService
 import com.castla.mirror.shizuku.PrivilegedService
 import com.castla.mirror.shizuku.ShizukuSetup
@@ -84,7 +86,7 @@ class VirtualDisplayManager {
                     PrivilegedService::class.java.name
                 )
             )
-                .daemon(false)
+                .daemon(true)
                 .processNameSuffix("privileged")
                 .debuggable(true)
                 .version(ShizukuSetup.USER_SERVICE_VERSION)
@@ -104,6 +106,7 @@ class VirtualDisplayManager {
 
                     isBound = true
                     Log.i(TAG, "Shizuku privileged service connected")
+                    MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_READY, "via VirtualDisplayManager")
                     if (!callbackFired) {
                         callbackFired = true
                         callback(true)
@@ -123,6 +126,7 @@ class VirtualDisplayManager {
                     bindingInProgress = false
                     displayId = -1
                     Log.i(TAG, "Shizuku privileged service disconnected")
+                    MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_DEAD, "via VirtualDisplayManager")
                 }
             }
             serviceConnection = connection
@@ -173,6 +177,7 @@ class VirtualDisplayManager {
                 }
                 displayId = id
                 Log.i(TAG, "Virtual display created via Shizuku: id=$id, ${width}x${height}, surface attached")
+                MirrorDiagnostics.log(DiagnosticEvent.VD_CREATED, "id=$id ${width}x${height}")
                 null
             } else {
                 Log.e(TAG, "Shizuku returned invalid display ID")
@@ -352,12 +357,14 @@ class VirtualDisplayManager {
      * Use this when rebuilding the pipeline with new dimensions.
      */
     fun releaseVirtualDisplay() {
-        if (displayId >= 0) {
+        val releasedId = displayId
+        if (releasedId >= 0) {
             try {
-                privilegedService?.releaseVirtualDisplay(displayId)
+                privilegedService?.releaseVirtualDisplay(releasedId)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to release virtual display", e)
             }
+            MirrorDiagnostics.log(DiagnosticEvent.VD_STOPPED, "id=$releasedId")
         }
         virtualDisplay?.release()
         virtualDisplay = null
@@ -365,12 +372,14 @@ class VirtualDisplayManager {
     }
 
     fun release() {
-        if (displayId >= 0) {
+        val releasedId = displayId
+        if (releasedId >= 0) {
             try {
-                privilegedService?.releaseVirtualDisplay(displayId)
+                privilegedService?.releaseVirtualDisplay(releasedId)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to release virtual display", e)
             }
+            MirrorDiagnostics.log(DiagnosticEvent.VD_STOPPED, "id=$releasedId (full release)")
         }
         try {
             privilegedService?.destroy()
