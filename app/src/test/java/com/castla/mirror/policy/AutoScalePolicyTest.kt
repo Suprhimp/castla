@@ -347,4 +347,22 @@ class AutoScalePolicyTest {
         )
         assertEquals(AutoScalePolicy.OTT_MIN_TIER, result)
     }
+
+    @Test
+    fun `ottMinTier constant is 1`() {
+        // Ensure OTT minimum tier is 720p60 (tier index 1)
+        assertEquals(1, AutoScalePolicy.OTT_MIN_TIER)
+    }
+
+    @Test
+    fun `ottMinTier returns null when thermal LIGHT even at tier 0`() {
+        // thermalStatus=1 (LIGHT) should block boost
+        val result = AutoScalePolicy.ottMinTier(
+            currentTierIndex = 0,
+            isVideoApp = true,
+            thermalStatus = 1,
+            tierCount = 4
+        )
+        assertNull(result)
+    }
 }

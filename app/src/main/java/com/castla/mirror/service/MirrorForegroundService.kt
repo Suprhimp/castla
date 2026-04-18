@@ -2640,28 +2640,35 @@ class MirrorForegroundService : Service() {
 
         serviceScope.launch(Dispatchers.IO) {
             try {
-                kotlinx.coroutines.delay(300)
-                val displayId = virtualDisplayManager?.getDisplayId() ?: -1
-                val service = virtualDisplayManager?.getPrivilegedService()
-                if (service == null) return@launch
+                val maxRetries = 4
+                val retryDelays = longArrayOf(300, 400, 500, 600)
+                for (attempt in 0 until maxRetries) {
+                    kotlinx.coroutines.delay(retryDelays[attempt])
+                    val displayId = virtualDisplayManager?.getDisplayId() ?: -1
+                    val service = virtualDisplayManager?.getPrivilegedService()
+                    if (service == null) return@launch
 
-                val result = try {
-                    service.execCommand("dumpsys input_method | grep -E 'mInputShown|mImeWindowVis|mDecorViewVisible|mWindowVisible|mServedView|mShowRequested|mCurClient'")
-                } catch (e: android.os.DeadObjectException) {
-                    imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
-                    return@launch
-                }
-                if (result == null) return@launch
+                    val result = try {
+                        service.execCommand("dumpsys input_method | grep -E 'mInputShown|mImeWindowVis|mDecorViewVisible|mWindowVisible|mServedView|mShowRequested|mCurClient'")
+                    } catch (e: android.os.DeadObjectException) {
+                        imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
+                        return@launch
+                    }
+                    if (result == null) return@launch
 
-                var imeVisible = parseImeVisible(result)
-                if (!imeVisible && displayId > 0) {
-                    imeVisible = parseHasServedInput(result)
-                }
+                    var imeVisible = parseImeVisible(result)
+                    if (!imeVisible && displayId > 0) {
+                        imeVisible = parseHasServedInput(result)
+                    }
 
-                if (imeVisible != lastImeState) {
-                    lastImeState = imeVisible
-                    val msg = if (imeVisible) """{"type":"showKeyboard"}""" else """{"type":"hideKeyboard"}"""
-                    mirrorServer?.broadcastControlMessage(msg)
+                    if (imeVisible != lastImeState) {
+                        lastImeState = imeVisible
+                        val msg = if (imeVisible) """{"type":"showKeyboard"}""" else """{"type":"hideKeyboard"}"""
+                        mirrorServer?.broadcastControlMessage(msg)
+                        break
+                    }
+                    // IME state unchanged — if already showing or last attempt, stop retrying
+                    if (lastImeState || attempt == maxRetries - 1) break
                 }
             } catch (e: Exception) {
                 imeCheckSuspendUntil = System.currentTimeMillis() + 10_000

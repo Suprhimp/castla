@@ -28,8 +28,8 @@ class VirtualDisplayManager {
 
     private var virtualDisplay: VirtualDisplay? = null
     private var privilegedService: IPrivilegedService? = null
-    private var displayId: Int = -1
-    private var isBound = false
+    @Volatile private var displayId: Int = -1
+    @Volatile private var isBound = false
     private var bindingInProgress = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var serviceConnection: ServiceConnection? = null
@@ -313,26 +313,36 @@ class VirtualDisplayManager {
 
     /** Launch an app on the virtual display. */
     fun launchAppOnDisplay(packageName: String): Boolean {
-        if (displayId < 0 || packageName.isEmpty()) return false
+        val id = displayId
+        if (id < 0 || packageName.isEmpty()) return false
         return try {
-            privilegedService?.launchAppOnDisplay(displayId, packageName)
-            Log.i(TAG, "Launched $packageName on virtual display $displayId")
+            privilegedService?.launchAppOnDisplay(id, packageName)
+            Log.i(TAG, "Launched $packageName on virtual display $id")
             true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Display $id is stale (SecurityException), invalidating", e)
+            displayId = -1
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch $packageName on virtual display", e)
+            Log.e(TAG, "Failed to launch $packageName on virtual display $id", e)
             false
         }
     }
-    
+
     /** Launch an app on the virtual display with string intent extra. */
     fun launchAppWithExtraOnDisplay(packageName: String, extraKey: String, extraValue: String): Boolean {
-        if (displayId < 0 || packageName.isEmpty()) return false
+        val id = displayId
+        if (id < 0 || packageName.isEmpty()) return false
         return try {
-            privilegedService?.launchAppWithExtraOnDisplay(displayId, packageName, extraKey, extraValue)
-            Log.i(TAG, "Launched $packageName with extra on virtual display $displayId")
+            privilegedService?.launchAppWithExtraOnDisplay(id, packageName, extraKey, extraValue)
+            Log.i(TAG, "Launched $packageName with extra on virtual display $id")
             true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Display $id is stale (SecurityException), invalidating", e)
+            displayId = -1
+            false
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch $packageName on virtual display", e)
+            Log.e(TAG, "Failed to launch $packageName on virtual display $id", e)
             false
         }
     }

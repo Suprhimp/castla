@@ -2,32 +2,6 @@ package com.castla.mirror.utils
 
 object StreamMath {
     /**
-     * Calculates the optimal encoding dimensions based on raw screen size and a max height limit.
-     * Always returns dimensions aligned to 16 (required by hardware encoders).
-     * 
-     * @param rawWidth Original screen width
-     * @param rawHeight Original screen height
-     * @param maxHeight Maximum allowed height (e.g., 720 or 1080)
-     * @return Pair of (width, height)
-     */
-    fun calculateDimensions(rawWidth: Int, rawHeight: Int, maxHeight: Int): Pair<Int, Int> {
-        var width = rawWidth
-        var height = rawHeight
-        
-        if (height > maxHeight) {
-            val scale = maxHeight.toFloat() / height
-            height = maxHeight
-            width = (width * scale).toInt()
-        }
-        
-        // Align to 16-multiple for H.264
-        width = (width + 15) and 15.inv()
-        height = (height + 15) and 15.inv()
-        
-        return Pair(width, height)
-    }
-
-    /**
      * Calculates target bitrate based on pixel count relative to 720p base (4Mbps).
      * @param width The target width
      * @param height The target height
@@ -75,11 +49,6 @@ object StreamMath {
      */
     fun calculateOttBitrate(baseBitrate: Int): Int {
         return minOf((baseBitrate * 1.2).toInt(), 15_000_000)
-    }
-
-    @Deprecated("Use calculateOttBitrate instead", replaceWith = ReplaceWith("calculateOttBitrate(baseBitrate)"))
-    fun calculateVideoAppBitrate(baseBitrate: Int): Int {
-        return calculateOttBitrate(baseBitrate)
     }
 
     /**

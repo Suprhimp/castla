@@ -56,21 +56,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Launcher for Virtual Display — no longer used (browser handles app list) -->
-        <activity
-            android:name=".ui.DesktopActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:excludeFromRecents="true"
-            android:taskAffinity="com.castla.mirror.desktop"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
-
         <!-- Web Browser Activity for DRM-restricted OTTs like YouTube and Netflix -->
         <activity
             android:name=".ui.WebBrowserActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboardHidden"
             android:hardwareAccelerated="true"
             android:taskAffinity="com.castla.mirror.web"
             android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />
@@ -81,7 +72,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboardHidden"
             android:hardwareAccelerated="true"
             android:taskAffinity="com.castla.mirror.split"
             android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />
@@ -91,14 +82,6 @@
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
 
-        <service
-            android:name=".network.TeslaVpnService"
-            android:permission="android.permission.BIND_VPN_SERVICE"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.net.VpnService" />
-            </intent-filter>
-        </service>
 
         <!-- FileProvider for APK installation -->
         <provider

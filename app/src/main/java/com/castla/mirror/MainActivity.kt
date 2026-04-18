@@ -27,7 +27,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import java.util.regex.Pattern
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -37,7 +36,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -55,10 +53,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import android.net.VpnService
 import com.castla.mirror.network.NetworkMonitor
 import com.castla.mirror.network.NetworkState
-import com.castla.mirror.network.TeslaVpnService
 import com.castla.mirror.service.HotspotClientDetector
 import com.castla.mirror.service.MirrorForegroundService
 import com.castla.mirror.service.TeslaBleScanner
@@ -81,8 +77,6 @@ class MainActivity : AppCompatActivity() {
         private const val MIRROR_START_TIMEOUT_MS = 15_000L
         private const val PROJECTION_RESULT_TIMEOUT_MS = 8_000L
         private const val PROJECTION_FOCUS_RETURN_TIMEOUT_MS = 1_500L
-        private const val TESLA_VIRTUAL_IP = "100.99.9.9"
-        private const val CGNAT_IP = "192.168.43.1"
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
         private const val SHIZUKU_RELEASES_API = "https://api.github.com/repos/RikkaApps/Shizuku/releases/latest"
         private const val SHIZUKU_APK_FILENAME = "shizuku.apk"
@@ -99,7 +93,6 @@ class MainActivity : AppCompatActivity() {
     private var shizukuPermitted by mutableStateOf(false)
     private var showShizukuPermissionDialog by mutableStateOf(false)
     private var showHotspotOffDialog by mutableStateOf(false)
-    private var networkDiagLog by mutableStateOf("")
     private var teslaAutoDetectEnabled by mutableStateOf(false)
     private var hotspotEnabledByApp = false
     private var isHotspotActive by mutableStateOf(false)
@@ -117,7 +110,6 @@ class MainActivity : AppCompatActivity() {
     private var mirrorService: MirrorForegroundService? = null
     private var serviceBound = false
     private var bindRequested = false
-    private var teslaIpReady by mutableStateOf(false)
     private var awaitingProjectionResult = false
     private var projectionResultTimeoutJob: kotlinx.coroutines.Job? = null
     private var projectionFocusRecoveryJob: kotlinx.coroutines.Job? = null
@@ -184,17 +176,6 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         Log.i(TAG, "Startup permissions: $results")
-    }
-
-    private val vpnPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            startTeslaVpn()
-        } else {
-            Log.w(TAG, "VPN permission denied")
-            Toast.makeText(this, getString(R.string.toast_vpn_permission_required), Toast.LENGTH_LONG).show()
-        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -338,7 +319,6 @@ class MainActivity : AppCompatActivity() {
                         shizukuInstalled = shizukuInstalled,
                         shizukuRunning = shizukuRunning,
                         shizukuPermitted = shizukuPermitted,
-                        teslaIpReady = teslaIpReady,
                         onStartClick = { onStartMirroring() },
                         onStopClick = { stopMirrorService() },
                         onSettingsClick = { showSettings = true },
@@ -346,7 +326,6 @@ class MainActivity : AppCompatActivity() {
                         onOpenShizuku = { openShizukuApp() },
                         onGrantShizukuPermission = { shizukuSetup.requestPermission() },
                         shizukuDownloadProgress = shizukuDownloadProgress,
-                        networkDiagLog = networkDiagLog,
                         isHotspotActive = isHotspotActive,
                         onToggleHotspot = { toggleHotspot() },
                         isPanelOff = isPanelOff,
@@ -357,11 +336,6 @@ class MainActivity : AppCompatActivity() {
                             streamSettings = streamSettings.copy(autoHotspot = enabled)
                             StreamSettings.save(this@MainActivity, streamSettings)
                         },
-                        teslaAutoDetectEnabled = teslaAutoDetectEnabled,
-                        onToggleAutoDetect = {
-                            toggleAutoDetect()
-                        },
-                        thermalStatus = thermalStatus,
                         currentVersion = updateManager.currentVersion,
                         latestVersion = updateManager.latestVersion,
                         updateAvailable = updateManager.updateAvailable,
@@ -479,21 +453,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    private fun wakeUpScreen() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
-            keyguardManager.requestDismissKeyguard(this, null)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-            )
-        }
-    }
-
     override fun onResume() {
         super.onResume()
         updateManager.onResume(this)
@@ -556,7 +515,6 @@ class MainActivity : AppCompatActivity() {
         updateManager.destroy()
         networkMonitor.stopMonitoring()
         stopAutoDetect()
-        stopTeslaVpn()
         shizukuSetup.release()
         downloadProgressJob?.cancel()
         try { unregisterReceiver(shizukuDownloadReceiver) } catch (_: IllegalArgumentException) {}
@@ -604,55 +562,6 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun tryStartTeslaVpn() {
-        if (teslaIpReady) return
-
-        val prepareIntent = VpnService.prepare(this)
-        if (prepareIntent != null) {
-            Log.i(TAG, "Requesting VPN permission")
-            vpnPermissionLauncher.launch(prepareIntent)
-        } else {
-            startTeslaVpn()
-        }
-    }
-
-    private fun startTeslaVpn() {
-        val intent = Intent(this, TeslaVpnService::class.java)
-        startService(intent)
-        teslaIpReady = true
-        updateServerUrl()
-        Log.i(TAG, "Tesla VPN started with IP $TESLA_VIRTUAL_IP")
-
-        if (shizukuSetup.serviceConnected.value) {
-            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                setupNetworkForTesla()
-            }
-        }
-    }
-
-    private fun setupNetworkForTesla() {
-        Log.i(TAG, "setupNetworkForTesla: restarting tethering with CGNAT IP")
-
-        val result = shizukuSetup.restartTetheringWithCgnat()
-        if (result == null) {
-            Log.w(TAG, "restartTetheringWithCgnat returned null — service not connected")
-            return
-        }
-        Log.i(TAG, "CGNAT tethering result:\n$result")
-        networkDiagLog = result
-
-        val verify = shizukuSetup.exec("ip addr show") ?: ""
-        if (verify.contains(CGNAT_IP)) {
-            Log.i(TAG, "SUCCESS: CGNAT IP $CGNAT_IP is active!")
-            networkDiagLog += "\n*** SUCCESS: CGNAT tethering active! ***"
-            stopService(Intent(this, TeslaVpnService::class.java))
-            teslaIpReady = true
-            runOnUiThread { updateServerUrl() }
-        } else {
-            Log.w(TAG, "$CGNAT_IP NOT found — keeping VPN as fallback")
-            networkDiagLog += "\n*** CGNAT tethering NOT active — VPN fallback ***"
-        }
-    }
 
     /**
      * Enable WiFi tethering (hotspot) via Shizuku's privileged service.
@@ -766,11 +675,6 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun stopTeslaVpn() {
-        stopService(Intent(this, TeslaVpnService::class.java))
-        teslaIpReady = false
-        updateServerUrl()
-    }
 
     private fun isShizukuInstalled(): Boolean {
         return try {
@@ -1248,7 +1152,6 @@ fun CastlaScreen(
     shizukuInstalled: Boolean,
     shizukuRunning: Boolean,
     shizukuPermitted: Boolean = false,
-    @Suppress("unused") teslaIpReady: Boolean,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -1256,16 +1159,12 @@ fun CastlaScreen(
     onOpenShizuku: () -> Unit,
     onGrantShizukuPermission: () -> Unit = {},
     shizukuDownloadProgress: Float = -1f,
-    networkDiagLog: String = "",
     isHotspotActive: Boolean = false,
     onToggleHotspot: () -> Unit = {},
     isPanelOff: Boolean = false,
     onTogglePanelOff: () -> Unit = {},
     autoHotspot: Boolean = false,
     onAutoHotspotChanged: (Boolean) -> Unit = {},
-    @Suppress("unused") teslaAutoDetectEnabled: Boolean = false,
-    @Suppress("unused") onToggleAutoDetect: () -> Unit = {},
-    @Suppress("unused") thermalStatus: Int = 0,
     currentVersion: String = "",
     latestVersion: String? = null,
     updateAvailable: Boolean = false,
@@ -1717,48 +1616,6 @@ fun CastlaScreen(
                 }
             }
 
-            if (networkDiagLog.isNotEmpty()) {
-                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-                Spacer(modifier = Modifier.height(24.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Black.copy(alpha = 0.4f))
-                        .padding(16.dp)
-                ) {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(id = R.string.title_network_setup_log),
-                                style = MaterialTheme.typography.titleSmall,
-                                color = Color(0xFF00BCD4),
-                                fontWeight = FontWeight.Bold
-                            )
-                            TextButton(onClick = {
-                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(networkDiagLog))
-                            }) {
-                                Text(stringResource(id = R.string.btn_copy), fontSize = 12.sp, color = Color(0xFF00BCD4), fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        SelectionContainer {
-                            Text(
-                                text = networkDiagLog,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFB0BEC5),
-                                fontSize = 11.sp,
-                                lineHeight = 16.sp,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                            )
-                        }
-                    }
-                }
-            }
 
                 Spacer(modifier = Modifier.height(48.dp))
             }

@@ -8,13 +8,7 @@
 
     <string name="toast_screen_capture_granted">Screen capture granted!</string>
     <string name="toast_screen_capture_denied">Screen capture denied (code=%d)</string>
-    <string name="toast_vpn_permission_required">VPN permission required for Tesla connection</string>
-    <string name="toast_tesla_pairing_cancelled">Tesla pairing cancelled</string>
-    <string name="toast_could_not_open_browser">Could not open browser. Please install Shizuku manually.</string>
-    <string name="toast_tesla_pairing_failed">Tesla pairing failed: %s</string>
-    <string name="toast_tesla_paired_device">Tesla paired: %s</string>
     <string name="toast_tesla_paired">Tesla paired!</string>
-    <string name="toast_bluetooth_permission_missing">Bluetooth permission missing. Auto-detect may not work.</string>
     <string name="toast_tesla_paired_auto_detect">Auto-detect enabled</string>
     <string name="toast_tesla_auto_detect_disabled">Auto-detect disabled</string>
     <string name="toast_requesting_screen_capture">Requesting screen capture...</string>
@@ -22,10 +16,6 @@
 
     <string name="subtitle_tesla_screen_mirroring">Tesla Screen Mirroring</string>
     <string name="btn_settings">Settings</string>
-<string name="title_tesla_auto_detect_on">Tesla Auto-Detect ON</string>
-    <string name="title_tesla_auto_detect">Tesla Auto-Detect</string>
-    <string name="desc_tesla_auto_detect_on">Monitoring hotspot — notification when Tesla connects</string>
-    <string name="desc_tesla_auto_detect_off">Auto-notify when Tesla connects to your hotspot</string>
     <string name="status_streaming_active">Streaming Active</string>
     <string name="status_preparing">Preparing…</string>
     <string name="status_ready_to_stream">Ready to Stream</string>
@@ -37,7 +27,6 @@
     <string name="desc_shizuku_setup_steps">1. Settings &gt; About Phone &gt; Software Info\n   &gt; Tap Build Number 7 times\n2. Settings &gt; Developer Options\n   &gt; Wireless Debugging &gt; ON\n3. Open Shizuku &gt; \"Start via Wireless Debugging\"</string>
     <string name="btn_open_shizuku">Open Shizuku</string>
     <string name="btn_setup_guide">Setup Guide</string>
-    <string name="status_shizuku_running_setup">Shizuku is running. Setting up Tesla connection...</string>
     <string name="desc_shizuku_permission_required">Shizuku is running, but Castla does not have permission yet.\nWithout permission, only basic screen mirroring is available — touch input and app launching won\'t work.</string>
     <string name="btn_grant_shizuku_permission">Grant Shizuku Permission</string>
     <string name="btn_stop_mirroring">Stop Mirroring</string>
@@ -46,8 +35,6 @@
     <string name="version_latest">Latest</string>
     <string name="title_how_to_use">How to use</string>
     <string name="desc_how_to_use">1. Connect phone and Tesla to the same WiFi\n2. Tap \"Start Mirroring\" above\n3. Open the URL in Tesla\'s browser\n4. Your phone screen will appear on Tesla</string>
-    <string name="title_network_setup_log">Network Setup Log</string>
-    <string name="btn_copy">Copy</string>
 
     <!-- Settings Screen -->
     <string name="settings_back">Back</string>
