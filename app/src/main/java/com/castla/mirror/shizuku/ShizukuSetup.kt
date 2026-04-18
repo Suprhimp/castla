@@ -15,6 +15,16 @@ import rikka.shizuku.Shizuku
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+private const val OUTER_SCRIPT = "/data/local/tmp/shizuku_watchdog_outer.sh"
+private const val INNER_SCRIPT = "/data/local/tmp/shizuku_watchdog_inner.sh"
+private const val OUTER_PID_FILE = "/data/local/tmp/shizuku_watchdog_outer.pid"
+private const val INNER_PID_FILE = "/data/local/tmp/shizuku_watchdog_inner.pid"
+private const val HEARTBEAT_FILE = "/data/local/tmp/shizuku_watchdog.heartbeat"
+private const val LEGACY_SCRIPT = "/data/local/tmp/shizuku_watchdog.sh"
+private const val LIB_DIR_BASE = "/data/local/tmp/shizuku_lib"
+private const val HEARTBEAT_MAX_AGE_SECONDS = 15
+private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+
 sealed class ShizukuState {
     object NotInstalled : ShizukuState()
     object NotRunning : ShizukuState()
@@ -284,105 +294,294 @@ class ShizukuSetup {
         return result != null && result.startsWith("OK")
     }
 
+    /** Mutex serializing hardening passes so concurrent callers see consistent results. */
+    private val hardenMutex = Any()
+
     /**
-     * Set up a watchdog script that auto-restarts Shizuku server when it dies.
+     * Idempotent, thread-safe. Applies best-effort process fortification
+     * (doze whitelist, appops, OOM-adj) and (re)installs the dual-layer watchdog
+     * if it is not currently healthy.
      *
-     * Uses a dual-layer design for resilience against Samsung FreecessController:
-     * - Inner loop: monitors shizuku_server PID and restarts via app_process
-     * - Outer loop: re-spawns the inner watchdog if it gets killed
-     * Both layers run in the same setsid session, detached from the terminal.
+     * Concurrent callers block on [hardenMutex]; the second caller re-evaluates
+     * fortify + watchdog verification freshly so the returned boolean always
+     * reflects the post-call state.
      *
-     * Resets on reboot (user must re-setup Shizuku via wireless debugging anyway).
-     * Must be called while PrivilegedService is connected.
+     * Returns true iff watchdog verification is healthy after this call.
+     * Fortify is advisory and never gates the return value — its per-step
+     * rc values are logged and attached to the [DiagnosticEvent.SHIZUKU_FORTIFIED]
+     * event detail for on-device debugging.
      */
-    fun setupShizukuWatchdog(): Boolean {
+    fun ensureShizukuHardened(): Boolean = synchronized(hardenMutex) {
         val service = privilegedService
         if (service == null) {
-            Log.w(TAG, "setupShizukuWatchdog: service not connected")
-            return false
+            Log.w(TAG, "ensureShizukuHardened: service not connected")
+            return@synchronized false
         }
 
-        try {
-            // Step 1: Find Shizuku APK path
-            val pmOutput = service.execCommand("pm path moe.shizuku.privileged.api")?.trim() ?: ""
+        val fortifyResults = runFortify(service)
+        val fortifySummary = fortifyResults.joinToString(",") { "${it.name}=${it.rc}" }
+        Log.i(TAG, "fortify: $fortifySummary")
+        MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_FORTIFIED, fortifySummary)
+
+        val verifyReason = verifyWatchdog(service)
+        val healthy = if (verifyReason == "HEALTHY") {
+            true
+        } else {
+            Log.i(TAG, "watchdog unhealthy ($verifyReason) — reinstalling")
+            installWatchdog(service)
+        }
+        Log.i(TAG, "ensureShizukuHardened: healthy=$healthy")
+        healthy
+    }
+
+    /**
+     * Returns age in seconds of the watchdog heartbeat file, or -1 if missing/unreadable.
+     * Callers can feed this into [ShizukuHealth.classify] for UI state.
+     */
+    fun getWatchdogHeartbeatAgeSeconds(): Long {
+        val service = privilegedService ?: return -1L
+        return try {
+            val raw = service.execCommand(
+                "HB=\$(cat $HEARTBEAT_FILE 2>/dev/null); NOW=\$(date +%s); " +
+                "case \"\$HB\" in ''|*[!0-9]*) echo -1 ;; *) echo \$((NOW - HB)) ;; esac"
+            )?.trim() ?: return -1L
+            raw.toLongOrNull() ?: -1L
+        } catch (_: Exception) {
+            -1L
+        }
+    }
+
+    /**
+     * Runs fortification steps via the marker protocol; returns all step results.
+     * Every sub-command is best-effort — the caller treats failures as advisory.
+     */
+    private fun runFortify(service: IPrivilegedService): List<StepResult> {
+        val steps = listOf(
+            "doze_whitelist" to "dumpsys deviceidle whitelist +$SHIZUKU_PACKAGE",
+            "appops_run_any" to "cmd appops set $SHIZUKU_PACKAGE RUN_ANY_IN_BACKGROUND allow",
+            "appops_run_bg"  to "cmd appops set $SHIZUKU_PACKAGE RUN_IN_BACKGROUND allow",
+            "oom_adj_server" to "for PID in \$(pidof shizuku_server 2>/dev/null); do " +
+                                "echo -900 > /proc/\$PID/oom_score_adj 2>/dev/null; done; echo ok"
+        )
+        val script = ShellDiag.buildScript(steps)
+        val out = try {
+            service.execCommand(script) ?: ""
+        } catch (e: Exception) {
+            Log.w(TAG, "runFortify: execCommand threw", e)
+            ""
+        }
+        return ShellDiag.parse(out)
+    }
+
+    /**
+     * Runs the shell health gate. Returns "HEALTHY" or "UNHEALTHY: <reason>".
+     * Returns "UNHEALTHY: exec_failed" on IPC failure.
+     */
+    private fun verifyWatchdog(service: IPrivilegedService): String {
+        val script = """
+            fail() { echo "UNHEALTHY: ${'$'}1"; exit 0; }
+            check_pid_file() {
+                PF=${'$'}1; SPATH=${'$'}2; LABEL=${'$'}3
+                [ -f "${'$'}PF" ] || fail "missing_${'$'}LABEL"
+                PID=${'$'}(cat "${'$'}PF" 2>/dev/null)
+                case "${'$'}PID" in
+                    ''|*[!0-9]*) fail "nonnumeric_pid_${'$'}LABEL" ;;
+                esac
+                [ -r "/proc/${'$'}PID/cmdline" ] || fail "dead_${'$'}LABEL"
+                # Exact argv-element match: split NUL-delimited cmdline into lines
+                # and require one line to equal the full script path.
+                tr '\0' '\n' < "/proc/${'$'}PID/cmdline" 2>/dev/null | grep -Fxq "${'$'}SPATH" \
+                    || fail "cmdline_mismatch_${'$'}LABEL"
+            }
+            check_pid_file $OUTER_PID_FILE $OUTER_SCRIPT outer
+            check_pid_file $INNER_PID_FILE $INNER_SCRIPT inner
+            HB=${'$'}(cat $HEARTBEAT_FILE 2>/dev/null)
+            case "${'$'}HB" in
+                ''|*[!0-9]*) fail "heartbeat_malformed" ;;
+            esac
+            NOW=${'$'}(date +%s)
+            AGE=${'$'}((NOW - HB))
+            [ "${'$'}AGE" -lt 0 ] && fail "heartbeat_future_${'$'}AGE"
+            [ "${'$'}AGE" -gt $HEARTBEAT_MAX_AGE_SECONDS ] && fail "heartbeat_stale_${'$'}{AGE}s"
+            echo "HEALTHY"
+        """.trimIndent()
+        return try {
+            service.execCommand(script)?.trim() ?: "UNHEALTHY: null_output"
+        } catch (e: Exception) {
+            Log.w(TAG, "verifyWatchdog: execCommand threw", e)
+            "UNHEALTHY: exec_failed"
+        }
+    }
+
+    /**
+     * Stages new watchdog scripts, atomically swaps them in, tears down old
+     * processes, spawns the outer supervisor, and re-runs verification.
+     * Returns true iff verification reports HEALTHY after install.
+     */
+    private fun installWatchdog(service: IPrivilegedService): Boolean {
+        return try {
+            // Resolve Shizuku APK path (required for app_process classpath)
+            val pmOutput = service.execCommand("pm path $SHIZUKU_PACKAGE")?.trim() ?: ""
             val shizukuApk = pmOutput.lineSequence()
                 .firstOrNull { it.startsWith("package:") }
                 ?.removePrefix("package:")?.trim()
             if (shizukuApk.isNullOrEmpty()) {
-                Log.e(TAG, "setupShizukuWatchdog: could not find Shizuku APK path")
+                Log.e(TAG, "installWatchdog: could not find Shizuku APK path")
                 return false
             }
-            Log.d(TAG, "Shizuku APK: $shizukuApk")
+            val abi = service.execCommand("getprop ro.product.cpu.abi")?.trim()?.ifEmpty { null }
+                ?: "arm64-v8a"
+            val libDir = "$LIB_DIR_BASE/$abi"
 
-            // Step 2: Determine ABI and extract librish.so from Shizuku APK
-            val abi = service.execCommand("getprop ro.product.cpu.abi")?.trim() ?: "arm64-v8a"
-            val libDir = "/data/local/tmp/shizuku_lib/$abi"
-            service.execCommand("mkdir -p $libDir")
-            service.execCommand(
-                "unzip -o $shizukuApk lib/$abi/librish.so -d /data/local/tmp/shizuku_lib_tmp && " +
-                "cp /data/local/tmp/shizuku_lib_tmp/lib/$abi/librish.so $libDir/ && " +
-                "rm -rf /data/local/tmp/shizuku_lib_tmp"
+            val innerScript = buildInnerScript(shizukuApk, libDir)
+            val outerScript = buildOuterScript()
+
+            // STAGE: write to .new paths (old processes still running untouched)
+            val stageSteps = listOf(
+                "ensure_libdir" to "mkdir -p $libDir",
+                "extract_librish" to
+                    "unzip -o $shizukuApk lib/$abi/librish.so -d /data/local/tmp/shizuku_lib_tmp && " +
+                    "cp /data/local/tmp/shizuku_lib_tmp/lib/$abi/librish.so $libDir/ && " +
+                    "rm -rf /data/local/tmp/shizuku_lib_tmp",
+                "write_inner" to "cat > ${INNER_SCRIPT}.new <<'__CASTLA_INNER_EOF__'\n$innerScript\n__CASTLA_INNER_EOF__",
+                "write_outer" to "cat > ${OUTER_SCRIPT}.new <<'__CASTLA_OUTER_EOF__'\n$outerScript\n__CASTLA_OUTER_EOF__",
+                "chmod_inner" to "chmod 755 ${INNER_SCRIPT}.new",
+                "chmod_outer" to "chmod 755 ${OUTER_SCRIPT}.new"
             )
+            val stageOut = service.execCommand(ShellDiag.buildScript(stageSteps)) ?: ""
+            val stageResults = ShellDiag.parse(stageOut)
+            val stageFailed = stageResults.any { it.rc != 0 }
+            if (stageFailed) {
+                Log.e(TAG, "installWatchdog stage failed: ${stageResults.joinToString(",") { "${it.name}=${it.rc}" }}")
+                return false
+            }
 
-            // Step 3: Kill existing watchdog if any
-            service.execCommand("pkill -f shizuku_watchdog 2>/dev/null")
-            Thread.sleep(500)
-
-            // Step 4: Write watchdog script with signal trapping
-            val script = """
-                #!/bin/sh
-                # shizuku_watchdog: auto-restart Shizuku server when it dies
-                APK_PATH="$shizukuApk"
-                LIB_DIR="$libDir"
-                export LD_LIBRARY_PATH="${'$'}LIB_DIR"
-
-                # Ignore SIGHUP/SIGTERM so Samsung FreecessController can't kill us
-                trap '' HUP TERM
-
-                while true; do
-                    sleep 5
-                    if ! pidof shizuku_server > /dev/null 2>&1; then
-                        log -t shizuku_watchdog "Shizuku server not running, restarting..."
-                        app_process -Djava.class.path="${'$'}APK_PATH" /system/bin --nice-name=shizuku_server rikka.shizuku.server.ShizukuService &
-                        sleep 15
+            // SWAP + TEARDOWN + SPAWN: each step named so rc values are recovered
+            val teardownCurrent = """
+                for PF in $OUTER_PID_FILE $INNER_PID_FILE; do
+                    [ -f "${'$'}PF" ] || continue
+                    PID=${'$'}(cat "${'$'}PF" 2>/dev/null)
+                    case "${'$'}PID" in
+                        ''|*[!0-9]*) rm -f "${'$'}PF"; continue ;;
+                    esac
+                    # Exact argv-element match via NUL splitting
+                    if tr '\0' '\n' < "/proc/${'$'}PID/cmdline" 2>/dev/null \
+                            | grep -Fxq -e "$OUTER_SCRIPT" -e "$INNER_SCRIPT"; then
+                        kill "${'$'}PID" 2>/dev/null
                     fi
+                    rm -f "${'$'}PF"
                 done
+                true
             """.trimIndent()
 
-            service.execCommand("cat > /data/local/tmp/shizuku_watchdog.sh << 'WATCHDOG_EOF'\n$script\nWATCHDOG_EOF")
-            service.execCommand("chmod 755 /data/local/tmp/shizuku_watchdog.sh")
+            val teardownLegacy = """
+                for CMDFILE in /proc/*/cmdline; do
+                    LPID=${'$'}(echo "${'$'}CMDFILE" | sed -n 's#^/proc/\([0-9]*\)/cmdline${'$'}#\1#p')
+                    [ -z "${'$'}LPID" ] && continue
+                    # Split argv elements on NUL for exact matching
+                    ARGS=${'$'}(tr '\0' '\n' < "${'$'}CMDFILE" 2>/dev/null)
+                    [ -z "${'$'}ARGS" ] && continue
+                    # Only act if legacy script path is an exact argv element
+                    echo "${'$'}ARGS" | grep -Fxq "$LEGACY_SCRIPT" || continue
+                    # Skip if this process is one of the new-version watchdogs
+                    if echo "${'$'}ARGS" | grep -Fxq -e "$OUTER_SCRIPT" -e "$INNER_SCRIPT"; then
+                        continue
+                    fi
+                    kill "${'$'}LPID" 2>/dev/null
+                done
+                rm -f $LEGACY_SCRIPT
+            """.trimIndent()
 
-            // Step 5: Start watchdog with nohup + setsid (fully detached session)
-            service.execCommand("nohup setsid sh /data/local/tmp/shizuku_watchdog.sh > /dev/null 2>&1 &")
-            Thread.sleep(1000)
-
-            // Step 6: Verify
-            val pid = service.execCommand("pgrep -f shizuku_watchdog")?.trim()
-            if (pid.isNullOrEmpty()) {
-                Log.w(TAG, "setupShizukuWatchdog: process not found after start")
+            val swapSteps = listOf(
+                "mv_inner" to "mv -f ${INNER_SCRIPT}.new $INNER_SCRIPT",
+                "mv_outer" to "mv -f ${OUTER_SCRIPT}.new $OUTER_SCRIPT",
+                "teardown_current" to teardownCurrent,
+                "teardown_legacy" to teardownLegacy,
+                "clear_heartbeat" to "rm -f $HEARTBEAT_FILE",
+                "spawn_outer" to "nohup setsid sh $OUTER_SCRIPT </dev/null >/dev/null 2>&1 & echo spawned"
+            )
+            val swapOut = service.execCommand(ShellDiag.buildScript(swapSteps)) ?: ""
+            val swapResults = ShellDiag.parse(swapOut)
+            val swapSummary = swapResults.joinToString(",") { "${it.name}=${it.rc}" }
+            val swapFailed = swapResults.any { it.rc != 0 } || swapResults.size != swapSteps.size
+            if (swapFailed) {
+                Log.e(TAG, "installWatchdog swap failed: $swapSummary")
                 return false
             }
+            Log.i(TAG, "installWatchdog swap ok: $swapSummary")
 
-            Log.i(TAG, "Shizuku watchdog started with PIDs: $pid")
-            return true
-        } catch (e: Exception) {
-            Log.e(TAG, "setupShizukuWatchdog failed", e)
-            return false
-        }
-    }
+            // Let the inner loop write heartbeat + PID files at least once
+            Thread.sleep(2000L)
 
-    /**
-     * Check if the Shizuku watchdog is currently running.
-     */
-    fun isWatchdogRunning(): Boolean {
-        val service = privilegedService ?: return false
-        return try {
-            val result = service.execCommand("pgrep -f shizuku_watchdog")?.trim()
-            !result.isNullOrEmpty()
+            val verify = verifyWatchdog(service)
+            if (verify != "HEALTHY") {
+                Log.w(TAG, "installWatchdog: verify reports $verify")
+                return false
+            }
+            Log.i(TAG, "installWatchdog: verify HEALTHY")
+            true
         } catch (e: Exception) {
+            Log.e(TAG, "installWatchdog failed", e)
             false
         }
     }
+
+    private fun buildInnerScript(shizukuApk: String, libDir: String): String = """
+#!/bin/sh
+trap '' HUP TERM INT QUIT
+APK_PATH="$shizukuApk"
+LIB_DIR="$libDir"
+export LD_LIBRARY_PATH="${'$'}LIB_DIR"
+echo ${'$'}${'$'} > $INNER_PID_FILE
+# Best-effort: keep our own OOM score low too
+echo -900 > /proc/${'$'}${'$'}/oom_score_adj 2>/dev/null
+
+while true; do
+    date +%s > $HEARTBEAT_FILE 2>/dev/null
+    if ! pidof shizuku_server > /dev/null 2>&1; then
+        log -t shizuku_watchdog "server down, restarting"
+        setsid nohup app_process -Djava.class.path="${'$'}APK_PATH" /system/bin \
+            --nice-name=shizuku_server rikka.shizuku.server.ShizukuService \
+            </dev/null >/dev/null 2>&1 &
+        sleep 3
+        for PID in ${'$'}(pidof shizuku_server 2>/dev/null); do
+            echo -900 > /proc/${'$'}PID/oom_score_adj 2>/dev/null
+        done
+        sleep 12
+    fi
+    sleep 5
+done
+""".trimIndent()
+
+    private fun buildOuterScript(): String = """
+#!/bin/sh
+trap '' HUP TERM INT QUIT
+INNER=$INNER_SCRIPT
+echo ${'$'}${'$'} > $OUTER_PID_FILE
+echo -900 > /proc/${'$'}${'$'}/oom_score_adj 2>/dev/null
+
+while true; do
+    ALIVE=0
+    if [ -f $INNER_PID_FILE ]; then
+        IPID=${'$'}(cat $INNER_PID_FILE 2>/dev/null)
+        case "${'$'}IPID" in
+            ''|*[!0-9]*) ;;
+            *)
+                # Exact argv-element match: split NUL-delimited cmdline into lines
+                if tr '\0' '\n' < /proc/${'$'}IPID/cmdline 2>/dev/null | grep -Fxq "$INNER_SCRIPT"; then
+                    ALIVE=1
+                fi
+                ;;
+        esac
+    fi
+    if [ ${'$'}ALIVE -eq 0 ]; then
+        log -t shizuku_watchdog "inner down, respawning"
+        setsid nohup sh "${'$'}INNER" </dev/null >/dev/null 2>&1 &
+    fi
+    # Deterministic jitter per outer PID (0..4 seconds) on top of 5s base
+    sleep ${'$'}((5 + ${'$'}${'$'} % 5))
+done
+""".trimIndent()
 
     fun release() {
         if (userServiceBound) {

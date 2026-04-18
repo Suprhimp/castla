@@ -2333,12 +2333,10 @@ class MirrorForegroundService : Service() {
                             touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                                 vdm.injectInput(action, x, y, pointerId)
                             }
-                            // Set up Shizuku watchdog for auto-restart after WiFi off
+                            // Harden Shizuku (fortify + install watchdog if needed) for WiFi-off survival
                             serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                if (!setup.isWatchdogRunning()) {
-                                    val ok = setup.setupShizukuWatchdog()
-                                    Log.i(TAG, "Shizuku watchdog setup from service: $ok")
-                                }
+                                val ok = setup.ensureShizukuHardened()
+                                Log.i(TAG, "ensureShizukuHardened (service): $ok")
                             }
                             safeResult(true)
                         } else {

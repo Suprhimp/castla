@@ -302,12 +302,8 @@ class MainActivity : AppCompatActivity() {
                 isShizukuServiceConnected = connected
                 if (connected) {
                     launch(kotlinx.coroutines.Dispatchers.IO) {
-                        if (!shizukuSetup.isWatchdogRunning()) {
-                            val ok = shizukuSetup.setupShizukuWatchdog()
-                            Log.i(TAG, "Shizuku watchdog setup: $ok")
-                        } else {
-                            Log.d(TAG, "Shizuku watchdog already running")
-                        }
+                        val ok = shizukuSetup.ensureShizukuHardened()
+                        Log.i(TAG, "ensureShizukuHardened (MainActivity): $ok")
                     }
                 }
             }

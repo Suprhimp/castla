@@ -211,4 +211,36 @@ class DisconnectCauseClassifierTest {
         )
         assertEquals(DisconnectCause.NETWORK, DisconnectCauseClassifier.classify(events))
     }
+
+    // ── Informational events are ignored ──
+
+    @Test
+    fun `shizuku fortified alone classifies as UNKNOWN`() {
+        assertEquals(
+            DisconnectCause.UNKNOWN,
+            DisconnectCauseClassifier.classify(listOf(DiagnosticEvent.SHIZUKU_FORTIFIED))
+        )
+    }
+
+    @Test
+    fun `shizuku fortified mixed with binder dead still classifies as SHIZUKU`() {
+        val events = listOf(
+            DiagnosticEvent.SHIZUKU_FORTIFIED,
+            DiagnosticEvent.SHIZUKU_BINDER_DEAD,
+            DiagnosticEvent.SHIZUKU_FORTIFIED
+        )
+        assertEquals(DisconnectCause.SHIZUKU, DisconnectCauseClassifier.classify(events))
+    }
+
+    @Test
+    fun `shizuku fortified does not cancel binder death nor substitute for recovery`() {
+        val events = listOf(
+            DiagnosticEvent.SHIZUKU_BINDER_DEAD,
+            DiagnosticEvent.SHIZUKU_FORTIFIED,
+            DiagnosticEvent.SHIZUKU_BINDER_READY
+        )
+        // The real recovery (SHIZUKU_BINDER_READY) still cancels the death;
+        // SHIZUKU_FORTIFIED is informational and irrelevant to classification.
+        assertEquals(DisconnectCause.UNKNOWN, DisconnectCauseClassifier.classify(events))
+    }
 }
