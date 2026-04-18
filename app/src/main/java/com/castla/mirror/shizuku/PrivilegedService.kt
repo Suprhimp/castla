@@ -904,8 +904,9 @@ class PrivilegedService : IPrivilegedService.Stub() {
     override fun registerDeathToken(token: android.os.IBinder) {
         try {
             token.linkToDeath({
-                Log.w(TAG, "Client died! Cleaning up VDs but keeping daemon alive for reconnect.")
+                Log.w(TAG, "Client died! Cleaning up PrivilegedService and killing VDs.")
                 destroy()
+                System.exit(0)
             }, 0)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to link to death", e)

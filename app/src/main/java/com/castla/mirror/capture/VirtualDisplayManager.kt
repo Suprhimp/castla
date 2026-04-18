@@ -86,7 +86,7 @@ class VirtualDisplayManager {
                     PrivilegedService::class.java.name
                 )
             )
-                .daemon(true)
+                .daemon(false)
                 .processNameSuffix("privileged")
                 .debuggable(true)
                 .version(ShizukuSetup.USER_SERVICE_VERSION)

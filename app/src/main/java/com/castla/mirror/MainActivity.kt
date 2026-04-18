@@ -93,6 +93,8 @@ class MainActivity : AppCompatActivity() {
     private var shizukuInstalled by mutableStateOf(false)
     private var shizukuRunning by mutableStateOf(false)
     private var shizukuPermitted by mutableStateOf(false)
+    private var isShizukuOnPowerAllowlist by mutableStateOf(false)
+    private var isShizukuServiceConnected by mutableStateOf(false)
     private var showShizukuPermissionDialog by mutableStateOf(false)
     private var showHotspotOffDialog by mutableStateOf(false)
     private var teslaAutoDetectEnabled by mutableStateOf(false)
@@ -199,6 +201,7 @@ class MainActivity : AppCompatActivity() {
         loadAutoDetectState()
         requestStartupPermissions()
         requestBatteryOptimizationExemption()
+        refreshShizukuBatteryOptimizationState()
 
         // Handle intent extra to open settings (e.g. from screenshot automation)
         if (intent?.getBooleanExtra("open_settings", false) == true) {
@@ -278,7 +281,11 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             shizukuSetup.state.collect { shizukuState ->
                 Log.i(TAG, "Shizuku state: $shizukuState")
+                val wasRunning = shizukuRunning
                 shizukuRunning = shizukuState is com.castla.mirror.shizuku.ShizukuState.Running
+                if (!wasRunning && shizukuRunning) {
+                    refreshShizukuBatteryOptimizationState()
+                }
                 val wasPermitted = shizukuPermitted
                 shizukuPermitted = shizukuState is com.castla.mirror.shizuku.ShizukuState.Running && shizukuState.permitted
                 // Auto-continue mirroring after Shizuku permission granted
@@ -292,6 +299,17 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             shizukuSetup.serviceConnected.collect { connected ->
                 Log.i(TAG, "Shizuku PrivilegedService connected: $connected")
+                isShizukuServiceConnected = connected
+                if (connected) {
+                    launch(kotlinx.coroutines.Dispatchers.IO) {
+                        if (!shizukuSetup.isWatchdogRunning()) {
+                            val ok = shizukuSetup.setupShizukuWatchdog()
+                            Log.i(TAG, "Shizuku watchdog setup: $ok")
+                        } else {
+                            Log.d(TAG, "Shizuku watchdog already running")
+                        }
+                    }
+                }
             }
         }
 
@@ -342,7 +360,20 @@ class MainActivity : AppCompatActivity() {
                         currentVersion = updateManager.currentVersion,
                         latestVersion = updateManager.latestVersion,
                         updateAvailable = updateManager.updateAvailable,
-                        onUpdateClick = { updateManager.startUpdate(this@MainActivity) }
+                        onUpdateClick = { updateManager.startUpdate(this@MainActivity) },
+                        isShizukuOnPowerAllowlist = isShizukuOnPowerAllowlist,
+                        onOpenShizukuBatterySettings = {
+                            try {
+                                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to open battery optimization settings", e)
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    getString(R.string.toast_battery_settings_fallback),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
                     )
                 }
 
@@ -459,6 +490,16 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateManager.onResume(this)
+        refreshShizukuBatteryOptimizationState()
+    }
+
+    private fun refreshShizukuBatteryOptimizationState() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        isShizukuOnPowerAllowlist = try {
+            pm.isIgnoringBatteryOptimizations(SHIZUKU_PACKAGE)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -1186,7 +1227,9 @@ fun CastlaScreen(
     currentVersion: String = "",
     latestVersion: String? = null,
     updateAvailable: Boolean = false,
-    onUpdateClick: () -> Unit = {}
+    onUpdateClick: () -> Unit = {},
+    isShizukuOnPowerAllowlist: Boolean = true,
+    onOpenShizukuBatterySettings: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     MeshGradientBackground {
@@ -1569,6 +1612,41 @@ fun CastlaScreen(
 
             if (!shizukuInstalled || !shizukuRunning || !shizukuPermitted) {
                 Spacer(modifier = Modifier.height(24.dp))
+            }
+
+            AnimatedVisibility(visible = shizukuRunning && !isShizukuOnPowerAllowlist) {
+                Column {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xFF1A2D00).copy(alpha = 0.8f))
+                            .border(1.dp, Color(0xFF8BC34A).copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+                            .padding(20.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = stringResource(id = R.string.desc_shizuku_battery_optimization),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFCCFF90),
+                                lineHeight = 20.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = onOpenShizukuBatterySettings,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color(0xFF8BC34A)
+                                ),
+                                border = BorderStroke(1.dp, Color(0xFF8BC34A))
+                            ) {
+                                Text(stringResource(id = R.string.btn_shizuku_battery_settings), fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
             }
 
             Button(

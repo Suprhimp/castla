@@ -34,6 +34,9 @@
     <string name="btn_setup_guide">설정 가이드</string>
     <string name="desc_shizuku_permission_required">Shizuku가 실행 중이지만 Castla에 아직 권한이 부여되지 않았습니다.\n권한 없이는 기본 화면 미러링만 가능하며, 터치 입력과 앱 실행이 작동하지 않습니다.</string>
     <string name="btn_grant_shizuku_permission">Shizuku 권한 부여</string>
+    <string name="desc_shizuku_battery_optimization">Shizuku가 백그라운드에서 예기치 않게 종료될 수 있습니다.\n배터리 최적화에서 Shizuku를 제외하면 더 안정적으로 유지됩니다.</string>
+    <string name="btn_shizuku_battery_settings">배터리 설정 열기</string>
+    <string name="toast_battery_settings_fallback">배터리 설정을 열 수 없습니다. 설정 > 앱 > Shizuku > 배터리에서 \"제한 없음\"을 선택해 주세요.</string>
     <string name="btn_stop_mirroring">미러링 중지</string>
     <string name="btn_start_mirroring">미러링 시작</string>
     <string name="version_update_available">업데이트</string>

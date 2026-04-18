@@ -43,7 +43,7 @@ class ShizukuSetup {
             com.castla.mirror.BuildConfig.APPLICATION_ID,
             PrivilegedService::class.java.name
         )
-    ).daemon(true).processNameSuffix("privileged").version(USER_SERVICE_VERSION)
+    ).daemon(false).processNameSuffix("privileged").version(USER_SERVICE_VERSION)
 
     /** Guard to prevent duplicate bind calls while a bind is in progress. */
     private var bindingInProgress = false
@@ -282,6 +282,106 @@ class ShizukuSetup {
         val result = exec("__HOTSPOT_OFF__")
         Log.i(TAG, "stopWifiTethering result: $result")
         return result != null && result.startsWith("OK")
+    }
+
+    /**
+     * Set up a watchdog script that auto-restarts Shizuku server when it dies.
+     *
+     * Uses a dual-layer design for resilience against Samsung FreecessController:
+     * - Inner loop: monitors shizuku_server PID and restarts via app_process
+     * - Outer loop: re-spawns the inner watchdog if it gets killed
+     * Both layers run in the same setsid session, detached from the terminal.
+     *
+     * Resets on reboot (user must re-setup Shizuku via wireless debugging anyway).
+     * Must be called while PrivilegedService is connected.
+     */
+    fun setupShizukuWatchdog(): Boolean {
+        val service = privilegedService
+        if (service == null) {
+            Log.w(TAG, "setupShizukuWatchdog: service not connected")
+            return false
+        }
+
+        try {
+            // Step 1: Find Shizuku APK path
+            val pmOutput = service.execCommand("pm path moe.shizuku.privileged.api")?.trim() ?: ""
+            val shizukuApk = pmOutput.lineSequence()
+                .firstOrNull { it.startsWith("package:") }
+                ?.removePrefix("package:")?.trim()
+            if (shizukuApk.isNullOrEmpty()) {
+                Log.e(TAG, "setupShizukuWatchdog: could not find Shizuku APK path")
+                return false
+            }
+            Log.d(TAG, "Shizuku APK: $shizukuApk")
+
+            // Step 2: Determine ABI and extract librish.so from Shizuku APK
+            val abi = service.execCommand("getprop ro.product.cpu.abi")?.trim() ?: "arm64-v8a"
+            val libDir = "/data/local/tmp/shizuku_lib/$abi"
+            service.execCommand("mkdir -p $libDir")
+            service.execCommand(
+                "unzip -o $shizukuApk lib/$abi/librish.so -d /data/local/tmp/shizuku_lib_tmp && " +
+                "cp /data/local/tmp/shizuku_lib_tmp/lib/$abi/librish.so $libDir/ && " +
+                "rm -rf /data/local/tmp/shizuku_lib_tmp"
+            )
+
+            // Step 3: Kill existing watchdog if any
+            service.execCommand("pkill -f shizuku_watchdog 2>/dev/null")
+            Thread.sleep(500)
+
+            // Step 4: Write watchdog script with signal trapping
+            val script = """
+                #!/bin/sh
+                # shizuku_watchdog: auto-restart Shizuku server when it dies
+                APK_PATH="$shizukuApk"
+                LIB_DIR="$libDir"
+                export LD_LIBRARY_PATH="${'$'}LIB_DIR"
+
+                # Ignore SIGHUP/SIGTERM so Samsung FreecessController can't kill us
+                trap '' HUP TERM
+
+                while true; do
+                    sleep 5
+                    if ! pidof shizuku_server > /dev/null 2>&1; then
+                        log -t shizuku_watchdog "Shizuku server not running, restarting..."
+                        app_process -Djava.class.path="${'$'}APK_PATH" /system/bin --nice-name=shizuku_server rikka.shizuku.server.ShizukuService &
+                        sleep 15
+                    fi
+                done
+            """.trimIndent()
+
+            service.execCommand("cat > /data/local/tmp/shizuku_watchdog.sh << 'WATCHDOG_EOF'\n$script\nWATCHDOG_EOF")
+            service.execCommand("chmod 755 /data/local/tmp/shizuku_watchdog.sh")
+
+            // Step 5: Start watchdog with nohup + setsid (fully detached session)
+            service.execCommand("nohup setsid sh /data/local/tmp/shizuku_watchdog.sh > /dev/null 2>&1 &")
+            Thread.sleep(1000)
+
+            // Step 6: Verify
+            val pid = service.execCommand("pgrep -f shizuku_watchdog")?.trim()
+            if (pid.isNullOrEmpty()) {
+                Log.w(TAG, "setupShizukuWatchdog: process not found after start")
+                return false
+            }
+
+            Log.i(TAG, "Shizuku watchdog started with PIDs: $pid")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "setupShizukuWatchdog failed", e)
+            return false
+        }
+    }
+
+    /**
+     * Check if the Shizuku watchdog is currently running.
+     */
+    fun isWatchdogRunning(): Boolean {
+        val service = privilegedService ?: return false
+        return try {
+            val result = service.execCommand("pgrep -f shizuku_watchdog")?.trim()
+            !result.isNullOrEmpty()
+        } catch (e: Exception) {
+            false
+        }
     }
 
     fun release() {

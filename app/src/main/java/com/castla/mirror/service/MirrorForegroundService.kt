@@ -2293,6 +2293,8 @@ class MirrorForegroundService : Service() {
                 if (surf != null) {
                     vdm.createVirtualDisplay(currentWidth, currentHeight, 160, surf)
                     if (vdm.hasVirtualDisplay()) {
+                        // Refresh the binder so audio/text/input paths use the new connection
+                        setup.attachPrivilegedService(vdm.getPrivilegedService())
                         touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                             vdm.injectInput(action, x, y, pointerId)
                         }
@@ -2330,6 +2332,13 @@ class MirrorForegroundService : Service() {
                             setup.attachPrivilegedService(vdm.getPrivilegedService())
                             touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                                 vdm.injectInput(action, x, y, pointerId)
+                            }
+                            // Set up Shizuku watchdog for auto-restart after WiFi off
+                            serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                if (!setup.isWatchdogRunning()) {
+                                    val ok = setup.setupShizukuWatchdog()
+                                    Log.i(TAG, "Shizuku watchdog setup from service: $ok")
+                                }
                             }
                             safeResult(true)
                         } else {

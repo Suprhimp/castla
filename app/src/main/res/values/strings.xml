@@ -29,6 +29,9 @@
     <string name="btn_setup_guide">Setup Guide</string>
     <string name="desc_shizuku_permission_required">Shizuku is running, but Castla does not have permission yet.\nWithout permission, only basic screen mirroring is available — touch input and app launching won\'t work.</string>
     <string name="btn_grant_shizuku_permission">Grant Shizuku Permission</string>
+    <string name="desc_shizuku_battery_optimization">Shizuku may stop unexpectedly in the background.\nExclude Shizuku from battery optimization to keep it running stably.</string>
+    <string name="btn_shizuku_battery_settings">Open Battery Settings</string>
+    <string name="toast_battery_settings_fallback">Could not open battery settings. Please go to Settings > Apps > Shizuku > Battery and select \"Unrestricted\".</string>
     <string name="btn_stop_mirroring">Stop Mirroring</string>
     <string name="btn_start_mirroring">Start Mirroring</string>
     <string name="version_update_available">Update</string>
