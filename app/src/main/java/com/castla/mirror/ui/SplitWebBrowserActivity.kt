@@ -9,6 +9,8 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.content.res.Configuration
+import android.util.Log
 
 /**
  * A floating right-aligned activity that displays a Web App (like YouTube) on the right side
@@ -114,8 +116,24 @@ class SplitWebBrowserActivity : Activity() {
 
         setContentView(root)
         
-        val url = intent.getStringExtra("url") ?: "https://m.youtube.com"
-        webView.loadUrl(url)
+        if (savedInstanceState != null) {
+            webView.restoreState(savedInstanceState)
+            Log.i("SplitWebBrowser", "Restored WebView state (URL: ${webView.url})")
+        } else {
+            val url = intent.getStringExtra("url") ?: "https://m.youtube.com"
+            Log.i("SplitWebBrowser", "Loading URL: $url")
+            webView.loadUrl(url)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        webView.saveState(outState)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d("SplitWebBrowser", "Configuration changed: ${newConfig.screenWidthDp}x${newConfig.screenHeightDp} dpi=${newConfig.densityDpi}")
     }
 
     @Deprecated("Deprecated in Java")

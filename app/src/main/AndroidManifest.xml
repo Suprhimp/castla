@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 필수: 화면이 꺼졌을 때 스트리밍이 멈추는 것을 방지하기 위한 WakeLock 권한 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 배터리 최적화 제외 요청: Shizuku 데몬 + 스트리밍 안정성 확보 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Bluetooth permissions for CDM device address retrieval -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
@@ -56,21 +58,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Launcher for Virtual Display — no longer used (browser handles app list) -->
-        <activity
-            android:name=".ui.DesktopActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:excludeFromRecents="true"
-            android:taskAffinity="com.castla.mirror.desktop"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
-
         <!-- Web Browser Activity for DRM-restricted OTTs like YouTube and Netflix -->
         <activity
             android:name=".ui.WebBrowserActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboardHidden"
             android:hardwareAccelerated="true"
             android:taskAffinity="com.castla.mirror.web"
             android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />
@@ -81,7 +74,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboardHidden"
             android:hardwareAccelerated="true"
             android:taskAffinity="com.castla.mirror.split"
             android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />
@@ -91,14 +84,6 @@
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
 
-        <service
-            android:name=".network.TeslaVpnService"
-            android:permission="android.permission.BIND_VPN_SERVICE"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.net.VpnService" />
-            </intent-filter>
-        </service>
 
         <!-- FileProvider for APK installation -->
         <provider

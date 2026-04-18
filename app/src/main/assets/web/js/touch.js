@@ -227,7 +227,6 @@ class TouchHandler {
             if (this._logCount++ < 5) console.warn('[Touch] Socket not open, state:', this.controlSocket?.readyState);
             return;
         }
-        if (action !== 2) console.log(`[Touch] ${this.pane} action=${action} id=${id} x=${x.toFixed(3)} y=${y.toFixed(3)}`);
         this._view.setUint8(0, action);
         this._view.setUint8(1, id & 0xFF);
         this._view.setFloat32(2, x, true); // little-endian

@@ -1,6 +1,8 @@
 package com.castla.mirror.server
 
 import android.util.Log
+import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.MirrorDiagnostics
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
 import java.io.IOException
@@ -15,7 +17,7 @@ class VideoStreamSocket(
 
     companion object {
         private const val TAG = "VideoStreamSocket"
-        private const val MAX_QUEUE = 5
+        private const val MAX_QUEUE = 8
         private const val MIN_KEYFRAME_REQUEST_INTERVAL_MS = 500L
     }
 
@@ -41,6 +43,7 @@ class VideoStreamSocket(
                 break
             } catch (e: IOException) {
                 Log.w(TAG, "Send failed, closing", e)
+                MirrorDiagnostics.log(DiagnosticEvent.SOCKET_TIMEOUT, "[$channel] send IOException: ${e.message}")
                 closed = true
                 try { close(NanoWSD.WebSocketFrame.CloseCode.GoingAway, "send error", false) }
                 catch (_: Exception) {}

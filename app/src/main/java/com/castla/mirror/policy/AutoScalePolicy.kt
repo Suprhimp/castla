@@ -41,6 +41,8 @@ sealed class AutoScaleDecision {
  * 5. All healthy: increment stability, step up when threshold met
  */
 object AutoScalePolicy {
+    /** Minimum auto-tier for OTT/video apps (720p60). */
+    const val OTT_MIN_TIER = 1
     /** Consecutive stable intervals required before stepping up. */
     const val UPSCALE_THRESHOLD = 2
     /** Max dropped frames per report interval before considered unhealthy. */
@@ -96,6 +98,23 @@ object AutoScalePolicy {
      * Evaluate browser health from quality report metrics.
      * Returns true when all metrics are within acceptable thresholds.
      */
+    /**
+     * Returns the target tier index if OTT boost should be applied, or null if no boost needed.
+     * Boost is suppressed under any thermal pressure or when already at/above the minimum tier.
+     */
+    fun ottMinTier(
+        currentTierIndex: Int,
+        isVideoApp: Boolean,
+        thermalStatus: Int,
+        tierCount: Int
+    ): Int? {
+        if (!isVideoApp) return null
+        if (thermalStatus >= 1) return null
+        if (currentTierIndex >= OTT_MIN_TIER) return null
+        if (OTT_MIN_TIER >= tierCount) return null
+        return OTT_MIN_TIER
+    }
+
     fun isBrowserHealthy(
         droppedFrames: Int,
         backlogDrops: Int,

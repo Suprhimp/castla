@@ -8,13 +8,7 @@
 
     <string name="toast_screen_capture_granted">Bildschirmaufnahme gewährt!</string>
     <string name="toast_screen_capture_denied">Bildschirmaufnahme abgelehnt (Code=%d)</string>
-    <string name="toast_vpn_permission_required">VPN-Berechtigung für Tesla-Verbindung erforderlich</string>
-    <string name="toast_tesla_pairing_cancelled">Tesla-Kopplung abgebrochen</string>
-    <string name="toast_could_not_open_browser">Browser konnte nicht geöffnet werden. Bitte installieren Sie Shizuku manuell.</string>
-    <string name="toast_tesla_pairing_failed">Tesla-Kopplung fehlgeschlagen: %s</string>
-    <string name="toast_tesla_paired_device">Tesla gekoppelt: %s</string>
     <string name="toast_tesla_paired">Tesla gekoppelt!</string>
-    <string name="toast_bluetooth_permission_missing">Bluetooth-Berechtigung fehlt. Auto-Erkennung funktioniert möglicherweise nicht.</string>
     <string name="toast_tesla_paired_auto_detect">Tesla gekoppelt! Auto-Erkennung aktiviert.</string>
     <string name="toast_tesla_auto_detect_disabled">Tesla Auto-Erkennung deaktiviert</string>
     <string name="title_ble_fallback">BLE-Fallback-Scanner</string>
@@ -27,10 +21,6 @@
 
     <string name="subtitle_tesla_screen_mirroring">Tesla Bildschirmspiegelung</string>
     <string name="btn_settings">Einstellungen</string>
-<string name="title_tesla_auto_detect_on">Tesla Auto-Erkennung EIN</string>
-    <string name="title_tesla_auto_detect">Tesla Auto-Erkennung</string>
-    <string name="desc_tesla_auto_detect_on">Sie erhalten eine Benachrichtigung, wenn Tesla sich verbindet</string>
-    <string name="desc_tesla_auto_detect_off">Lassen Sie sich benachrichtigen, wenn Ihr Tesla in der Nähe ist</string>
     <string name="status_streaming_active">Streaming aktiv</string>
     <string name="status_preparing">Vorbereitung…</string>
     <string name="status_ready_to_stream">Bereit zum Streamen</string>
@@ -42,7 +32,6 @@
     <string name="desc_shizuku_setup_steps">1. Einstellungen &gt; Telefoninfo &gt; Softwareinformationen\n   &gt; 7 Mal auf die Buildnummer tippen\n2. Einstellungen &gt; Entwickleroptionen\n   &gt; Wireless Debugging &gt; EIN\n3. Shizuku öffnen &gt; \"Über Wireless Debugging starten\"</string>
     <string name="btn_open_shizuku">Shizuku öffnen</string>
     <string name="btn_setup_guide">Einrichtungsanleitung</string>
-    <string name="status_shizuku_running_setup">Shizuku läuft. Richte Tesla-Verbindung ein...</string>
     <string name="desc_shizuku_permission_required">Shizuku läuft, aber Castla hat noch keine Berechtigung.\nOhne Berechtigung ist nur einfache Bildschirmspiegelung verfügbar — Touch-Eingabe und App-Start funktionieren nicht.</string>
     <string name="btn_grant_shizuku_permission">Shizuku-Berechtigung erteilen</string>
     <string name="btn_stop_mirroring">Spiegelung stoppen</string>
@@ -51,8 +40,6 @@
     <string name="version_latest">Aktuell</string>
     <string name="title_how_to_use">Wie benutzt man es</string>
     <string name="desc_how_to_use">1. Verbinden Sie das Telefon und Tesla mit demselben WiFi\n2. Tippen Sie oben auf \"Spiegelung starten\"\n3. Öffnen Sie die URL im Tesla-Browser\n4. Ihr Telefonbildschirm wird auf dem Tesla angezeigt</string>
-    <string name="title_network_setup_log">Netzwerk-Setup Protokoll</string>
-    <string name="btn_copy">Kopieren</string>
 
     <!-- Settings Screen -->
     <string name="settings_back">Zurück</string>

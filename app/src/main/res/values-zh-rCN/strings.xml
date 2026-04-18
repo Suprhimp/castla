@@ -8,13 +8,7 @@
 
     <string name="toast_screen_capture_granted">屏幕截图已授权！</string>
     <string name="toast_screen_capture_denied">屏幕截图被拒绝 (代码=%d)</string>
-    <string name="toast_vpn_permission_required">特斯拉连接需要 VPN 权限</string>
-    <string name="toast_tesla_pairing_cancelled">特斯拉配对已取消</string>
-    <string name="toast_could_not_open_browser">无法打开浏览器。请手动安装 Shizuku。</string>
-    <string name="toast_tesla_pairing_failed">特斯拉配对失败: %s</string>
-    <string name="toast_tesla_paired_device">已配对特斯拉: %s</string>
     <string name="toast_tesla_paired">特斯拉配对成功！</string>
-    <string name="toast_bluetooth_permission_missing">缺少蓝牙权限。自动检测可能无法工作。</string>
     <string name="toast_tesla_paired_auto_detect">特斯拉配对成功！自动检测已启用。</string>
     <string name="toast_tesla_auto_detect_disabled">特斯拉自动检测已禁用</string>
     <string name="title_ble_fallback">BLE备用扫描器</string>
@@ -27,10 +21,6 @@
 
     <string name="subtitle_tesla_screen_mirroring">特斯拉屏幕镜像</string>
     <string name="btn_settings">设置</string>
-<string name="title_tesla_auto_detect_on">特斯拉自动检测 已开启</string>
-    <string name="title_tesla_auto_detect">特斯拉自动检测</string>
-    <string name="desc_tesla_auto_detect_on">当特斯拉连接时您将收到通知</string>
-    <string name="desc_tesla_auto_detect_off">当您的特斯拉在附近时获取通知</string>
     <string name="status_streaming_active">投屏进行中</string>
     <string name="status_preparing">准备中…</string>
     <string name="status_ready_to_stream">准备投屏</string>
@@ -42,7 +32,6 @@
     <string name="desc_shizuku_setup_steps">1. 设置 &gt; 关于手机 &gt; 软件信息\n   &gt; 连续点击版本号 7 次\n2. 设置 &gt; 开发者选项\n   &gt; 无线调试 &gt; 开启\n3. 打开 Shizuku &gt; \"通过无线调试启动\"</string>
     <string name="btn_open_shizuku">打开 Shizuku</string>
     <string name="btn_setup_guide">设置指南</string>
-    <string name="status_shizuku_running_setup">Shizuku 正在运行。正在设置特斯拉连接...</string>
     <string name="desc_shizuku_permission_required">Shizuku 正在运行，但 Castla 尚未获得权限。\n没有权限的情况下，仅可使用基本屏幕镜像 — 触摸输入和应用启动将无法工作。</string>
     <string name="btn_grant_shizuku_permission">授予 Shizuku 权限</string>
     <string name="btn_stop_mirroring">停止镜像</string>
@@ -51,8 +40,6 @@
     <string name="version_latest">最新</string>
     <string name="title_how_to_use">使用方法</string>
     <string name="desc_how_to_use">1. 将手机和特斯拉连接到同一个 WiFi\n2. 点击上方的 \"开始镜像\"\n3. 在特斯拉浏览器中打开此 URL\n4. 您的手机屏幕将显示在特斯拉上</string>
-    <string name="title_network_setup_log">网络设置日志</string>
-    <string name="btn_copy">复制</string>
 
     <!-- Settings Screen -->
     <string name="settings_back">返回</string>
