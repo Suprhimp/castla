@@ -2271,7 +2271,7 @@ class MirrorForegroundService : Service() {
         try {
             releaseShizukuSession("before_virtual_display_setup")
             val setup = ShizukuSetup()
-            setup.init(bindService = false)
+            setup.init(this, bindService = false)
 
             if (!setup.isAvailable() || !setup.hasPermission()) {
                 Log.i(TAG, "Shizuku not available/permitted")

@@ -195,7 +195,7 @@ class MainActivity : AppCompatActivity() {
         shizukuInstalled = isShizukuInstalled()
         shizukuSetup = ShizukuSetup()
         if (shizukuInstalled) {
-            shizukuSetup.init(bindService = false)
+            shizukuSetup.init(this, bindService = false)
         }
 
         loadAutoDetectState()
@@ -530,13 +530,22 @@ class MainActivity : AppCompatActivity() {
         val wasInstalled = shizukuInstalled
         shizukuInstalled = isShizukuInstalled()
         if (shizukuInstalled && !wasInstalled) {
-            shizukuSetup.init(bindService = false)
+            shizukuSetup.init(this, bindService = false)
         }
         loadAutoDetectState()
 
         if (!serviceBound && !bindRequested) {
             val intent = Intent(this, MirrorForegroundService::class.java)
             bindRequested = bindService(intent, serviceConnection, 0)
+        }
+
+        // Recover Shizuku if it died while we were backgrounded (typically from a
+        // USB-unplug adbd respawn that wiped shell-UID processes). startActivity
+        // from here is allowed because we're in the foreground — the same call
+        // from binderDeadListener gets hit by BAL_BLOCK while the screen is
+        // sleeping, which is why we also rely on this onStart hook.
+        if (shizukuInstalled) {
+            shizukuSetup.launchShizukuManagerIfLostSinceBoot()
         }
     }
 

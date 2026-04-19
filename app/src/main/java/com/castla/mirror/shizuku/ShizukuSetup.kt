@@ -1,12 +1,22 @@
 package com.castla.mirror.shizuku
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.castla.mirror.diagnostics.DiagnosticEvent
 import com.castla.mirror.diagnostics.MirrorDiagnostics
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +34,11 @@ private const val LEGACY_SCRIPT = "/data/local/tmp/shizuku_watchdog.sh"
 private const val LIB_DIR_BASE = "/data/local/tmp/shizuku_lib"
 private const val HEARTBEAT_MAX_AGE_SECONDS = 15
 private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+private const val RESTART_CHANNEL_ID = "shizuku_restart"
+private const val RESTART_NOTIFICATION_ID = 0x5A12
+private const val RESTART_PENDING_INTENT_REQUEST = 0x5A12
+private const val GIVE_UP_CHANNEL_ID = "shizuku_unrecoverable"
+private const val GIVE_UP_NOTIFICATION_ID = 0x5A13
 
 sealed class ShizukuState {
     object NotInstalled : ShizukuState()
@@ -37,6 +52,18 @@ class ShizukuSetup {
         private const val TAG = "ShizukuSetup"
         private const val REQUEST_CODE = 1001
         const val USER_SERVICE_VERSION = 107
+        /** Cooldown between foreground auto-launches of the Shizuku manager. */
+        private const val AUTO_LAUNCH_COOLDOWN_MS = 60_000L
+        /**
+         * If Shizuku's binder dies within this window after being received, we
+         * count the session as a "quick death". Three in a row (with no
+         * intervening stable session) means WADB is flapping (typically
+         * screen-off WiFi sleep → Android disables adb-wifi → adbd respawn
+         * cascade kills shizuku_server). Auto-launch is suppressed past that
+         * point so we don't spam Shizuku manager restarts at the user.
+         */
+        private const val QUICK_DEATH_WINDOW_MS = 15_000L
+        private const val MAX_CONSECUTIVE_QUICK_DEATHS = 3
     }
 
     private val _state = MutableStateFlow<ShizukuState>(ShizukuState.NotInstalled)
@@ -60,6 +87,56 @@ class ShizukuSetup {
     private var userServiceBound = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** applicationContext used by [binderDeadListener] to auto-launch Shizuku manager. */
+    private var appContext: Context? = null
+
+    /**
+     * Set true once Shizuku's binder has been received at least once in this
+     * process lifetime. Used by [launchShizukuManagerIfLostSinceBoot] so we
+     * only auto-relaunch after a previously-healthy Shizuku disappears, not
+     * on first-ever app launch (where Shizuku may legitimately be stopped and
+     * the user should drive the start flow manually).
+     */
+    @Volatile
+    private var hasBeenAvailable = false
+
+    /**
+     * Timestamp of the last auto-launch attempt. Used to throttle
+     * [launchShizukuManagerIfLostSinceBoot] so we don't re-fire on every
+     * onStart — otherwise, when the user dismisses the Shizuku manager, our
+     * MainActivity resumes, fires auto-launch again, and the Shizuku UI
+     * "keeps coming back" (a loop we saw on Samsung Flip testing 2026-04-18).
+     */
+    @Volatile
+    private var lastAutoLaunchAtMs = 0L
+
+    /**
+     * Elapsed-realtime of the most recent [binderReceivedListener] fire. Pair
+     * with the [binderDeadListener] timestamp to classify a session as a
+     * "quick death" vs. a normal one — see [consecutiveQuickDeaths].
+     */
+    @Volatile
+    private var lastBinderReceivedAtMs = 0L
+
+    /**
+     * Count of back-to-back sessions where Shizuku's binder died within
+     * [QUICK_DEATH_WINDOW_MS] of coming up. Reset as soon as one session
+     * manages to stay alive past that threshold. When this hits
+     * [MAX_CONSECUTIVE_QUICK_DEATHS] we stop auto-launching the Shizuku
+     * manager and surface a persistent notification instead.
+     */
+    @Volatile
+    private var consecutiveQuickDeaths = 0
+
+    /**
+     * Holds WiFi awake for the entire lifetime of the setup (≈ app process
+     * lifetime). Without this, Samsung's screen-off WiFi sleep trips
+     * `AdbDebuggingManager: Network disconnected. Disabling adbwifi`, which
+     * restarts adbd — and every shell-UID child (shizuku_server, watchdog)
+     * dies with it. Held via [acquireWifiLock] / [releaseWifiLock].
+     */
+    private var wifiLock: WifiManager.WifiLock? = null
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             privilegedService = IPrivilegedService.Stub.asInterface(binder)
@@ -81,7 +158,19 @@ class ShizukuSetup {
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Log.i(TAG, "Shizuku binder received")
         MirrorDiagnostics.log(DiagnosticEvent.SHIZUKU_BINDER_READY)
+        hasBeenAvailable = true
+        lastAutoLaunchAtMs = 0L
+        lastBinderReceivedAtMs = SystemClock.elapsedRealtime()
         updateState()
+        cancelRestartNotification()
+        cancelGiveUpNotification()
+        // Auto-bind PrivilegedService whenever Shizuku becomes available with permission,
+        // so ensureShizukuHardened (driven by serviceConnected observers) runs at app
+        // start instead of only when a browser connects. bindPrivilegedService is
+        // idempotent via _serviceConnected / bindingInProgress guards.
+        if (hasPermission()) {
+            bindPrivilegedService()
+        }
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
@@ -91,6 +180,24 @@ class ShizukuSetup {
         _serviceConnected.value = false
         bindingInProgress = false
         _state.value = ShizukuState.NotRunning
+        val aliveMs = if (lastBinderReceivedAtMs == 0L) Long.MAX_VALUE
+                      else SystemClock.elapsedRealtime() - lastBinderReceivedAtMs
+        if (aliveMs < QUICK_DEATH_WINDOW_MS) {
+            consecutiveQuickDeaths += 1
+            Log.w(TAG, "Quick death #$consecutiveQuickDeaths (alive ${aliveMs}ms)")
+        } else {
+            consecutiveQuickDeaths = 0
+        }
+        // Shell-UID watchdog can't recover from adbd restarts (USB unplug on Samsung
+        // triggers an adbd respawn that cleans out the entire shell UID — both
+        // shizuku_server and the watchdog die together). Our app UID survives, so
+        // we post a high-priority notification whose PendingIntent launches the
+        // Shizuku manager Activity; tapping it triggers shizuku_server restart via
+        // saved wireless-ADB authorization. We do NOT call startActivity directly
+        // because when USB is unplugged the screen is typically off (TOP_SLEEPING),
+        // which Android 14 refuses with BAL_BLOCK regardless of our foreground
+        // state. The notification is visible on lockscreen and survives screen-off.
+        requestShizukuRestart()
     }
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
@@ -104,7 +211,9 @@ class ShizukuSetup {
         }
     }
 
-    fun init(bindService: Boolean = true) {
+    fun init(context: Context, bindService: Boolean = true) {
+        appContext = context.applicationContext
+        acquireWifiLock()
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionResultListener)
@@ -113,6 +222,224 @@ class ShizukuSetup {
         if (bindService && isAvailable() && hasPermission()) {
             bindPrivilegedService()
         }
+    }
+
+    private fun acquireWifiLock() {
+        if (wifiLock?.isHeld == true) return
+        val ctx = appContext ?: return
+        try {
+            val wm = ctx.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+            @Suppress("DEPRECATION")
+            val lock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Castla::ShizukuWifiLock")
+            lock.setReferenceCounted(false)
+            lock.acquire()
+            wifiLock = lock
+            Log.i(TAG, "ShizukuWifiLock acquired (WiFi stays awake across screen-off)")
+        } catch (e: Exception) {
+            Log.w(TAG, "acquireWifiLock failed", e)
+        }
+    }
+
+    private fun releaseWifiLock() {
+        try {
+            wifiLock?.takeIf { it.isHeld }?.release()
+        } catch (_: Exception) {
+        }
+        wifiLock = null
+    }
+
+    /**
+     * Posts a high-priority notification whose tap action launches the Shizuku
+     * manager Activity. Used from [binderDeadListener] to recover from adbd-restart
+     * cascades that kill shizuku_server + the shell-UID watchdog together (USB
+     * unplug on Samsung). Direct startActivity is unreliable here because the
+     * screen is typically off (TOP_SLEEPING) → Android 14 BAL_BLOCK.
+     *
+     * The notification is visible on lockscreen and persists until the user taps
+     * it or binder is re-received (see [cancelRestartNotification]). Tapping
+     * routes to Shizuku manager which uses its saved wireless ADB authorization
+     * to bring shizuku_server back up.
+     */
+    fun requestShizukuRestart() {
+        val ctx = appContext ?: run {
+            Log.w(TAG, "requestShizukuRestart: appContext not set — skipping")
+            return
+        }
+        if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) {
+            Log.w(TAG, "requestShizukuRestart: notifications disabled by user")
+            return
+        }
+        ensureRestartChannel(ctx)
+        val shizukuIntent = ctx.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+        if (shizukuIntent == null) {
+            Log.w(TAG, "requestShizukuRestart: no launch intent for $SHIZUKU_PACKAGE")
+            return
+        }
+        shizukuIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pending = PendingIntent.getActivity(
+            ctx,
+            RESTART_PENDING_INTENT_REQUEST,
+            shizukuIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(ctx, RESTART_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Shizuku stopped")
+            .setContentText("Tap to restart — mirroring paused until Shizuku is running.")
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+        try {
+            NotificationManagerCompat.from(ctx)
+                .notify(RESTART_NOTIFICATION_ID, notification)
+            Log.i(TAG, "requestShizukuRestart: notification posted")
+        } catch (e: SecurityException) {
+            // POST_NOTIFICATIONS permission not granted on Android 13+.
+            Log.w(TAG, "requestShizukuRestart: notify threw (missing permission)", e)
+        }
+    }
+
+    private fun cancelRestartNotification() {
+        val ctx = appContext ?: return
+        try {
+            NotificationManagerCompat.from(ctx).cancel(RESTART_NOTIFICATION_ID)
+        } catch (_: Exception) {
+            // best-effort
+        }
+    }
+
+    /**
+     * If Shizuku's binder has been alive at some point this process but isn't
+     * now (typical USB-unplug → adbd restart scenario), launch the Shizuku
+     * manager Activity directly. Intended to be called from an Activity's
+     * onStart/onResume — i.e. when the caller is in the foreground and Android
+     * 14 Background-Activity-Launch restrictions don't apply.
+     *
+     * No-op on first-ever app launch (when the user may have intentionally left
+     * Shizuku stopped), while Shizuku is alive, and within a cooldown window
+     * after a previous attempt (so dismissing the Shizuku UI doesn't loop back
+     * into a re-launch every time our Activity resumes).
+     *
+     * Returns true if a launch was attempted.
+     */
+    fun launchShizukuManagerIfLostSinceBoot(): Boolean {
+        if (!hasBeenAvailable) return false
+        if (isAvailable()) return false
+        if (consecutiveQuickDeaths >= MAX_CONSECUTIVE_QUICK_DEATHS) {
+            Log.w(TAG, "Auto-launch suppressed: $consecutiveQuickDeaths quick deaths")
+            postGiveUpNotification()
+            return false
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastAutoLaunchAtMs < AUTO_LAUNCH_COOLDOWN_MS) return false
+        lastAutoLaunchAtMs = now
+        return launchShizukuManager()
+    }
+
+    /**
+     * Unconditional direct launch of the Shizuku manager Activity. Caller is
+     * responsible for being in the foreground so the OS allows the start.
+     * Returns true iff startActivity was invoked without throwing.
+     */
+    fun launchShizukuManager(): Boolean {
+        val ctx = appContext ?: run {
+            Log.w(TAG, "launchShizukuManager: appContext not set — skipping")
+            return false
+        }
+        val intent = ctx.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+        if (intent == null) {
+            Log.w(TAG, "launchShizukuManager: no launch intent for $SHIZUKU_PACKAGE")
+            return false
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return try {
+            ctx.startActivity(intent)
+            Log.i(TAG, "launchShizukuManager: startActivity dispatched")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "launchShizukuManager: startActivity threw", e)
+            false
+        }
+    }
+
+    private fun ensureRestartChannel(ctx: Context) {
+        val mgr = ctx.getSystemService(NotificationManager::class.java) ?: return
+        if (mgr.getNotificationChannel(RESTART_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            RESTART_CHANNEL_ID,
+            "Shizuku restart",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Alerts when Shizuku stops so you can restart it with one tap."
+            setShowBadge(true)
+        }
+        mgr.createNotificationChannel(channel)
+    }
+
+    /**
+     * Posts a persistent notification when we've given up on auto-launching
+     * Shizuku after repeated quick deaths. The usual cause is Android
+     * disabling WADB on screen-off WiFi sleep (see [consecutiveQuickDeaths]
+     * and the `AdbDebuggingManager: Network disconnected` log line); the user
+     * can recover by plugging USB back in or keeping the screen awake.
+     */
+    private fun postGiveUpNotification() {
+        val ctx = appContext ?: return
+        if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return
+        ensureGiveUpChannel(ctx)
+        val shizukuIntent = ctx.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE) ?: return
+        shizukuIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pending = PendingIntent.getActivity(
+            ctx,
+            GIVE_UP_NOTIFICATION_ID,
+            shizukuIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = NotificationCompat.Builder(ctx, GIVE_UP_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Shizuku keeps disconnecting")
+            .setContentText("Plug USB back in, or keep the screen on to hold the wireless ADB connection.")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "Shizuku restarted $consecutiveQuickDeaths times and keeps dying within seconds. " +
+                "Android disables wireless debugging when WiFi sleeps, which kills Shizuku. " +
+                "Plug USB back in, or keep the screen on until mirroring stabilizes."
+            ))
+            .setContentIntent(pending)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+        try {
+            NotificationManagerCompat.from(ctx).notify(GIVE_UP_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "postGiveUpNotification: notify threw", e)
+        }
+    }
+
+    private fun cancelGiveUpNotification() {
+        val ctx = appContext ?: return
+        try {
+            NotificationManagerCompat.from(ctx).cancel(GIVE_UP_NOTIFICATION_ID)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun ensureGiveUpChannel(ctx: Context) {
+        val mgr = ctx.getSystemService(NotificationManager::class.java) ?: return
+        if (mgr.getNotificationChannel(GIVE_UP_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            GIVE_UP_CHANNEL_ID,
+            "Shizuku unrecoverable",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Surfaces when Shizuku keeps dying and auto-recovery can't help."
+            setShowBadge(true)
+        }
+        mgr.createNotificationChannel(channel)
     }
 
     fun attachPrivilegedService(service: IPrivilegedService?) {
@@ -436,23 +763,34 @@ class ShizukuSetup {
             val innerScript = buildInnerScript(shizukuApk, libDir)
             val outerScript = buildOuterScript()
 
-            // STAGE: write to .new paths (old processes still running untouched)
+            // Heredocs cannot be used inside ShellDiag.buildScript steps: the wrapper
+            // appends `; } 2>&1` to the same line as the step body, so a heredoc close
+            // marker is never on a line by itself and the heredoc stays open, eating
+            // the STEP_END marker. We transport script bodies via base64 single-line
+            // decode instead — the base64 alphabet is quote-safe and newline-free.
+            val innerB64 = Base64.encodeToString(innerScript.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            val outerB64 = Base64.encodeToString(outerScript.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+
+            // STAGE: write to .new paths (old processes still running untouched).
+            // preflight_base64 round-trips a known token so a missing/broken `base64 -d`
+            // surfaces as a clearly-named stage failure rather than silent truncation.
             val stageSteps = listOf(
+                "preflight_base64" to "[ \"\$(printf '%s' 'Y2FzdGxh' | base64 -d)\" = 'castla' ]",
                 "ensure_libdir" to "mkdir -p $libDir",
                 "extract_librish" to
                     "unzip -o $shizukuApk lib/$abi/librish.so -d /data/local/tmp/shizuku_lib_tmp && " +
                     "cp /data/local/tmp/shizuku_lib_tmp/lib/$abi/librish.so $libDir/ && " +
                     "rm -rf /data/local/tmp/shizuku_lib_tmp",
-                "write_inner" to "cat > ${INNER_SCRIPT}.new <<'__CASTLA_INNER_EOF__'\n$innerScript\n__CASTLA_INNER_EOF__",
-                "write_outer" to "cat > ${OUTER_SCRIPT}.new <<'__CASTLA_OUTER_EOF__'\n$outerScript\n__CASTLA_OUTER_EOF__",
+                "write_inner" to "printf '%s' '$innerB64' | base64 -d > ${INNER_SCRIPT}.new",
+                "write_outer" to "printf '%s' '$outerB64' | base64 -d > ${OUTER_SCRIPT}.new",
                 "chmod_inner" to "chmod 755 ${INNER_SCRIPT}.new",
                 "chmod_outer" to "chmod 755 ${OUTER_SCRIPT}.new"
             )
             val stageOut = service.execCommand(ShellDiag.buildScript(stageSteps)) ?: ""
             val stageResults = ShellDiag.parse(stageOut)
-            val stageFailed = stageResults.any { it.rc != 0 }
+            val stageFailed = stageResults.any { it.rc != 0 } || stageResults.size != stageSteps.size
             if (stageFailed) {
-                Log.e(TAG, "installWatchdog stage failed: ${stageResults.joinToString(",") { "${it.name}=${it.rc}" }}")
+                Log.e(TAG, "installWatchdog stage failed: ${summarizeStepFailure(stageResults)}")
                 return false
             }
 
@@ -505,7 +843,7 @@ class ShizukuSetup {
             val swapSummary = swapResults.joinToString(",") { "${it.name}=${it.rc}" }
             val swapFailed = swapResults.any { it.rc != 0 } || swapResults.size != swapSteps.size
             if (swapFailed) {
-                Log.e(TAG, "installWatchdog swap failed: $swapSummary")
+                Log.e(TAG, "installWatchdog swap failed: ${summarizeStepFailure(swapResults)}")
                 return false
             }
             Log.i(TAG, "installWatchdog swap ok: $swapSummary")
@@ -524,6 +862,22 @@ class ShizukuSetup {
             Log.e(TAG, "installWatchdog failed", e)
             false
         }
+    }
+
+    /**
+     * Format a failed batch of ShellDiag steps for logcat: always list all name=rc
+     * pairs, and append the first failing step's captured output (truncated to 200
+     * chars, newlines collapsed) so device-specific failures are directly diagnosable.
+     */
+    private fun summarizeStepFailure(results: List<StepResult>): String {
+        val summary = results.joinToString(",") { "${it.name}=${it.rc}" }
+        val firstFailure = results.firstOrNull { it.rc != 0 } ?: return summary
+        val detail = firstFailure.output
+            .replace("\r\n", " ")
+            .replace('\n', ' ')
+            .replace('\r', ' ')
+            .take(200)
+        return "$summary step=${firstFailure.name} output=$detail"
     }
 
     private fun buildInnerScript(shizukuApk: String, libDir: String): String = """
@@ -598,5 +952,6 @@ done
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
         Shizuku.removeRequestPermissionResultListener(permissionResultListener)
+        releaseWifiLock()
     }
 }

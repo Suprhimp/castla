@@ -75,6 +75,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const webLauncher = document.getElementById('web-launcher');
     const homeBtn = document.getElementById('home-btn');
+    const overlayMenu = document.getElementById('overlay-menu');
+    const overlayMenuToggle = document.getElementById('overlay-menu-toggle');
+    const overlayMenuPanel = document.getElementById('overlay-menu-panel');
     const densityControl = document.getElementById('density-control');
     const densityBtn = document.getElementById('density-btn');
     const densityLabel = document.getElementById('density-label');
@@ -872,6 +875,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const wsUrl = `ws://${host}/ws/video`;
         if (!isLauncherMode) setStatus('Connecting...', '');
 
+        clearFrameWatchdog();
         videoSocket = new WebSocket(wsUrl);
         videoSocket.binaryType = 'arraybuffer';
 
@@ -884,6 +888,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         videoSocket.onmessage = async (event) => {
             if (event.data instanceof ArrayBuffer) {
+                armFrameWatchdog(videoSocket);
                 if (!decoder) return;
                 if (codecMode === 'h264') {
                     const v = new Uint8Array(event.data);
@@ -897,6 +902,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         videoSocket.onclose = () => {
+            clearFrameWatchdog();
             if (!isLauncherMode) {
                 setStatus('Disconnected', 'error');
                 showOverlay();
@@ -928,6 +934,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     let reconnectTimer = null;
     let isReconnecting = false;
     let qualityReportInterval = null;
+
+    // Frame-arrival watchdog: if the primary video socket stays open but stops
+    // delivering frames (Shizuku death, encoder stall, VD end, silent network
+    // stall), the last frame would otherwise stay frozen on screen. Bind the
+    // timer to the specific socket instance so a stale fire cannot close a
+    // freshly reconnected socket.
+    const FRAME_TIMEOUT_MS = 4000;
+    let frameWatchdogTimer = null;
+
+    function armFrameWatchdog(socket) {
+        if (isLauncherMode || !socket) return;
+        if (socket !== videoSocket) return;
+        if (frameWatchdogTimer !== null) clearTimeout(frameWatchdogTimer);
+        frameWatchdogTimer = setTimeout(() => onFrameStalled(socket), FRAME_TIMEOUT_MS);
+    }
+
+    function clearFrameWatchdog() {
+        if (frameWatchdogTimer !== null) clearTimeout(frameWatchdogTimer);
+        frameWatchdogTimer = null;
+    }
+
+    function onFrameStalled(socket) {
+        if (socket !== videoSocket) return;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        if (isLauncherMode) return;
+        console.warn('[Main] Video stream stalled — no frame for', FRAME_TIMEOUT_MS, 'ms. Triggering reconnect.');
+        setStatus('Disconnected', 'error');
+        showOverlay();
+        try { socket.close(); } catch (_) {}
+    }
+
     function scheduleReconnect() {
         if (isReconnecting) return;
         isReconnecting = true;
@@ -1280,6 +1317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         homeBtn.style.display = 'block';
         firstFrameReceived = false;
         clearLaunchTimeout();
+        clearFrameWatchdog();
 
         // Clear the previous app's last frame immediately so it doesn't
         // flash during the transition to the new app
@@ -1330,8 +1368,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function goHome() {
+        collapseOverlayMenu();
         isLauncherMode = true;
         clearLaunchTimeout();
+        clearFrameWatchdog();
         closeInputBubble(true);
         blurKeyboardProxy();
         disableBrowserSplit();
@@ -1627,10 +1667,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function collapseOverlayMenu() {
+        if (overlayMenuPanel) overlayMenuPanel.style.display = 'none';
+        if (overlayMenuToggle) overlayMenuToggle.setAttribute('aria-expanded', 'false');
+        if (densityPopup) densityPopup.style.display = 'none';
+        if (profilePopup) profilePopup.style.display = 'none';
+    }
+
     function updateOverlayControlsVisibility() {
-        const isVisible = homeBtn && homeBtn.style.display !== 'none';
-        if (profileControl) profileControl.style.display = isVisible ? 'block' : 'none';
-        if (densityControl) densityControl.style.display = isVisible ? 'block' : 'none';
+        const active = homeBtn && homeBtn.style.display !== 'none';
+        if (overlayMenu) overlayMenu.style.display = active ? 'flex' : 'none';
+        if (!active) collapseOverlayMenu();
     }
 
     // ── Playback Profile UI ──
@@ -1774,6 +1821,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         document.addEventListener('click', () => {
             if (densityPopup) densityPopup.style.display = 'none';
+        });
+    }
+
+    // Hamburger toggle: expand/collapse the overlay menu panel on click;
+    // collapse on clicks outside the entire #overlay-menu wrapper.
+    if (overlayMenuToggle && overlayMenuPanel && overlayMenu) {
+        overlayMenuToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const expanded = overlayMenuPanel.style.display === 'flex';
+            if (expanded) {
+                collapseOverlayMenu();
+            } else {
+                overlayMenuPanel.style.display = 'flex';
+                overlayMenuToggle.setAttribute('aria-expanded', 'true');
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (!overlayMenu.contains(e.target)) collapseOverlayMenu();
         });
     }
 
