@@ -87,6 +87,14 @@
     <string name="btn_screen_on">화면 켜기</string>
     <string name="dialog_hotspot_off_no">유지</string>
 
+    <!-- Samsung USB config advisory -->
+    <string name="dialog_usb_config_title">화면 잠금 시 Shizuku가 꺼질 수 있어요</string>
+    <string name="dialog_usb_config_message">기본 USB 구성이 파일 전송(MTP/PTP)으로 설정되어 있습니다. 최신 Samsung 소프트웨어는 화면을 잠글 때마다 USB를 재시작하며, 이 때문에 Shizuku가 종료됩니다.\n\n안정적인 연결을 위해 개발자 옵션에서 기본 USB 구성을 \"충전만\" 또는 \"데이터 전송 안 함\"으로 변경하세요.</string>
+    <string name="dialog_usb_config_open_dev_options">개발자 옵션 열기</string>
+    <string name="dialog_usb_config_dismiss">나중에</string>
+    <string name="dialog_usb_config_dont_show">다시 보지 않기</string>
+    <string name="toast_dev_options_unavailable">개발자 옵션을 열 수 없습니다.</string>
+
     <!-- Language -->
     <string name="settings_language">언어</string>
     <string name="settings_language_system_default">시스템 기본값</string>

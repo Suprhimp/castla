@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity() {
         private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
         private const val SHIZUKU_RELEASES_API = "https://api.github.com/repos/RikkaApps/Shizuku/releases/latest"
         private const val SHIZUKU_APK_FILENAME = "shizuku.apk"
+        private const val USB_CONFIG_PREFS = "usb_config_advisory"
+        private const val KEY_SUPPRESS_USB_CONFIG_WARNING = "suppress_warning"
     }
 
     private var isStreaming by mutableStateOf(false)
@@ -97,6 +99,7 @@ class MainActivity : AppCompatActivity() {
     private var isShizukuServiceConnected by mutableStateOf(false)
     private var showShizukuPermissionDialog by mutableStateOf(false)
     private var showHotspotOffDialog by mutableStateOf(false)
+    private var showUsbConfigWarningDialog by mutableStateOf(false)
     private var teslaAutoDetectEnabled by mutableStateOf(false)
     private var hotspotEnabledByApp = false
     private var isHotspotActive by mutableStateOf(false)
@@ -304,6 +307,7 @@ class MainActivity : AppCompatActivity() {
                     launch(kotlinx.coroutines.Dispatchers.IO) {
                         val ok = shizukuSetup.ensureShizukuHardened()
                         Log.i(TAG, "ensureShizukuHardened (MainActivity): $ok")
+                        evaluateUsbConfigAdvisory()
                     }
                 }
             }
@@ -455,6 +459,20 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+
+                if (showUsbConfigWarningDialog) {
+                    UsbConfigWarningDialog(
+                        onOpenDevOptions = {
+                            showUsbConfigWarningDialog = false
+                            openDeveloperOptions()
+                        },
+                        onDismiss = { showUsbConfigWarningDialog = false },
+                        onDontShowAgain = {
+                            suppressUsbConfigWarning()
+                            showUsbConfigWarningDialog = false
+                        }
+                    )
+                }
             }
         }
 
@@ -495,6 +513,58 @@ class MainActivity : AppCompatActivity() {
             pm.isIgnoringBatteryOptimizations(SHIZUKU_PACKAGE)
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /**
+     * Called on the IO thread once the Shizuku privileged service is connected.
+     * Reads the persistent USB configuration via privileged getprop and, on
+     * Samsung devices where MTP/PTP is the default, surfaces the advisory
+     * dialog so the user can swap to "Charging only" in Developer Options.
+     * No-op if the user previously dismissed via "Don't show again".
+     */
+    private fun evaluateUsbConfigAdvisory() {
+        if (isUsbConfigWarningSuppressed()) return
+        val advisory = try {
+            shizukuSetup.classifyUsbConfig(Build.MANUFACTURER ?: "")
+        } catch (e: Exception) {
+            Log.w(TAG, "classifyUsbConfig threw", e)
+            return
+        }
+        Log.i(TAG, "USB config advisory: $advisory")
+        if (advisory == com.castla.mirror.shizuku.UsbConfigChecker.Advisory.RiskyUsbConfig) {
+            runOnUiThread { showUsbConfigWarningDialog = true }
+        }
+    }
+
+    private fun isUsbConfigWarningSuppressed(): Boolean =
+        getSharedPreferences(USB_CONFIG_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_SUPPRESS_USB_CONFIG_WARNING, false)
+
+    private fun suppressUsbConfigWarning() {
+        getSharedPreferences(USB_CONFIG_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_SUPPRESS_USB_CONFIG_WARNING, true)
+            .apply()
+    }
+
+    private fun openDeveloperOptions() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                Log.w(TAG, "openDeveloperOptions: no matching Settings activity", e)
+                Toast.makeText(
+                    this,
+                    getString(R.string.toast_dev_options_unavailable),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -1743,5 +1813,92 @@ fun InfoRow(label: String, value: String) {
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1f).padding(start = 16.dp)
         )
+    }
+}
+
+@Composable
+private fun UsbConfigWarningDialog(
+    onOpenDevOptions: () -> Unit,
+    onDismiss: () -> Unit,
+    onDontShowAgain: () -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF1A1A2E))
+                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                .padding(24.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = stringResource(id = R.string.dialog_usb_config_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = stringResource(id = R.string.dialog_usb_config_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.75f),
+                    textAlign = TextAlign.Start
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(
+                    onClick = onOpenDevOptions,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.dialog_usb_config_open_dev_options),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.dialog_usb_config_dismiss),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onDontShowAgain,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f))
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.dialog_usb_config_dont_show),
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
     }
 }

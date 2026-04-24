@@ -83,6 +83,14 @@
     <string name="btn_screen_on">Screen On</string>
     <string name="toast_thermal_warning">⚠️ Device is very hot. Mirroring quality may be reduced.</string>
 
+    <!-- Samsung USB config advisory (Default USB Configuration regression) -->
+    <string name="dialog_usb_config_title">Shizuku may drop on screen lock</string>
+    <string name="dialog_usb_config_message">Your Default USB Configuration is set to File Transfer (MTP/PTP). On recent Samsung software this causes Android to restart USB on every screen lock, which kills Shizuku.\n\nOpen Developer Options and change Default USB Configuration to \"Charging only\" or \"No data transfer\" for a stable connection.</string>
+    <string name="dialog_usb_config_open_dev_options">Open Developer Options</string>
+    <string name="dialog_usb_config_dismiss">Later</string>
+    <string name="dialog_usb_config_dont_show">Don\'t show again</string>
+    <string name="toast_dev_options_unavailable">Could not open Developer Options.</string>
+
     <!-- Language -->
     <string name="settings_language">Language</string>
     <string name="settings_language_system_default">System Default</string>

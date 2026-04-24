@@ -34,11 +34,17 @@ private const val LEGACY_SCRIPT = "/data/local/tmp/shizuku_watchdog.sh"
 private const val LIB_DIR_BASE = "/data/local/tmp/shizuku_lib"
 private const val HEARTBEAT_MAX_AGE_SECONDS = 15
 private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
-private const val RESTART_CHANNEL_ID = "shizuku_restart"
+// Channel IDs include a version suffix so IMPORTANCE changes in code take
+// effect on upgrade — a pre-existing channel's importance sticks at whatever
+// the user set (or the original code created), even after the app replaces
+// its declaration. Bumping the ID side-steps that.
+private const val RESTART_CHANNEL_ID = "shizuku_restart_v2"
 private const val RESTART_NOTIFICATION_ID = 0x5A12
 private const val RESTART_PENDING_INTENT_REQUEST = 0x5A12
-private const val GIVE_UP_CHANNEL_ID = "shizuku_unrecoverable"
+private const val GIVE_UP_CHANNEL_ID = "shizuku_unrecoverable_v2"
 private const val GIVE_UP_NOTIFICATION_ID = 0x5A13
+private const val LEGACY_RESTART_CHANNEL_ID = "shizuku_restart"
+private const val LEGACY_GIVE_UP_CHANNEL_ID = "shizuku_unrecoverable"
 
 sealed class ShizukuState {
     object NotInstalled : ShizukuState()
@@ -64,6 +70,16 @@ class ShizukuSetup {
          */
         private const val QUICK_DEATH_WINDOW_MS = 15_000L
         private const val MAX_CONSECUTIVE_QUICK_DEATHS = 3
+        /**
+         * Delay before posting the "Shizuku stopped" notification after
+         * [binderDeadListener] fires. Samsung's USB unplug triggers an adbd
+         * restart that briefly kills the binder even when wireless ADB is
+         * available and Shizuku manager is about to respawn shizuku_server —
+         * posting instantly makes every unplug vibrate. If the binder comes
+         * back within this window, [cancelPendingRestartNotification] skips
+         * the post entirely.
+         */
+        private const val RESTART_NOTIFICATION_DEBOUNCE_MS = 5_000L
     }
 
     private val _state = MutableStateFlow<ShizukuState>(ShizukuState.NotInstalled)
@@ -137,6 +153,15 @@ class ShizukuSetup {
      */
     private var wifiLock: WifiManager.WifiLock? = null
 
+    /**
+     * Pending (debounced) post of the "Shizuku stopped" notification. Armed
+     * in [binderDeadListener] and cancelled in [binderReceivedListener] so a
+     * transient adbd restart that recovers inside [RESTART_NOTIFICATION_DEBOUNCE_MS]
+     * never alerts the user.
+     */
+    @Volatile
+    private var pendingRestartNotification: Runnable? = null
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             privilegedService = IPrivilegedService.Stub.asInterface(binder)
@@ -162,6 +187,7 @@ class ShizukuSetup {
         lastAutoLaunchAtMs = 0L
         lastBinderReceivedAtMs = SystemClock.elapsedRealtime()
         updateState()
+        cancelPendingRestartNotification()
         cancelRestartNotification()
         cancelGiveUpNotification()
         // Auto-bind PrivilegedService whenever Shizuku becomes available with permission,
@@ -191,13 +217,16 @@ class ShizukuSetup {
         // Shell-UID watchdog can't recover from adbd restarts (USB unplug on Samsung
         // triggers an adbd respawn that cleans out the entire shell UID — both
         // shizuku_server and the watchdog die together). Our app UID survives, so
-        // we post a high-priority notification whose PendingIntent launches the
-        // Shizuku manager Activity; tapping it triggers shizuku_server restart via
-        // saved wireless-ADB authorization. We do NOT call startActivity directly
+        // we post a silent notification whose PendingIntent launches the Shizuku
+        // manager Activity; tapping it triggers shizuku_server restart via saved
+        // wireless-ADB authorization. We do NOT call startActivity directly
         // because when USB is unplugged the screen is typically off (TOP_SLEEPING),
         // which Android 14 refuses with BAL_BLOCK regardless of our foreground
         // state. The notification is visible on lockscreen and survives screen-off.
-        requestShizukuRestart()
+        //
+        // Posting is debounced by RESTART_NOTIFICATION_DEBOUNCE_MS so a transient
+        // adbd respawn that recovers inside the window makes no sound/vibration.
+        scheduleRestartNotification()
     }
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
@@ -214,6 +243,7 @@ class ShizukuSetup {
     fun init(context: Context, bindService: Boolean = true) {
         appContext = context.applicationContext
         acquireWifiLock()
+        deleteLegacyNotificationChannels()
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionResultListener)
@@ -221,6 +251,16 @@ class ShizukuSetup {
         // Auto-bind if already permitted
         if (bindService && isAvailable() && hasPermission()) {
             bindPrivilegedService()
+        }
+    }
+
+    private fun deleteLegacyNotificationChannels() {
+        val ctx = appContext ?: return
+        val mgr = ctx.getSystemService(NotificationManager::class.java) ?: return
+        try {
+            mgr.deleteNotificationChannel(LEGACY_RESTART_CHANNEL_ID)
+            mgr.deleteNotificationChannel(LEGACY_GIVE_UP_CHANNEL_ID)
+        } catch (_: Exception) {
         }
     }
 
@@ -249,16 +289,41 @@ class ShizukuSetup {
     }
 
     /**
-     * Posts a high-priority notification whose tap action launches the Shizuku
-     * manager Activity. Used from [binderDeadListener] to recover from adbd-restart
-     * cascades that kill shizuku_server + the shell-UID watchdog together (USB
-     * unplug on Samsung). Direct startActivity is unreliable here because the
-     * screen is typically off (TOP_SLEEPING) → Android 14 BAL_BLOCK.
+     * Arm a debounced post of the restart notification. If the binder comes
+     * back within [RESTART_NOTIFICATION_DEBOUNCE_MS] the pending runnable is
+     * cancelled by [binderReceivedListener] and no notification is shown —
+     * so Samsung's USB-unplug adbd-restart-then-recover case stays silent.
+     */
+    private fun scheduleRestartNotification() {
+        cancelPendingRestartNotification()
+        val runnable = Runnable {
+            pendingRestartNotification = null
+            requestShizukuRestart()
+        }
+        pendingRestartNotification = runnable
+        mainHandler.postDelayed(runnable, RESTART_NOTIFICATION_DEBOUNCE_MS)
+    }
+
+    private fun cancelPendingRestartNotification() {
+        pendingRestartNotification?.let { mainHandler.removeCallbacks(it) }
+        pendingRestartNotification = null
+    }
+
+    /**
+     * Posts a silent notification whose tap action launches the Shizuku
+     * manager Activity. Used from [binderDeadListener] (via [scheduleRestartNotification])
+     * to recover from adbd-restart cascades that kill shizuku_server + the
+     * shell-UID watchdog together (USB unplug on Samsung). Direct startActivity
+     * is unreliable here because the screen is typically off (TOP_SLEEPING)
+     * → Android 14 BAL_BLOCK.
      *
-     * The notification is visible on lockscreen and persists until the user taps
-     * it or binder is re-received (see [cancelRestartNotification]). Tapping
-     * routes to Shizuku manager which uses its saved wireless ADB authorization
-     * to bring shizuku_server back up.
+     * The notification is silent (IMPORTANCE_LOW): visible in the tray and on
+     * lockscreen, but no sound / no vibration / no heads-up — Shizuku dies
+     * often enough on Samsung that a high-priority alert is spammy.
+     *
+     * Persists until the user taps it or binder is re-received (see
+     * [cancelRestartNotification]). Tapping routes to Shizuku manager which
+     * uses its saved wireless ADB authorization to bring shizuku_server back up.
      */
     fun requestShizukuRestart() {
         val ctx = appContext ?: run {
@@ -288,9 +353,11 @@ class ShizukuSetup {
             .setContentText("Tap to restart — mirroring paused until Shizuku is running.")
             .setContentIntent(pending)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
             .build()
         try {
             NotificationManagerCompat.from(ctx)
@@ -371,10 +438,12 @@ class ShizukuSetup {
         val channel = NotificationChannel(
             RESTART_CHANNEL_ID,
             "Shizuku restart",
-            NotificationManager.IMPORTANCE_HIGH
+            NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Alerts when Shizuku stops so you can restart it with one tap."
+            description = "Shown silently in the tray when Shizuku stops and needs a tap to restart."
             setShowBadge(true)
+            enableVibration(false)
+            setSound(null, null)
         }
         mgr.createNotificationChannel(channel)
     }
@@ -409,9 +478,10 @@ class ShizukuSetup {
             ))
             .setContentIntent(pending)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
             .build()
         try {
             NotificationManagerCompat.from(ctx).notify(GIVE_UP_NOTIFICATION_ID, notification)
@@ -434,10 +504,11 @@ class ShizukuSetup {
         val channel = NotificationChannel(
             GIVE_UP_CHANNEL_ID,
             "Shizuku unrecoverable",
-            NotificationManager.IMPORTANCE_HIGH
+            NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
             description = "Surfaces when Shizuku keeps dying and auto-recovery can't help."
             setShowBadge(true)
+            enableVibration(false)
         }
         mgr.createNotificationChannel(channel)
     }
@@ -548,6 +619,26 @@ class ShizukuSetup {
             Log.e(TAG, "exec failed: $command", e)
             null
         }
+    }
+
+    /**
+     * Classify the device's persistent USB configuration for the Samsung
+     * OneUI "Default USB Configuration" regression (see [UsbConfigChecker]).
+     * Requires the privileged service to be connected — returns
+     * [UsbConfigChecker.Advisory.Unknown] otherwise, which callers should
+     * interpret as "don't warn, can't tell".
+     *
+     * Reads `persist.sys.usb.config` first (the user-configured default)
+     * and falls back to `sys.usb.config` if the persisted prop is empty.
+     */
+    fun classifyUsbConfig(manufacturer: String): UsbConfigChecker.Advisory {
+        val persisted = exec("getprop persist.sys.usb.config")?.trim().orEmpty()
+        val cfg = if (persisted.isNotEmpty()) {
+            persisted
+        } else {
+            exec("getprop sys.usb.config")?.trim().orEmpty()
+        }
+        return UsbConfigChecker.classify(manufacturer, cfg)
     }
 
     /**
@@ -938,6 +1029,7 @@ done
 """.trimIndent()
 
     fun release() {
+        cancelPendingRestartNotification()
         if (userServiceBound) {
             try {
                 runOnMainSync {
