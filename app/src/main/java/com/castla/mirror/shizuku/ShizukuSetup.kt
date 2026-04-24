@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Handler
@@ -80,6 +81,26 @@ class ShizukuSetup {
          * the post entirely.
          */
         private const val RESTART_NOTIFICATION_DEBOUNCE_MS = 5_000L
+
+        /**
+         * Any user-service session that terminates inside this window after
+         * [ServiceConnection.onServiceConnected] is treated as a probable
+         * Shizuku token-mismatch symptom (e.g. reinstall without version bump
+         * left a stale service record in shizuku_server). Triggers one
+         * [forceUnbindAndRebind] attempt before giving up.
+         */
+        private const val USER_SERVICE_QUICK_DEATH_MS = 3_000L
+
+        /**
+         * Cap on consecutive user-service quick deaths we try to recover from
+         * via force-unbind-rebind. Past this, stop retrying and leave the
+         * service disconnected — the Shizuku-manager restart flow covers the
+         * remaining cases.
+         */
+        private const val USER_SERVICE_MAX_QUICK_DEATHS = 2
+
+        private const val PREFS_NAME = "shizuku_setup"
+        private const val PREF_LAST_UPDATE_TIME = "last_update_time"
     }
 
     private val _state = MutableStateFlow<ShizukuState>(ShizukuState.NotInstalled)
@@ -162,21 +183,67 @@ class ShizukuSetup {
     @Volatile
     private var pendingRestartNotification: Runnable? = null
 
+    /**
+     * When true, the next [bindPrivilegedService] will first call
+     * `Shizuku.unbindUserService(args, conn, remove=true)` to wipe the cached
+     * (possibly stale) service record in shizuku_server. Set by
+     * [detectReinstall] on first launch after install/update, or by
+     * [ServiceConnection.onServiceDisconnected] when a session dies inside
+     * [USER_SERVICE_QUICK_DEATH_MS] of connect. Cleared after the unbind
+     * runs so subsequent rebinds stay cheap.
+     */
+    @Volatile
+    private var pendingForceUnbind = false
+
+    /**
+     * Elapsed-realtime of the most recent [ServiceConnection.onServiceConnected]
+     * for the user service. Compared against `onServiceDisconnected` time to
+     * classify the session as a quick death (likely token mismatch) vs. a
+     * normal binder termination.
+     */
+    @Volatile
+    private var userServiceConnectedAtMs = 0L
+
+    /**
+     * Consecutive user-service quick deaths — see [USER_SERVICE_QUICK_DEATH_MS].
+     * Reset when a session stays alive past the threshold.
+     */
+    @Volatile
+    private var userServiceQuickDeaths = 0
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             privilegedService = IPrivilegedService.Stub.asInterface(binder)
             _serviceConnected.value = true
             bindingInProgress = false
             userServiceBound = true
+            userServiceConnectedAtMs = SystemClock.elapsedRealtime()
             Log.i(TAG, "Privileged service connected")
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            val aliveMs = if (userServiceConnectedAtMs == 0L) Long.MAX_VALUE
+                          else SystemClock.elapsedRealtime() - userServiceConnectedAtMs
+            userServiceConnectedAtMs = 0L
             privilegedService = null
             _serviceConnected.value = false
             bindingInProgress = false
             userServiceBound = false
-            Log.i(TAG, "Privileged service disconnected")
+            Log.i(TAG, "Privileged service disconnected (alive=${aliveMs}ms)")
+            if (aliveMs < USER_SERVICE_QUICK_DEATH_MS) {
+                userServiceQuickDeaths += 1
+                if (userServiceQuickDeaths <= USER_SERVICE_MAX_QUICK_DEATHS) {
+                    Log.w(TAG, "User-service quick death #$userServiceQuickDeaths — scheduling force rebind")
+                    pendingForceUnbind = true
+                    if (isAvailable() && hasPermission()) {
+                        mainHandler.post { bindPrivilegedService() }
+                    }
+                } else {
+                    Log.w(TAG, "User-service quick death #$userServiceQuickDeaths — giving up retries")
+                }
+            } else {
+                userServiceQuickDeaths = 0
+            }
         }
     }
 
@@ -244,6 +311,7 @@ class ShizukuSetup {
         appContext = context.applicationContext
         acquireWifiLock()
         deleteLegacyNotificationChannels()
+        detectReinstall()
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
         Shizuku.addRequestPermissionResultListener(permissionResultListener)
@@ -251,6 +319,32 @@ class ShizukuSetup {
         // Auto-bind if already permitted
         if (bindService && isAvailable() && hasPermission()) {
             bindPrivilegedService()
+        }
+    }
+
+    /**
+     * On first launch after an install/update (including `adb install -r` with
+     * no version bump), flags [pendingForceUnbind] so the next
+     * [bindPrivilegedService] calls `unbindUserService(remove=true)` before
+     * binding. Without this, Shizuku returns the cached service record from
+     * the previous process — whose binder is dead — and onServiceConnected
+     * either never fires or fires then immediately disconnects (token mismatch).
+     */
+    private fun detectReinstall() {
+        val ctx = appContext ?: return
+        val prefs: SharedPreferences = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val saved = prefs.getLong(PREF_LAST_UPDATE_TIME, 0L)
+        val current = try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime
+        } catch (e: Exception) {
+            Log.w(TAG, "detectReinstall: getPackageInfo failed", e)
+            0L
+        }
+        val action = ShizukuReinstallDetector.detect(saved, current)
+        if (action == ShizukuReinstallDetector.Action.ForceRebind) {
+            Log.i(TAG, "Reinstall detected (saved=$saved current=$current) — force unbind before first bind")
+            pendingForceUnbind = true
+            prefs.edit().putLong(PREF_LAST_UPDATE_TIME, current).apply()
         }
     }
 
@@ -555,6 +649,16 @@ class ShizukuSetup {
         try {
             bindingInProgress = true
             runOnMainSync {
+                if (pendingForceUnbind) {
+                    try {
+                        Shizuku.unbindUserService(serviceArgs, serviceConnection, true)
+                        Log.i(TAG, "Force-unbound stale user-service record before rebind")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Force-unbind threw (treated as best-effort)", e)
+                    }
+                    pendingForceUnbind = false
+                    userServiceBound = false
+                }
                 Shizuku.bindUserService(serviceArgs, serviceConnection)
             }
             userServiceBound = true
