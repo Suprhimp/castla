@@ -75,6 +75,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const webLauncher = document.getElementById('web-launcher');
     const homeBtn = document.getElementById('home-btn');
+    const overlayMenu = document.getElementById('overlay-menu');
+    const overlayMenuToggle = document.getElementById('overlay-menu-toggle');
+    const overlayMenuPanel = document.getElementById('overlay-menu-panel');
     const densityControl = document.getElementById('density-control');
     const densityBtn = document.getElementById('density-btn');
     const densityLabel = document.getElementById('density-label');
@@ -309,6 +312,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { primaryWidth, secondaryWidth, shellWidth, shellHeight };
     }
 
+    function updateSplitToolbarVisibility() {
+        if (!splitToolbar) return;
+        splitToolbar.style.display = browserSplitState.active ? 'flex' : 'none';
+    }
+
     function setBrowserSplitRatio(nextRatio) {
         const ratio = Math.max(0.25, Math.min(0.75, nextRatio));
         browserSplitState.ratio = ratio;
@@ -434,6 +442,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Single canvas shows both apps — add freeform-split class for close button
             playerShell?.classList.add('freeform-split');
+            updateSplitToolbarVisibility();
             // Send split app launch request to server
             if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 const message = {
@@ -466,6 +475,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             b.classList.toggle('active', Math.abs(btnRatio - initialRatio) < 0.05);
         });
         playerShell?.classList.add('browser-split');
+        updateSplitToolbarVisibility();
         applyActiveFitModes();
         await new Promise((resolve) => requestAnimationFrame(() => resolve()));
         lockBrowserSplitViewports(app);
@@ -486,6 +496,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { notifyServer = true } = options;
         const wasActive = browserSplitState.active;
         browserSplitState.active = false;
+        updateSplitToolbarVisibility();
         browserSplitState.resizing = false;
         browserSplitState.app = null;
         browserSplitState.url = null;
@@ -679,6 +690,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         bubbleCancel.addEventListener('click', (e) => {
             e.preventDefault();
             closeInputBubble(true);
+            // Tell the server so it can suppress the hasTarget fallback until the
+            // user re-engages (touch-down on mirror). Otherwise on platforms where
+            // the phone IME never actually shows, the bubble would re-open on the
+            // next poll because imeInputTarget persists.
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'bubbleClosed' }));
+            }
         });
     }
     if (bubbleText) {
@@ -872,6 +890,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const wsUrl = `ws://${host}/ws/video`;
         if (!isLauncherMode) setStatus('Connecting...', '');
 
+        clearFrameWatchdog();
         videoSocket = new WebSocket(wsUrl);
         videoSocket.binaryType = 'arraybuffer';
 
@@ -884,6 +903,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         videoSocket.onmessage = async (event) => {
             if (event.data instanceof ArrayBuffer) {
+                armFrameWatchdog(videoSocket);
                 if (!decoder) return;
                 if (codecMode === 'h264') {
                     const v = new Uint8Array(event.data);
@@ -897,6 +917,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         videoSocket.onclose = () => {
+            clearFrameWatchdog();
             if (!isLauncherMode) {
                 setStatus('Disconnected', 'error');
                 showOverlay();
@@ -928,6 +949,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     let reconnectTimer = null;
     let isReconnecting = false;
     let qualityReportInterval = null;
+
+    // Frame-arrival watchdog: if the primary video socket stays open but stops
+    // delivering frames (Shizuku death, encoder stall, VD end, silent network
+    // stall), the last frame would otherwise stay frozen on screen. Bind the
+    // timer to the specific socket instance so a stale fire cannot close a
+    // freshly reconnected socket.
+    const FRAME_TIMEOUT_MS = 4000;
+    let frameWatchdogTimer = null;
+
+    function armFrameWatchdog(socket) {
+        if (isLauncherMode || !socket) return;
+        if (socket !== videoSocket) return;
+        if (frameWatchdogTimer !== null) clearTimeout(frameWatchdogTimer);
+        frameWatchdogTimer = setTimeout(() => onFrameStalled(socket), FRAME_TIMEOUT_MS);
+    }
+
+    function clearFrameWatchdog() {
+        if (frameWatchdogTimer !== null) clearTimeout(frameWatchdogTimer);
+        frameWatchdogTimer = null;
+    }
+
+    function onFrameStalled(socket) {
+        if (socket !== videoSocket) return;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        if (isLauncherMode) return;
+        console.warn('[Main] Video stream stalled — no frame for', FRAME_TIMEOUT_MS, 'ms. Triggering reconnect.');
+        setStatus('Disconnected', 'error');
+        showOverlay();
+        try { socket.close(); } catch (_) {}
+    }
+
     function scheduleReconnect() {
         if (isReconnecting) return;
         isReconnecting = true;
@@ -1096,11 +1148,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                         : getEffectivePrimaryFitMode();
                     console.log(`[Main] Server resolution changed pane=${pane} server=${msg.width}x${msg.height} fitMode=${fitMode} locked=${describeViewport(lockedViewport)} split=${browserSplitState.active}`);
                 } else if (msg.type === 'showKeyboard') {
+                    console.log('[IME] showKeyboard received pane=', msg.pane, 'useBubble=', useBubbleInput, 'bubbleEl=', !!inputBubble, 'bubbleVisible=', bubbleVisible);
                     if (useBubbleInput) {
-                        const anchor = secondaryTouchHandler?.lastTap || touchHandler?.lastTap || null;
-                        openInputBubble(anchor);
+                        const pane = msg.pane || 'primary';
+                        const anchor = pane === 'secondary'
+                            ? (secondaryTouchHandler?.lastTap || null)
+                            : (touchHandler?.lastTap || null);
+                        console.log('[IME] anchor=', anchor);
+                        // Reposition if already visible (user switched pane).
+                        if (bubbleVisible) {
+                            positionInputBubble(anchor);
+                        } else {
+                            openInputBubble(anchor);
+                        }
                     } else focusKeyboardProxy();
                 } else if (msg.type === 'hideKeyboard') {
+                    console.log('[IME] hideKeyboard received');
                     if (useBubbleInput) closeInputBubble(true);
                     else blurKeyboardProxy();
                 } else if (msg.type === 'thermalStatus') {
@@ -1280,6 +1343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         homeBtn.style.display = 'block';
         firstFrameReceived = false;
         clearLaunchTimeout();
+        clearFrameWatchdog();
 
         // Clear the previous app's last frame immediately so it doesn't
         // flash during the transition to the new app
@@ -1330,8 +1394,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function goHome() {
+        collapseOverlayMenu();
         isLauncherMode = true;
         clearLaunchTimeout();
+        clearFrameWatchdog();
         closeInputBubble(true);
         blurKeyboardProxy();
         disableBrowserSplit();
@@ -1393,45 +1459,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, {passive: true});
     }
 
-    // Split toolbar: show on tap, auto-hide after 3s
+    // Split toolbar lives inside #overlay-menu-panel; visibility is driven by
+    // browserSplitState.active so it appears only when a split is actually open.
     const splitToolbar = document.getElementById('split-pane-toolbar');
-    let splitToolbarTimer = null;
-    function showSplitToolbar() {
-        if (!splitToolbar || !browserSplitState.active) return;
-        splitToolbar.classList.add('visible');
-        clearTimeout(splitToolbarTimer);
-        splitToolbarTimer = setTimeout(() => {
-            splitToolbar.classList.remove('visible');
-        }, 3000);
-    }
-    function hideSplitToolbar() {
-        splitToolbar?.classList.remove('visible');
-        clearTimeout(splitToolbarTimer);
-    }
-    // Show toolbar on double-tap in the top zone — touch passes through to app
-    let lastToolbarTapTime = 0;
-    let lastToolbarTapY = 0;
-    const TOOLBAR_TAP_ZONE_HEIGHT = 48;
-    playerShell?.addEventListener('pointerup', (e) => {
-        if (!browserSplitState.active) return;
-        if (e.target.closest('#split-pane-toolbar')) return;
-        // Only respond to taps in the top zone
-        const rect = playerShell.getBoundingClientRect();
-        const relY = e.clientY - rect.top;
-        if (relY > TOOLBAR_TAP_ZONE_HEIGHT) return;
-        const now = Date.now();
-        if (now - lastToolbarTapTime < 400 && Math.abs(relY - lastToolbarTapY) < 30) {
-            if (splitToolbar?.classList.contains('visible')) {
-                hideSplitToolbar();
-            } else {
-                showSplitToolbar();
-            }
-            lastToolbarTapTime = 0;
-        } else {
-            lastToolbarTapTime = now;
-            lastToolbarTapY = relY;
-        }
-    });
 
     // Split ratio buttons
     document.querySelectorAll('.split-ratio-btn').forEach(btn => {
@@ -1443,13 +1473,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             setBrowserSplitRatio(ratio);
             lockBrowserSplitViewports(browserSplitState.app);
             requestAnimationFrame(() => sendViewportSize());
-            showSplitToolbar(); // reset auto-hide timer
         });
     });
 
     if (splitCloseBtn) {
         splitCloseBtn.addEventListener('click', () => {
-            hideSplitToolbar();
             disableBrowserSplit();
         });
     }
@@ -1627,10 +1655,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function collapseOverlayMenu() {
+        if (overlayMenuPanel) overlayMenuPanel.style.display = 'none';
+        if (overlayMenuToggle) overlayMenuToggle.setAttribute('aria-expanded', 'false');
+        if (densityPopup) densityPopup.style.display = 'none';
+        if (profilePopup) profilePopup.style.display = 'none';
+    }
+
     function updateOverlayControlsVisibility() {
-        const isVisible = homeBtn && homeBtn.style.display !== 'none';
-        if (profileControl) profileControl.style.display = isVisible ? 'block' : 'none';
-        if (densityControl) densityControl.style.display = isVisible ? 'block' : 'none';
+        const active = homeBtn && homeBtn.style.display !== 'none';
+        if (overlayMenu) overlayMenu.style.display = active ? 'flex' : 'none';
+        if (!active) collapseOverlayMenu();
     }
 
     // ── Playback Profile UI ──
@@ -1777,10 +1812,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Hamburger toggle: expand/collapse the overlay menu panel on click;
+    // collapse on clicks outside the entire #overlay-menu wrapper.
+    if (overlayMenuToggle && overlayMenuPanel && overlayMenu) {
+        overlayMenuToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const expanded = overlayMenuPanel.style.display === 'flex';
+            if (expanded) {
+                collapseOverlayMenu();
+            } else {
+                overlayMenuPanel.style.display = 'flex';
+                overlayMenuToggle.setAttribute('aria-expanded', 'true');
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (!overlayMenu.contains(e.target)) collapseOverlayMenu();
+        });
+    }
+
     // Show/hide floating controls with home button
     const profileObserver = new MutationObserver(() => updateOverlayControlsVisibility());
     if (homeBtn) {
         profileObserver.observe(homeBtn, { attributes: true, attributeFilter: ['style'] });
     }
     updateOverlayControlsVisibility();
+    updateSplitToolbarVisibility();
 });

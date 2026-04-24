@@ -39,6 +39,7 @@ import com.castla.mirror.shizuku.IPrivilegedService
 import com.castla.mirror.shizuku.ShizukuSetup
 import com.castla.mirror.ott.BrowserResolver
 import com.castla.mirror.ott.OttCatalog
+import com.castla.mirror.utils.ImeTargetParser
 import com.castla.mirror.utils.LaunchMode
 import com.castla.mirror.policy.AutoScaleDecision
 import com.castla.mirror.policy.AutoScaleInput
@@ -56,6 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -1020,6 +1022,10 @@ class MirrorForegroundService : Service() {
                     } else {
                         touchInjector?.onTouchEvent(event)
                     }
+                    if (event.action == "down") {
+                        // User re-engaging — clear any lingering manual-close suppression.
+                        bubbleClosedByUser = false
+                    }
                     if (event.action == "up") {
                         lastTouchPane = event.pane
                         checkImeAndNotifyBrowser()
@@ -1041,6 +1047,14 @@ class MirrorForegroundService : Service() {
                 server.setTextInputListener { text -> injectText(text) }
                 server.setKeyEventListener { keyCode -> injectKeyEvent(keyCode) }
                 server.setCompositionUpdateListener { bs, text -> injectCompositionUpdate(bs, text) }
+                server.setBubbleClosedListener {
+                    Log.d(TAG, "Browser reported bubbleClosed — resetting IME state")
+                    bubbleClosedByUser = true
+                    lastImeState = false
+                    lastBroadcastPane = null
+                    haveSeenRealImeShow = false
+                    cancelImeHideWatchdog()
+                }
                 server.setAudioCodecListener { codec -> onAudioCodecRequest(codec) }
                 server.setAudioSocketConnectedListener { audioOrchestrator?.onAudioSocketConnected() }
                 server.setGoHomeListener {
@@ -2271,7 +2285,7 @@ class MirrorForegroundService : Service() {
         try {
             releaseShizukuSession("before_virtual_display_setup")
             val setup = ShizukuSetup()
-            setup.init(bindService = false)
+            setup.init(this, bindService = false)
 
             if (!setup.isAvailable() || !setup.hasPermission()) {
                 Log.i(TAG, "Shizuku not available/permitted")
@@ -2333,12 +2347,10 @@ class MirrorForegroundService : Service() {
                             touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
                                 vdm.injectInput(action, x, y, pointerId)
                             }
-                            // Set up Shizuku watchdog for auto-restart after WiFi off
+                            // Harden Shizuku (fortify + install watchdog if needed) for WiFi-off survival
                             serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                if (!setup.isWatchdogRunning()) {
-                                    val ok = setup.setupShizukuWatchdog()
-                                    Log.i(TAG, "Shizuku watchdog setup from service: $ok")
-                                }
+                                val ok = setup.ensureShizukuHardened()
+                                Log.i(TAG, "ensureShizukuHardened (service): $ok")
                             }
                             safeResult(true)
                         } else {
@@ -2587,6 +2599,14 @@ class MirrorForegroundService : Service() {
         Log.i(TAG, "Browser disconnected — suspending pipeline")
         pendingBrowserDisconnectJob = null
         browserConnected = false
+        // Reset IME broadcast state so next reconnect re-emits showKeyboard
+        // if a text field is still focused — the browser's bubble state
+        // was cleared by the reload.
+        lastImeState = false
+        lastBroadcastPane = null
+        haveSeenRealImeShow = false
+        bubbleClosedByUser = false
+        cancelImeHideWatchdog()
         dismissSplitPresentation(clearState = false)
         if (!singleVdSplit) {
             releaseSecondaryPipeline(clearState = false)
@@ -2636,8 +2656,21 @@ class MirrorForegroundService : Service() {
 
     private var lastTouchPane = "primary"
     private var lastImeState = false
+    private var lastBroadcastPane: String? = null
     private var lastImeCheckTime = 0L
     private var imeCheckSuspendUntil = 0L
+    // Once a real phone IME show (`mInputShown=true` or equivalent) is observed,
+    // stop trusting the `imeInputTarget` fallback — that signal persists after
+    // the phone keyboard dismisses, which would otherwise keep the bubble stuck
+    // open in single-VD mode. Reset whenever we broadcast hide or pane changes.
+    private var haveSeenRealImeShow = false
+    // User explicitly dismissed the bubble in the browser. Suppress hasTarget-based
+    // re-shows until the next touch-down (user intent to re-engage).
+    private var bubbleClosedByUser = false
+    // Polls IME visibility at a short interval while the bubble is shown so the
+    // hide broadcast fires quickly when the user dismisses the phone keyboard
+    // without tapping the mirror. Auto-exits when lastImeState goes false.
+    private var imeHideWatchdogJob: Job? = null
 
     private fun parseImeVisible(dumpsys: String): Boolean {
         if (dumpsys.contains("mInputShown=true")) return true
@@ -2658,11 +2691,110 @@ class MirrorForegroundService : Service() {
         return false
     }
 
+    // One IME-visibility poll iteration. Runs dumpsys, updates state, and
+    // broadcasts show/hide when it changes. Returns the combined-visible
+    // value, or null on a transport error. Shared by the touch-triggered
+    // retry loop (show detection) and the hide watchdog (fast dismiss).
+    private suspend fun imeCheckTick(activePane: String, activeDisplayId: Int, source: String): Boolean? {
+        val service = virtualDisplayManager?.getPrivilegedService() ?: return null
+
+        val result = try {
+            service.execCommand("dumpsys input_method | grep -E 'mInputShown|mImeWindowVis|mDecorViewVisible|mWindowVisible|mServedView|mShowRequested|mCurClient'")
+        } catch (e: android.os.DeadObjectException) {
+            imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
+            return null
+        } ?: return null
+
+        var imeVisible = parseImeVisible(result)
+        if (!imeVisible && activeDisplayId > 0) {
+            imeVisible = parseHasServedInput(result)
+        }
+        if (imeVisible) {
+            haveSeenRealImeShow = true
+        }
+
+        // Samsung dual-VD only: cross-display focus mismatch makes the global
+        // IME state lie, so we fall back to per-display imeInputTarget. In
+        // single-VD (including single-VD split) the global state is truthful,
+        // and this fallback would fire on mere focus without a keyboard.
+        val isDualVdMode = secondaryDisplayId >= 0 && !singleVdSplit
+        var hasTargetOnActive = false
+        if (isDualVdMode && !imeVisible && activeDisplayId > 0) {
+            val winOut = try {
+                service.execCommand("dumpsys window | grep 'imeInputTarget in display'")
+            } catch (e: android.os.DeadObjectException) {
+                imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
+                return null
+            } ?: return null
+            hasTargetOnActive = ImeTargetParser
+                .displaysWithInputTarget(winOut)
+                .contains(activeDisplayId)
+        }
+
+        val useHasTarget = hasTargetOnActive && !haveSeenRealImeShow && !bubbleClosedByUser
+        val combinedVisible = imeVisible || useHasTarget
+        Log.d(TAG, "IME $source: pane=$activePane display=$activeDisplayId imeVisible=$imeVisible hasTarget=$hasTargetOnActive seenReal=$haveSeenRealImeShow closedByUser=$bubbleClosedByUser lastState=$lastImeState lastPane=$lastBroadcastPane")
+
+        val stateChanged = combinedVisible != lastImeState
+        val paneChangedWhileVisible = combinedVisible && lastImeState &&
+            lastBroadcastPane != null && lastBroadcastPane != activePane
+        if (stateChanged || paneChangedWhileVisible) {
+            lastImeState = combinedVisible
+            lastBroadcastPane = if (combinedVisible) activePane else null
+            if (!combinedVisible || paneChangedWhileVisible) {
+                haveSeenRealImeShow = false
+            }
+            val msg = if (combinedVisible)
+                """{"type":"showKeyboard","pane":"$activePane"}"""
+            else
+                """{"type":"hideKeyboard"}"""
+            Log.d(TAG, "IME broadcast: $msg (sockets=${mirrorServer?.controlSocketCount()})")
+            mirrorServer?.broadcastControlMessage(msg)
+        }
+        return combinedVisible
+    }
+
+    private fun startImeHideWatchdog() {
+        if (imeHideWatchdogJob?.isActive == true) return
+        imeHideWatchdogJob = serviceScope.launch(Dispatchers.IO) {
+            try {
+                while (isActive && lastImeState) {
+                    kotlinx.coroutines.delay(200)
+                    if (!lastImeState) break
+                    val activePane = lastTouchPane
+                    val activeDisplayId = if (activePane == "secondary" && secondaryDisplayId >= 0) {
+                        secondaryDisplayId
+                    } else {
+                        virtualDisplayManager?.getDisplayId() ?: -1
+                    }
+                    val combined = imeCheckTick(activePane, activeDisplayId, "watchdog") ?: continue
+                    if (!combined) break
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "IME hide watchdog error", e)
+            } finally {
+                imeHideWatchdogJob = null
+            }
+        }
+    }
+
+    private fun cancelImeHideWatchdog() {
+        imeHideWatchdogJob?.cancel()
+        imeHideWatchdogJob = null
+    }
+
     private fun checkImeAndNotifyBrowser() {
         val now = System.currentTimeMillis()
         if (now - lastImeCheckTime < 500) return
         if (now < imeCheckSuspendUntil) return
         lastImeCheckTime = now
+
+        val activePane = lastTouchPane
+        val activeDisplayId = if (activePane == "secondary" && secondaryDisplayId >= 0) {
+            secondaryDisplayId
+        } else {
+            virtualDisplayManager?.getDisplayId() ?: -1
+        }
 
         serviceScope.launch(Dispatchers.IO) {
             try {
@@ -2670,31 +2802,14 @@ class MirrorForegroundService : Service() {
                 val retryDelays = longArrayOf(300, 400, 500, 600)
                 for (attempt in 0 until maxRetries) {
                     kotlinx.coroutines.delay(retryDelays[attempt])
-                    val displayId = virtualDisplayManager?.getDisplayId() ?: -1
-                    val service = virtualDisplayManager?.getPrivilegedService()
-                    if (service == null) return@launch
-
-                    val result = try {
-                        service.execCommand("dumpsys input_method | grep -E 'mInputShown|mImeWindowVis|mDecorViewVisible|mWindowVisible|mServedView|mShowRequested|mCurClient'")
-                    } catch (e: android.os.DeadObjectException) {
-                        imeCheckSuspendUntil = System.currentTimeMillis() + 10_000
-                        return@launch
-                    }
-                    if (result == null) return@launch
-
-                    var imeVisible = parseImeVisible(result)
-                    if (!imeVisible && displayId > 0) {
-                        imeVisible = parseHasServedInput(result)
-                    }
-
-                    if (imeVisible != lastImeState) {
-                        lastImeState = imeVisible
-                        val msg = if (imeVisible) """{"type":"showKeyboard"}""" else """{"type":"hideKeyboard"}"""
-                        mirrorServer?.broadcastControlMessage(msg)
+                    imeCheckTick(activePane, activeDisplayId, "check") ?: return@launch
+                    // As soon as the bubble is showing, let the hide watchdog
+                    // take over at its tighter cadence.
+                    if (lastImeState) {
+                        startImeHideWatchdog()
                         break
                     }
-                    // IME state unchanged — if already showing or last attempt, stop retrying
-                    if (lastImeState || attempt == maxRetries - 1) break
+                    if (attempt == maxRetries - 1) break
                 }
             } catch (e: Exception) {
                 imeCheckSuspendUntil = System.currentTimeMillis() + 10_000

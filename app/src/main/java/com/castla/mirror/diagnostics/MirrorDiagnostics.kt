@@ -14,6 +14,8 @@ enum class DiagnosticEvent {
     KEYGUARD_UNLOCKED,
     SHIZUKU_BINDER_DEAD,
     SHIZUKU_BINDER_READY,
+    /** Informational: process fortification applied (doze whitelist, appops, oom_adj). */
+    SHIZUKU_FORTIFIED,
     VD_CREATED,
     VD_STOPPED,
     SOCKET_DISCONNECTED,
@@ -52,6 +54,9 @@ enum class DisconnectCause {
  *  3. `SOCKET_DISCONNECTED` or `SOCKET_TIMEOUT`       → NETWORK
  *  4. `SCREEN_OFF` present (with no strong signal)     → PROCESS_OR_POWER
  *  5. fallback                                         → UNKNOWN
+ *
+ * Informational events like `SHIZUKU_FORTIFIED` are ignored by the classifier
+ * and must not affect the outcome.
  */
 object DisconnectCauseClassifier {
 

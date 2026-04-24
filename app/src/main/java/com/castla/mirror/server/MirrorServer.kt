@@ -42,6 +42,7 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
     private var onCloseSplitListener: (() -> Unit)? = null
     private var onDisplayDensityListener: ((Float) -> Unit)? = null
     private var onQualityReportListener: ((Int, Double, Int) -> Unit)? = null
+    private var onBubbleClosedListener: (() -> Unit)? = null
 
     // Track active connection status
     private var isBrowserConnected = false
@@ -118,6 +119,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
 
     fun setQualityReportListener(listener: (Int, Double, Int) -> Unit) {
         onQualityReportListener = listener
+    }
+
+    fun setBubbleClosedListener(listener: () -> Unit) {
+        onBubbleClosedListener = listener
     }
 
     fun isBrowserConnected(): Boolean = isBrowserConnected
@@ -294,6 +299,8 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
         deadSockets.forEach { unregisterAudioSocket(it) }
     }
 
+    fun controlSocketCount(): Int = controlSockets.size
+
     fun broadcastControlMessage(json: String) {
         // Cache thermal status so new control sockets receive it immediately
         if (json.contains("\"thermalStatus\"")) {
@@ -357,6 +364,10 @@ class MirrorServer(private val context: Context) : NanoWSD(DEFAULT_PORT) {
 
     fun onQualityReport(droppedFrames: Int, avgDelayMs: Double, backlogDrops: Int) {
         onQualityReportListener?.invoke(droppedFrames, avgDelayMs, backlogDrops)
+    }
+
+    fun onBubbleClosed() {
+        onBubbleClosedListener?.invoke()
     }
 
 
