@@ -1047,6 +1047,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         else resizeTimer = setTimeout(doSend, 500);
     }
 
+    function waitForControlSocketOpen(timeoutMs) {
+        return new Promise((resolve) => {
+            const deadline = Date.now() + timeoutMs;
+            const check = () => {
+                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) return resolve();
+                if (Date.now() >= deadline) return resolve(); // best-effort — fall through on timeout
+                setTimeout(check, 20);
+            };
+            check();
+        });
+    }
+
     function connectControl() {
         const wsUrl = `ws://${host}/ws/control`;
         controlSocket = new WebSocket(wsUrl);
@@ -1218,26 +1230,64 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!splitAppList) return;
         splitAppList.innerHTML = '';
 
+        const grouped = {
+            'NAVIGATION': { title: 'Navigation', color: '#4CAF50', items: [] },
+            'VIDEO': { title: 'Video', color: '#FF5722', items: [] },
+            'MUSIC': { title: 'Music', color: '#9C27B0', items: [] },
+            'OTHER': { title: 'Apps', color: '#9E9E9E', items: [] }
+        };
+
         apps.forEach(app => {
-            const cell = document.createElement('div');
-            cell.className = 'split-app-item';
+            if (grouped[app.category]) grouped[app.category].items.push(app);
+            else grouped['OTHER'].items.push(app);
+        });
 
-            const icon = document.createElement('img');
-            icon.className = 'split-app-icon';
-            icon.src = `/api/icon?pkg=${app.packageName}`;
-            cell.appendChild(icon);
+        Object.keys(grouped).forEach(key => {
+            const group = grouped[key];
+            if (group.items.length === 0) return;
 
-            const label = document.createElement('div');
-            label.textContent = SPLIT_STRATEGY === 'freeform' ? `${app.label} (Split)` : `${app.label} (Dual Stream)`;
-            label.style.color = '#FFD700';
-            cell.appendChild(label);
+            const section = document.createElement('div');
+            section.className = 'split-category-section';
 
-            cell.addEventListener('click', () => {
-                launchApp(app, true);
-                splitDrawer.classList.remove('open');
+            const header = document.createElement('div');
+            header.className = 'split-category-header';
+            const bar = document.createElement('div');
+            bar.className = 'split-category-bar';
+            bar.style.backgroundColor = group.color;
+            const title = document.createElement('div');
+            title.className = 'split-category-title';
+            title.textContent = group.title;
+            header.appendChild(bar);
+            header.appendChild(title);
+            section.appendChild(header);
+
+            const items = document.createElement('div');
+            items.className = 'split-category-items';
+
+            group.items.forEach(app => {
+                const cell = document.createElement('div');
+                cell.className = 'split-app-item';
+
+                const icon = document.createElement('img');
+                icon.className = 'split-app-icon';
+                icon.src = `/api/icon?pkg=${app.packageName}`;
+                cell.appendChild(icon);
+
+                const label = document.createElement('div');
+                label.textContent = SPLIT_STRATEGY === 'freeform' ? `${app.label} (Split)` : `${app.label} (Dual Stream)`;
+                label.style.color = '#FFD700';
+                cell.appendChild(label);
+
+                cell.addEventListener('click', () => {
+                    launchApp(app, true);
+                    splitDrawer.classList.remove('open');
+                });
+
+                items.appendChild(cell);
             });
 
-            splitAppList.appendChild(cell);
+            section.appendChild(items);
+            splitAppList.appendChild(section);
         });
     }
 
@@ -1557,8 +1607,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
         await initDecoder();
-        connectVideo();
-        connectControl();
+        if (codecMode === 'mjpeg') {
+            // Open the control socket first so the `codec: mjpeg` preference
+            // reaches the server before the video socket starts streaming.
+            // Otherwise the server ships H.264 until it processes the switch,
+            // which an MJPEG decoder can't render.
+            connectControl();
+            await waitForControlSocketOpen(2000);
+            connectVideo();
+        } else {
+            connectVideo();
+            connectControl();
+        }
     } catch (e) {
         setStatus(e.message, 'error');
         showOverlay();

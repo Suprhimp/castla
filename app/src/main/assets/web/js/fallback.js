@@ -50,6 +50,12 @@ class FallbackDecoder {
         if (view.length < 9) return;
         if (view[0] === 0x02) return; // skip SPS/PPS config (not relevant for MJPEG)
 
+        // Silently drop non-JPEG payloads. During the startup window, the server
+        // may briefly emit H.264 frames before it processes the client's
+        // `codec: mjpeg` control message — those frames would otherwise raise
+        // `InvalidStateError` in createImageBitmap and spam the console.
+        if (view[8] !== 0xFF || view[9] !== 0xD8) return;
+
         // Drop frame if previous decode is still running
         if (this._decoding) {
             this._droppedFrames++;
