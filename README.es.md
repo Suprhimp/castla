@@ -6,7 +6,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/Suprhimp/castla/releases/latest"><img src="https://img.shields.io/github/v/release/Suprhimp/castla?style=flat-square" alt="Latest Release"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License"></a>
     <a href="https://ko-fi.com/suprhimp"><img src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
   </p>
   <p align="center">
@@ -33,7 +33,7 @@ Castla es una solución gratuita y de código abierto que transmite la pantalla 
 - **Control táctil completo** — Toca, desliza e interactúa directamente desde la pantalla de Tesla (vía Shizuku)
 - **Streaming de audio** — Audio del dispositivo directo a los altavoces de Tesla (Android 10+)
 - **100% local y privado** — Todos los datos permanecen en tu WiFi/hotspot
-- **Completamente gratis** — Sin anuncios, sin muros de pago. Código abierto bajo GPL-3.0
+- **Completamente gratis** — Sin anuncios, sin muros de pago. Código abierto bajo Apache-2.0
 
 ## Funciones
 
@@ -84,6 +84,20 @@ Castla **no recopila ningún dato**. Ver [Política de Privacidad](PRIVACY.md).
 
 <a href="https://ko-fi.com/suprhimp"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Apoyar en Ko-fi"></a>
 
+## Construido con
+
+Castla se apoya en el trabajo de grandes proyectos de código abierto:
+
+- [Shizuku](https://shizuku.rikka.app/) — acceso a APIs privilegiadas sin root
+- [NanoHTTPD](https://github.com/NanoHttpd/nanohttpd) — servidor HTTP + WebSocket embebido
+- [ZXing](https://github.com/zxing/zxing) — generación de códigos QR
+- [AndroidX / Jetpack Compose](https://developer.android.com/jetpack) — toolkit moderno de UI para Android
+- [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) — pipeline de streaming asíncrono
+
+Algunas técnicas del modo privilegiado se inspiraron en [scrcpy](https://github.com/Genymobile/scrcpy). No se incluye código fuente de scrcpy.
+
+Consulta [NOTICE](NOTICE) para la lista completa de atribuciones de terceros.
+
 ## Licencia
 
-[GNU General Public License v3.0](LICENSE)
+[Apache License 2.0](LICENSE)

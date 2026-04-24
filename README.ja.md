@@ -6,7 +6,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/Suprhimp/castla/releases/latest"><img src="https://img.shields.io/github/v/release/Suprhimp/castla?style=flat-square" alt="Latest Release"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License"></a>
     <a href="https://ko-fi.com/suprhimp"><img src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
   </p>
   <p align="center">
@@ -33,7 +33,7 @@ Castlaは、ローカルWiFiネットワーク経由でAndroidスマートフォ
 - **フルタッチコントロール** — テスラ画面から直接タップ、スワイプ、操作（Shizuku使用）
 - **オーディオストリーミング** — デバイスオーディオをテスラスピーカーに直接送信（Android 10+）
 - **100%ローカル＆プライベート** — すべてのデータはWiFi/ホットスポット内のみ
-- **完全無料** — 広告なし、課金なし。GPL-3.0オープンソース
+- **完全無料** — 広告なし、課金なし。Apache-2.0オープンソース
 
 ## 機能
 
@@ -84,6 +84,20 @@ Castlaは**一切のデータを収集しません**。詳細は[プライバシ
 
 <a href="https://ko-fi.com/suprhimp"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Ko-fiでサポート"></a>
 
+## 使用しているオープンソース
+
+Castla は素晴らしいオープンソースプロジェクトの上に成り立っています：
+
+- [Shizuku](https://shizuku.rikka.app/) — root なしで特権 API にアクセス
+- [NanoHTTPD](https://github.com/NanoHttpd/nanohttpd) — 組み込み HTTP + WebSocket サーバー
+- [ZXing](https://github.com/zxing/zxing) — QR コード生成
+- [AndroidX / Jetpack Compose](https://developer.android.com/jetpack) — モダンな Android UI ツールキット
+- [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) — 非同期ストリーミングパイプライン
+
+一部の特権モード手法は [scrcpy](https://github.com/Genymobile/scrcpy) のアプローチから着想を得ています。scrcpy のソースコードは含まれていません。
+
+サードパーティの完全な表記については [NOTICE](NOTICE) を参照してください。
+
 ## ライセンス
 
-[GNU General Public License v3.0](LICENSE)
+[Apache License 2.0](LICENSE)

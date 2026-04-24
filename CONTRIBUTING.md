@@ -56,4 +56,4 @@ Existing translations: en, ko, de, es, fr, ja, nl, no, zh-CN
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the GPL-3.0 License.
+By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
