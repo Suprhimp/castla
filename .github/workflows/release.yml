@@ -6,6 +6,7 @@
 #        - "major" label  → 1.2.3 → 2.0.0
 #        - "minor" label  → 1.2.3 → 1.3.0
 #        - "patch" label  → 1.2.3 → 1.2.4  (also the default fallback)
+#        - "chore" label  → no release (CI housekeeping, docs, relicense, etc.)
 #   3. Decodes your keystore from a GitHub secret
 #   4. Builds a signed release APK with the new version
 #   5. Creates a GitHub Release with the APK attached
@@ -27,13 +28,11 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  detect:
     runs-on: ubuntu-latest
-
+    outputs:
+      type: ${{ steps.bump.outputs.type }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Detect bump type from merged PR labels
         id: bump
         env:
@@ -41,9 +40,12 @@ jobs:
         run: |
           # Find the PR associated with this merge commit
           COMMIT_SHA="${{ github.sha }}"
-          LABELS=$(gh pr list --state merged --search "$COMMIT_SHA" --json labels -q '.[0].labels[].name' 2>/dev/null || echo "")
+          LABELS=$(gh pr list --state merged --search "$COMMIT_SHA" --repo "${{ github.repository }}" --json labels -q '.[0].labels[].name' 2>/dev/null || echo "")
 
-          if echo "$LABELS" | grep -qi "major"; then
+          if echo "$LABELS" | grep -qi "chore"; then
+            echo "type=chore" >> "$GITHUB_OUTPUT"
+            echo "Chore PR — skipping release"
+          elif echo "$LABELS" | grep -qi "major"; then
             echo "type=major" >> "$GITHUB_OUTPUT"
           elif echo "$LABELS" | grep -qi "minor"; then
             echo "type=minor" >> "$GITHUB_OUTPUT"
@@ -51,6 +53,15 @@ jobs:
             echo "type=patch" >> "$GITHUB_OUTPUT"
           fi
           echo "Bump type: $(grep type "$GITHUB_OUTPUT" | cut -d= -f2)"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.type != 'chore'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Determine next version
         id: version
@@ -70,7 +81,7 @@ jobs:
 
           # Parse semver
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
-          BUMP="${{ steps.bump.outputs.type }}"
+          BUMP="${{ needs.detect.outputs.type }}"
 
           if [ "$BUMP" = "major" ]; then
             MAJOR=$((MAJOR + 1))
