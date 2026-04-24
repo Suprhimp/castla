@@ -6,7 +6,7 @@
   </p>
   <p align="center">
     <a href="https://github.com/Suprhimp/castla/releases/latest"><img src="https://img.shields.io/github/v/release/Suprhimp/castla?style=flat-square" alt="Latest Release"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License"></a>
     <a href="https://ko-fi.com/suprhimp"><img src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
   </p>
   <p align="center">
@@ -33,7 +33,7 @@ Castla est une solution gratuite et open source qui diffuse l'écran de votre t�
 - **Contrôle tactile complet** — Touchez, glissez et interagissez directement depuis l'écran Tesla (via Shizuku)
 - **Streaming audio** — Audio de l'appareil directement sur les haut-parleurs Tesla (Android 10+)
 - **100% local et privé** — Toutes les données restent sur votre WiFi/hotspot
-- **Entièrement gratuit** — Sans pub, sans paywall. Open source sous GPL-3.0
+- **Entièrement gratuit** — Sans pub, sans paywall. Open source sous Apache-2.0
 
 ## Fonctionnalités
 
@@ -84,6 +84,20 @@ Castla **ne collecte aucune donnée**. Voir la [Politique de Confidentialité](P
 
 <a href="https://ko-fi.com/suprhimp"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Soutenir sur Ko-fi"></a>
 
+## Construit avec
+
+Castla s'appuie sur d'excellents projets open source :
+
+- [Shizuku](https://shizuku.rikka.app/) — accès aux API privilégiées sans root
+- [NanoHTTPD](https://github.com/NanoHttpd/nanohttpd) — serveur HTTP + WebSocket embarqué
+- [ZXing](https://github.com/zxing/zxing) — génération de codes QR
+- [AndroidX / Jetpack Compose](https://developer.android.com/jetpack) — boîte à outils UI Android moderne
+- [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) — pipeline de streaming asynchrone
+
+Certaines techniques du mode privilégié s'inspirent de [scrcpy](https://github.com/Genymobile/scrcpy). Aucun code source de scrcpy n'est inclus.
+
+Voir [NOTICE](NOTICE) pour la liste complète des attributions tierces.
+
 ## Licence
 
-[GNU General Public License v3.0](LICENSE)
+[Apache License 2.0](LICENSE)

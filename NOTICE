@@ -1,0 +1,51 @@
+Castla
+Copyright (C) 2024 Castla
+
+This product includes software developed by the following third parties.
+Their respective licenses are reproduced below or referenced by URL.
+
+================================================================================
+Shizuku API / Provider
+  https://github.com/RikkaApps/Shizuku
+  Copyright (c) 2017 Rikka
+  Licensed under the Apache License, Version 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+
+NanoHTTPD
+  https://github.com/NanoHttpd/nanohttpd
+  Copyright (c) 2012-2017 elonen, paulsheer, and NanoHTTPD contributors
+  Licensed under the BSD 3-Clause License
+
+ZXing ("Zebra Crossing")
+  https://github.com/zxing/zxing
+  Copyright (c) 2007-2024 ZXing authors
+  Licensed under the Apache License, Version 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+
+AndroidX (Core, AppCompat, Activity, Lifecycle, Compose, Test)
+  https://developer.android.com/jetpack/androidx
+  Copyright (c) The Android Open Source Project
+  Licensed under the Apache License, Version 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Kotlin Standard Library / Kotlin Coroutines
+  https://github.com/JetBrains/kotlin
+  https://github.com/Kotlin/kotlinx.coroutines
+  Copyright (c) 2010-2024 JetBrains s.r.o. and Kotlin Programming Language contributors
+  Licensed under the Apache License, Version 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+Acknowledgements
+
+Some privileged-mode techniques used by this project were inspired by the
+approach taken in scrcpy (https://github.com/Genymobile/scrcpy, Apache-2.0).
+No source code from scrcpy is included.
+
+================================================================================
+Test-only dependencies (not distributed in release APK)
+
+  JUnit 4                         — Eclipse Public License 1.0
+  MockK                           — Apache License 2.0
+  Robolectric                     — MIT / Apache-2.0
+  AndroidX Test / UIAutomator     — Apache License 2.0
