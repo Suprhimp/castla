@@ -18,7 +18,6 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
     interface Actions {
         fun startCapture(codec: String?)
         fun stopCapture()
-        fun applyMute(shouldMute: Boolean)
         fun grantAudioPermission()
         /** Schedule a callback to [onDeferredTimerExpired] after [delayMs]. Return a cancel handle. */
         fun scheduleDeferredStart(delayMs: Long): Any?
@@ -26,7 +25,6 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
     }
 
     var audioEnabled = false
-    var muteLocalAudio = false
     var browserConnected = false
     var currentCodec: String? = null
     var captureActive = false
@@ -57,14 +55,12 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
             if (captureActive) {
                 actions.stopCapture()
                 captureActive = false
-                actions.applyMute(false)
             }
             return EnsureResult.STOPPED
         }
 
         // Already capturing, no restart needed
         if (captureActive && !decision.restartRequired) {
-            actions.applyMute(decision.shouldMuteLocal)
             return EnsureResult.KEPT
         }
 
@@ -115,7 +111,6 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
         }
         currentCodec = null
         audioSocketConnected = false
-        actions.applyMute(false)
     }
 
     private fun cancelDefer() {
@@ -131,7 +126,6 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
         requestedCodec = codecOverride,
         currentCodec = currentCodec,
         browserConnected = browserConnected,
-        muteLocalAudio = muteLocalAudio,
         captureActive = captureActive
     ))
 
@@ -142,7 +136,6 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
         if (!decision.shouldCapture) return EnsureResult.STOPPED
 
         if (captureActive && !decision.restartRequired) {
-            actions.applyMute(decision.shouldMuteLocal)
             return EnsureResult.KEPT
         }
 
@@ -150,11 +143,9 @@ class AudioCaptureOrchestrator(private val actions: Actions) {
         if (captureActive) {
             actions.stopCapture()
             captureActive = false
-            actions.applyMute(false)
         }
 
         actions.grantAudioPermission()
-        actions.applyMute(decision.shouldMuteLocal)
 
         if (codecOverride != null) currentCodec = codecOverride
 

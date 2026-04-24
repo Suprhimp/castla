@@ -13,7 +13,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
-import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Binder
@@ -78,7 +77,6 @@ class MirrorForegroundService : Service() {
         const val EXTRA_MAX_RESOLUTION = "max_resolution"
         const val EXTRA_FPS = "fps"
         const val EXTRA_AUDIO = "audio_enabled"
-        const val EXTRA_MUTE_LOCAL_AUDIO = "mute_local_audio"
         const val EXTRA_MIRRORING_MODE = "mirroring_mode"
         const val EXTRA_TARGET_PACKAGE = "target_package"
 
@@ -172,7 +170,6 @@ class MirrorForegroundService : Service() {
     private var secondaryRequestedHeight: Int = 0
     @Volatile private var currentCodecMode: String = "h264"
     private val pipelineMutex = Mutex()
-    private var savedMediaVolume: Int = -1
     private val mainHandler = Handler(Looper.getMainLooper())
     private var splitPresentation: SplitWebPresentation? = null
     private var singleVdSplit: Boolean = false
@@ -214,7 +211,6 @@ class MirrorForegroundService : Service() {
 
     // Deferred pipeline state: heavy capture/encoding starts only when browser connects
     private var pendingAudioEnabled = false
-    private var pendingMuteLocalAudio = false
     private var deferredAudioStartJob: Job? = null
 
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
@@ -619,11 +615,10 @@ class MirrorForegroundService : Service() {
 
         Log.i(TAG, "Mode: autoRes=$autoResolution autoFps=$autoFps initialMaxHeight=$currentMaxHeight initialFps=$settingsFps")
         val audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, false)
-        val muteLocalAudio = intent.getBooleanExtra(EXTRA_MUTE_LOCAL_AUDIO, false)
         mirroringMode = intent.getStringExtra(EXTRA_MIRRORING_MODE) ?: "FULL_SCREEN"
         targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
 
-        startPipeline(resultCode, data, settingsFps, audioEnabled, muteLocalAudio)
+        startPipeline(resultCode, data, settingsFps, audioEnabled)
 
         return START_NOT_STICKY
     }
@@ -944,8 +939,7 @@ class MirrorForegroundService : Service() {
         resultCode: Int,
         data: Intent,
         fps: Int,
-        audioEnabled: Boolean,
-        muteLocalAudio: Boolean = false
+        audioEnabled: Boolean
     ) {
         try {
             MirrorDiagnostics.onSessionStart()
@@ -975,7 +969,6 @@ class MirrorForegroundService : Service() {
             currentHeight = height
             currentFps = fps
             pendingAudioEnabled = audioEnabled
-            pendingMuteLocalAudio = muteLocalAudio
 
             audioOrchestrator = AudioCaptureOrchestrator(object : AudioCaptureOrchestrator.Actions {
                 override fun startCapture(codec: String?) {
@@ -995,9 +988,6 @@ class MirrorForegroundService : Service() {
                 override fun stopCapture() {
                     try { audioCapture?.stop() } catch (_: Exception) {}
                     audioCapture = null
-                }
-                override fun applyMute(shouldMute: Boolean) {
-                    if (shouldMute) muteMediaVolume() else restoreMediaVolume()
                 }
                 override fun grantAudioPermission() {
                     tryGrantAudioCapturePermission()
@@ -2515,7 +2505,6 @@ class MirrorForegroundService : Service() {
     private fun ensureAudioCaptureState(codecOverride: String? = null) {
         val orch = audioOrchestrator ?: return
         orch.audioEnabled = pendingAudioEnabled && AudioCapture.isSupported()
-        orch.muteLocalAudio = pendingMuteLocalAudio
         orch.browserConnected = browserConnected
         orch.ensure(codecOverride)
     }
@@ -3070,79 +3059,6 @@ class MirrorForegroundService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to grant CAPTURE_AUDIO_OUTPUT", e)
-        }
-    }
-
-    // Saved volumes for all streams we mute (stream type -> saved volume)
-    private val savedVolumes = mutableMapOf<Int, Int>()
-
-    private fun muteMediaVolume() {
-        try {
-            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            // Mute all streams that could carry navigation/media/notification audio
-            val streamsToMute = intArrayOf(
-                AudioManager.STREAM_MUSIC,        // 3 - media, also navigation on most devices
-                AudioManager.STREAM_NOTIFICATION,  // 5 - notifications
-                AudioManager.STREAM_SYSTEM,        // 1 - system sounds
-                AudioManager.STREAM_DTMF,          // 8 - DTMF tones
-            )
-            for (stream in streamsToMute) {
-                try {
-                    val current = am.getStreamVolume(stream)
-                    if (current > 0) {
-                        savedVolumes[stream] = current
-                        am.setStreamVolume(stream, 0, 0)
-                    }
-                } catch (_: Exception) {}
-            }
-            // Legacy compat
-            savedMediaVolume = savedVolumes[AudioManager.STREAM_MUSIC] ?: -1
-
-            // Use Shizuku to force-mute via shell — catches navigation guidance audio
-            // that bypasses normal stream volume controls
-            try {
-                val setup = shizukuSetup
-                val service = setup?.privilegedService
-                if (setup != null && service != null && setup.isAvailable() && setup.hasPermission()) {
-                    for (stream in streamsToMute) {
-                        service.execCommand("media volume --show --stream $stream --set 0")
-                    }
-                    Log.i(TAG, "Shizuku force-muted all audio streams")
-                } else {
-                    Log.i(TAG, "Skipping Shizuku mute: privileged service not connected")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Shizuku stream mute failed", e)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "muteMediaVolume failed", e)
-        }
-    }
-
-    private fun restoreMediaVolume() {
-        try {
-            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            for ((stream, volume) in savedVolumes) {
-                try {
-                    am.setStreamVolume(stream, volume, 0)
-                } catch (_: Exception) {}
-            }
-
-            // Also restore via Shizuku
-            try {
-                val setup = shizukuSetup
-                val service = setup?.privilegedService
-                if (setup != null && service != null && setup.isAvailable() && setup.hasPermission()) {
-                    for ((stream, volume) in savedVolumes) {
-                        service.execCommand("media volume --show --stream $stream --set $volume")
-                    }
-                }
-            } catch (_: Exception) {}
-
-            savedVolumes.clear()
-            savedMediaVolume = -1
-        } catch (e: Exception) {
-            Log.e(TAG, "restoreMediaVolume failed", e)
         }
     }
 

@@ -94,7 +94,12 @@ Castla 建立在出色的开源项目之上：
 - [AndroidX / Jetpack Compose](https://developer.android.com/jetpack) — 现代 Android UI 工具包
 - [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) — 异步流式管道
 
-部分特权模式技术受 [scrcpy](https://github.com/Genymobile/scrcpy) 启发。本项目未包含 scrcpy 源代码。
+部分特权模式技术受 [scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0) 启发，具体包括：
+
+- 通过 `SurfaceControl` 控制物理显示面板电源以实现息屏镜像
+- 使用 `fillAppInfo` / `FakeContext` 模式在 shell UID 服务中伪造 `AttributionSource` 以捕获系统音频
+
+本项目未包含 scrcpy 源代码 — Castla 基于自身架构重新实现了上述方案。
 
 完整的第三方归属列表请参见 [NOTICE](NOTICE)。
 

@@ -8,7 +8,6 @@ data class AudioPolicyInput(
     val requestedCodec: String?,
     val currentCodec: String?,
     val browserConnected: Boolean,
-    val muteLocalAudio: Boolean,
     val captureActive: Boolean
 )
 
@@ -18,26 +17,20 @@ data class AudioPolicyInput(
 data class AudioPolicyDecision(
     val shouldCapture: Boolean,
     val codecMode: String?,
-    val shouldMuteLocal: Boolean,
     val restartRequired: Boolean
 )
 
 /**
  * Pure policy object that determines audio capture behavior.
  *
- * Separates two independent concerns:
- * - "Capture audio for streaming" (controlled by audioEnabled + browserConnected)
- * - "Mute local phone audio" (controlled by muteLocalAudio, only when capturing)
- *
- * This ensures music apps and video apps follow the same audio policy,
- * and that the audio-off setting cannot be bypassed by codec requests.
+ * Capture is gated by audioEnabled + browserConnected. The audio-off setting
+ * cannot be bypassed by codec requests.
  */
 object AudioPolicy {
 
     fun evaluate(input: AudioPolicyInput): AudioPolicyDecision {
         val shouldCapture = input.audioEnabled && input.browserConnected
         val codecMode = if (shouldCapture) (input.requestedCodec ?: input.currentCodec) else null
-        val shouldMuteLocal = shouldCapture && input.muteLocalAudio
         // null currentCodec means default start (opus). Treat "opus" request against null as same-path.
         val effectiveCurrent = input.currentCodec ?: "opus"
         val codecChanged = input.requestedCodec != null && input.requestedCodec != effectiveCurrent
@@ -46,7 +39,6 @@ object AudioPolicy {
         return AudioPolicyDecision(
             shouldCapture = shouldCapture,
             codecMode = codecMode,
-            shouldMuteLocal = shouldMuteLocal,
             restartRequired = restartRequired
         )
     }

@@ -19,7 +19,6 @@ class AudioCaptureOrchestratorTest {
         orch = AudioCaptureOrchestrator(object : AudioCaptureOrchestrator.Actions {
             override fun startCapture(codec: String?) { log.add("start:${codec ?: "default"}") }
             override fun stopCapture() { log.add("stop") }
-            override fun applyMute(shouldMute: Boolean) { log.add("mute:$shouldMute") }
             override fun grantAudioPermission() { log.add("grant") }
             override fun scheduleDeferredStart(delayMs: Long): Any? {
                 deferScheduled = true
@@ -156,39 +155,10 @@ class AudioCaptureOrchestratorTest {
         assertTrue(log.contains("start:pcm"))
     }
 
-    // ── Mute policy ──
-
-    @Test
-    fun `mute off by default`() {
-        startCapturing("opus")
-        assertTrue(log.contains("mute:false"))
-        assertFalse(log.contains("mute:true"))
-    }
-
-    @Test
-    fun `mute opt-in applies when capturing`() {
-        orch.audioEnabled = true
-        orch.browserConnected = true
-        orch.muteLocalAudio = true
-        orch.currentCodec = "opus"
-        orch.ensure(codecOverride = "opus")
-        assertTrue(log.contains("mute:true"))
-    }
-
-    @Test
-    fun `mute opt-in does not apply when audio disabled`() {
-        orch.audioEnabled = false
-        orch.browserConnected = true
-        orch.muteLocalAudio = true
-        orch.ensure()
-        assertFalse(log.contains("mute:true"))
-    }
-
     // ── Browser disconnect stops capture ──
 
     @Test
-    fun `browser disconnect stops capture and restores mute`() {
-        orch.muteLocalAudio = true
+    fun `browser disconnect stops capture`() {
         startCapturing("opus")
         log.clear()
 
@@ -197,7 +167,6 @@ class AudioCaptureOrchestratorTest {
         assertEquals(AudioCaptureOrchestrator.EnsureResult.STOPPED, result)
         assertFalse(orch.captureActive)
         assertTrue(log.contains("stop"))
-        assertTrue(log.contains("mute:false"))
     }
 
     // ── Reconnect ──
@@ -228,7 +197,6 @@ class AudioCaptureOrchestratorTest {
         assertNull(orch.currentCodec)
         assertFalse(orch.audioSocketConnected)
         assertTrue(log.contains("stop"))
-        assertTrue(log.contains("mute:false"))
     }
 
     // ── Helper ──

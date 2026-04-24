@@ -5,9 +5,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Binder
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
@@ -61,6 +63,91 @@ class PrivilegedService : IPrivilegedService.Stub() {
     init {
         tryInitInputManager()
         tryInitShellContext()
+        // Must run AFTER shell context init so ActivityThread state is prepared. This makes
+        // any subsequent AudioRecord/AudioTrack use packageName="com.android.shell"
+        // matching our shell uid 2000 — required for AudioFlinger's attribution validator.
+        fillShellAppInfo()
+    }
+
+    /**
+     * scrcpy-style workaround: AudioRecord pulls its AttributionSource packageName from
+     * ActivityThread.mBoundApplication.appInfo.packageName. Inside Shizuku's shell
+     * process that defaults to "com.castla.mirror" (the client APK that was loaded),
+     * which mismatches our actual runtime uid 2000 — AudioFlinger's ValidatedAttributionSource
+     * check rejects the combination and AudioRecord.state stays STATE_UNINITIALIZED.
+     * Overwriting the package name to "com.android.shell" (owned by uid 2000) fixes it.
+     *
+     * Reference: genymobile/scrcpy server/src/.../Workarounds.java#fillAppInfo
+     */
+    private fun fillShellAppInfo() {
+        try {
+            val atClass = Class.forName("android.app.ActivityThread")
+            val currentAt = atClass.getDeclaredMethod("currentActivityThread").also { it.isAccessible = true }
+            val activityThread = currentAt.invoke(null) ?: return
+
+            val appBindDataClass = Class.forName("android.app.ActivityThread\$AppBindData")
+            val appBindDataCtor = appBindDataClass.getDeclaredConstructor().also { it.isAccessible = true }
+            val appBindData = appBindDataCtor.newInstance()
+
+            val appInfo = android.content.pm.ApplicationInfo().apply {
+                packageName = "com.android.shell"
+                uid = 2000
+            }
+
+            val appInfoField = appBindDataClass.getDeclaredField("appInfo").also { it.isAccessible = true }
+            appInfoField.set(appBindData, appInfo)
+
+            val mBoundApp = atClass.getDeclaredField("mBoundApplication").also { it.isAccessible = true }
+            mBoundApp.set(activityThread, appBindData)
+
+            Log.i(TAG, "fillShellAppInfo: ActivityThread.mBoundApplication.appInfo.packageName=com.android.shell")
+        } catch (e: Exception) {
+            Log.w(TAG, "fillShellAppInfo failed", e)
+        }
+    }
+
+    /**
+     * Temporarily swap the current Application's base Context for our shellContext.
+     * Returns the original base (to be restored via [restoreApplicationBase]).
+     *
+     * This is the path AudioRecord ultimately uses to build its AttributionSource:
+     *   AttributionSource.myAttributionSource()
+     *     → ActivityThread.currentOpPackageName()
+     *     → ActivityThread.currentApplication().getOpPackageName()
+     *     → Application.mBase (ContextWrapper).getOpPackageName()
+     *
+     * Rebasing globally at init time crashes Shizuku's ServiceStarter post-init, so we
+     * apply it only around the AudioRecord construction.
+     */
+    private fun rebaseApplicationToShellContext(): android.content.Context? {
+        val shell = shellContext ?: return null
+        return try {
+            val app = Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication").also { it.isAccessible = true }
+                .invoke(null) as? android.app.Application ?: return null
+            val mBaseField = android.content.ContextWrapper::class.java.getDeclaredField("mBase")
+                .also { it.isAccessible = true }
+            val prev = mBaseField.get(app) as? android.content.Context
+            mBaseField.set(app, shell)
+            prev
+        } catch (e: Exception) {
+            Log.w(TAG, "rebaseApplicationToShellContext failed", e)
+            null
+        }
+    }
+
+    private fun restoreApplicationBase(prev: android.content.Context?) {
+        if (prev == null) return
+        try {
+            val app = Class.forName("android.app.ActivityThread")
+                .getDeclaredMethod("currentApplication").also { it.isAccessible = true }
+                .invoke(null) as? android.app.Application ?: return
+            val mBaseField = android.content.ContextWrapper::class.java.getDeclaredField("mBase")
+                .also { it.isAccessible = true }
+            mBaseField.set(app, prev)
+        } catch (e: Exception) {
+            Log.w(TAG, "restoreApplicationBase failed", e)
+        }
     }
 
     private fun tryInitShellContext() {
@@ -76,13 +163,34 @@ class PrivilegedService : IPrivilegedService.Stub() {
             }
             val systemContext = atClass.getMethod("getSystemContext").invoke(at) as android.content.Context
 
+            // Pre-build an AttributionSource matching shell (uid 2000, pkg com.android.shell)
+            // so AudioFlinger's ValidatedAttributionSourceState accepts the combination.
+            // The default systemContext.getAttributionSource() reports packageName="android"
+            // with uid=1000, which mismatches our actual runtime uid 2000 → rejected.
+            val shellAttribution: Any? = try {
+                val builderClass = Class.forName("android.content.AttributionSource\$Builder")
+                val builder = builderClass
+                    .getConstructor(Int::class.javaPrimitiveType)
+                    .newInstance(2000)
+                builderClass.getMethod("setPackageName", String::class.java)
+                    .invoke(builder, "com.android.shell")
+                builderClass.getMethod("build").invoke(builder)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not build shell AttributionSource", e)
+                null
+            }
+
             // Wrap with "com.android.shell" package name to match Shizuku uid 2000
             shellContext = object : android.content.ContextWrapper(systemContext) {
                 override fun getPackageName(): String = "com.android.shell"
                 override fun getOpPackageName(): String = "com.android.shell"
                 override fun getAttributionTag(): String? = null
+                override fun getAttributionSource(): android.content.AttributionSource {
+                    if (shellAttribution is android.content.AttributionSource) return shellAttribution
+                    return super.getAttributionSource()
+                }
             }
-            Log.i(TAG, "Shell context initialized: pkg=${shellContext?.packageName}")
+            Log.i(TAG, "Shell context initialized: pkg=${shellContext?.packageName}, attr=${shellAttribution != null}")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to init shell context", e)
         }
@@ -767,68 +875,130 @@ class PrivilegedService : IPrivilegedService.Stub() {
         return false
     }
 
-    // --- System audio capture via REMOTE_SUBMIX (shell uid has CAPTURE_AUDIO_OUTPUT) ---
+    // --- System audio capture via AudioPolicy loopback (shell uid has MODIFY_AUDIO_ROUTING) ---
+    //
+    // Plain AudioRecord(REMOTE_SUBMIX, ...) only captures usages the platform routes to
+    // REMOTE_SUBMIX by default (MEDIA/GAME/UNKNOWN). Navigation guidance and other
+    // "restricted" usages are not captured that way. To grab them we register an
+    // AudioPolicy with a loopback AudioMix whose MixingRule matches every usage we care
+    // about, then pull frames from policy.createAudioRecordSink(mix). This is only
+    // possible because the Shizuku privileged service runs as shell, which holds
+    // MODIFY_AUDIO_ROUTING. On failure we fall back to plain REMOTE_SUBMIX (still
+    // captures YouTube/games/etc.).
 
     @Volatile
     private var audioCaptureRunning = false
     private var audioCaptureThread: Thread? = null
     private var audioCaptureRecord: AudioRecord? = null
+    private var registeredAudioPolicy: Any? = null
 
     override fun startSystemAudioCapture(sampleRate: Int, channels: Int): ParcelFileDescriptor? {
         stopSystemAudioCapture()
 
-        return try {
-            val channelMask = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
-            val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
-            val bufSize = maxOf(minBuf * 2, 8192)
-
-            val record = AudioRecord(
-                MediaRecorder.AudioSource.REMOTE_SUBMIX,
-                sampleRate,
-                channelMask,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufSize
-            )
-
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "REMOTE_SUBMIX AudioRecord failed to initialize (state=${record.state})")
-                record.release()
-                return null
-            }
-
-            val pipe = ParcelFileDescriptor.createPipe()
-            val readEnd = pipe[0]
-            val writeEnd = pipe[1]
-
-            record.startRecording()
-            audioCaptureRecord = record
-            audioCaptureRunning = true
-
-            audioCaptureThread = Thread({
-                val pcmBuf = ByteArray(3840) // 20ms at 48kHz stereo 16bit
-                val output = ParcelFileDescriptor.AutoCloseOutputStream(writeEnd)
-                try {
-                    while (audioCaptureRunning) {
-                        val read = record.read(pcmBuf, 0, pcmBuf.size)
-                        if (read > 0) {
-                            output.write(pcmBuf, 0, read)
-                        } else if (read < 0) {
-                            Log.w(TAG, "REMOTE_SUBMIX read error: $read")
-                            break
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "REMOTE_SUBMIX capture thread ended", e)
-                } finally {
-                    try { output.close() } catch (_: Exception) {}
-                }
-            }, "RemoteSubmix-Capture").also { it.start() }
-
-            Log.i(TAG, "REMOTE_SUBMIX audio capture started: ${sampleRate}Hz, ${channels}ch")
-            readEnd
+        // IMPORTANT: this method is an AIDL binder entry point. Binder.getCallingUid()
+        // returns the *app* uid (10xxx), not shell (2000). AudioPolicy/AudioRecord's
+        // permission and attribution checks (MODIFY_AUDIO_ROUTING, CAPTURE_AUDIO_OUTPUT)
+        // are evaluated against the calling identity — clear it so we look like shell.
+        val token = Binder.clearCallingIdentity()
+        // Swap Application.mBase so AudioRecord's AttributionSource reports
+        // packageName="com.android.shell" matching our uid 2000. Restore immediately
+        // after init — AudioRecord has already cached its attribution by then.
+        val prevBase = rebaseApplicationToShellContext()
+        try {
+            return doStartSystemAudioCapture(sampleRate, channels)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start REMOTE_SUBMIX audio capture", e)
+            Log.e(TAG, "Failed to start system audio capture", e)
+            unregisterAudioPolicy()
+            return null
+        } finally {
+            restoreApplicationBase(prevBase)
+            Binder.restoreCallingIdentity(token)
+        }
+    }
+
+    private fun doStartSystemAudioCapture(sampleRate: Int, channels: Int): ParcelFileDescriptor? {
+        val channelMask = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
+        val bufSize = maxOf(minBuf * 2, 8192)
+
+        // Try AudioPolicy-based capture first (includes navigation/assistant/alarm/etc.)
+        val policyRecord = tryCreateAudioPolicyRecord(sampleRate, channels)
+        val usingPolicy = policyRecord != null
+        val record = policyRecord ?: buildRemoteSubmixRecord(sampleRate, channelMask, bufSize)
+
+        if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "Audio capture AudioRecord failed to initialize (state=${record?.state})")
+            try { record?.release() } catch (_: Exception) {}
+            unregisterAudioPolicy()
+            return null
+        }
+
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+
+        record.startRecording()
+        audioCaptureRecord = record
+        audioCaptureRunning = true
+
+        audioCaptureThread = Thread({
+            val pcmBuf = ByteArray(3840) // 20ms at 48kHz stereo 16bit
+            val output = ParcelFileDescriptor.AutoCloseOutputStream(writeEnd)
+            try {
+                while (audioCaptureRunning) {
+                    val read = record.read(pcmBuf, 0, pcmBuf.size)
+                    if (read > 0) {
+                        output.write(pcmBuf, 0, read)
+                    } else if (read < 0) {
+                        Log.w(TAG, "Audio capture read error: $read")
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Audio capture thread ended", e)
+            } finally {
+                try { output.close() } catch (_: Exception) {}
+            }
+        }, "SystemAudio-Capture").also { it.start() }
+
+        val mode = if (usingPolicy) "AudioPolicy loopback" else "plain REMOTE_SUBMIX"
+        Log.i(TAG, "System audio capture started via $mode: ${sampleRate}Hz, ${channels}ch")
+        return readEnd
+    }
+
+    /**
+     * Build a plain REMOTE_SUBMIX AudioRecord via the Builder so we can supply shellContext.
+     * The default AudioRecord constructor uses ActivityThread.currentApplication() which,
+     * inside a Shizuku-loaded privileged service, reports packageName=com.castla.mirror
+     * while Process.myUid()=2000 (shell) — AudioFlinger rejects that combination.
+     */
+    private fun buildRemoteSubmixRecord(sampleRate: Int, channelMask: Int, bufSize: Int): AudioRecord? {
+        return try {
+            val format = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setChannelMask(channelMask)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .build()
+            val builder = AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.REMOTE_SUBMIX)
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(bufSize)
+            applyShellContextToBuilder(builder)
+            builder.build()
+        } catch (e: Exception) {
+            Log.w(TAG, "buildRemoteSubmixRecord failed", e)
             null
+        }
+    }
+
+    /** Inject shellContext into AudioRecord.Builder via reflection — setContext is @hide. */
+    private fun applyShellContextToBuilder(builder: AudioRecord.Builder) {
+        val ctx = shellContext ?: return
+        try {
+            val m = AudioRecord.Builder::class.java.getMethod("setContext", android.content.Context::class.java)
+            m.invoke(builder, ctx)
+        } catch (e: Exception) {
+            Log.w(TAG, "setContext(shellContext) on AudioRecord.Builder failed: ${e.message}")
         }
     }
 
@@ -839,6 +1009,128 @@ class PrivilegedService : IPrivilegedService.Stub() {
         audioCaptureThread = null
         try { audioCaptureRecord?.release() } catch (_: Exception) {}
         audioCaptureRecord = null
+        unregisterAudioPolicy()
+    }
+
+    /**
+     * Builds an AudioPolicy with a loopback AudioMix matching every usage we want to
+     * relay to the browser, registers it, then builds an AudioRecord that captures the
+     * REMOTE_SUBMIX loopback output from that mix. Uses reflection because the relevant
+     * AudioPolicy / AudioMix / AudioAttributes.setInternalCapturePreset /
+     * AudioRecord.Builder.buildAudioRecordForAudioPolicy APIs are all @SystemApi.
+     *
+     * We deliberately do NOT call policy.createAudioRecordSink(), which internally
+     * builds an AudioRecord without a Context — the resulting AttributionSource uses
+     * ActivityThread.currentApplication()'s packageName (com.castla.mirror), which
+     * mismatches our shell uid (2000) and gets rejected by AudioFlinger. Building the
+     * AudioRecord ourselves lets us inject shellContext so attribution reports
+     * packageName=com.android.shell matching uid 2000.
+     *
+     * Returns null on any failure — caller falls back to plain REMOTE_SUBMIX.
+     */
+    private fun tryCreateAudioPolicyRecord(sampleRate: Int, channels: Int): AudioRecord? {
+        val context = shellContext ?: return null
+        return try {
+            val audioManager = context.getSystemService(android.media.AudioManager::class.java) ?: return null
+
+            val mixingRuleBuilderClass = Class.forName("android.media.audiopolicy.AudioMixingRule\$Builder")
+            val mixBuilderClass = Class.forName("android.media.audiopolicy.AudioMix\$Builder")
+            val policyBuilderClass = Class.forName("android.media.audiopolicy.AudioPolicy\$Builder")
+            val mixingRuleClass = Class.forName("android.media.audiopolicy.AudioMixingRule")
+            val audioMixClass = Class.forName("android.media.audiopolicy.AudioMix")
+            val audioPolicyClass = Class.forName("android.media.audiopolicy.AudioPolicy")
+
+            val ruleMatchAttributeUsage = 1   // AudioMixingRule.RULE_MATCH_ATTRIBUTE_USAGE
+            val routeFlagLoopBack = 2         // AudioMix.ROUTE_FLAG_LOOP_BACK
+
+            val ruleBuilder = mixingRuleBuilderClass.getConstructor().newInstance()
+            val addRule = mixingRuleBuilderClass.getMethod(
+                "addRule", AudioAttributes::class.java, Int::class.javaPrimitiveType
+            )
+
+            val usages = intArrayOf(
+                AudioAttributes.USAGE_UNKNOWN,
+                AudioAttributes.USAGE_MEDIA,
+                AudioAttributes.USAGE_GAME,
+                AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE,
+                AudioAttributes.USAGE_ASSISTANT,
+                AudioAttributes.USAGE_ASSISTANCE_SONIFICATION,
+                AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY,
+                AudioAttributes.USAGE_ALARM,
+                AudioAttributes.USAGE_NOTIFICATION,
+                AudioAttributes.USAGE_NOTIFICATION_RINGTONE,
+                AudioAttributes.USAGE_NOTIFICATION_EVENT,
+                AudioAttributes.USAGE_VOICE_COMMUNICATION
+            )
+            var matchedAny = false
+            for (usage in usages) {
+                try {
+                    val attr = AudioAttributes.Builder().setUsage(usage).build()
+                    addRule.invoke(ruleBuilder, attr, ruleMatchAttributeUsage)
+                    matchedAny = true
+                } catch (e: Exception) {
+                    Log.w(TAG, "AudioMixingRule skip usage=$usage: ${e.message}")
+                }
+            }
+            if (!matchedAny) return null
+            val mixingRule = mixingRuleBuilderClass.getMethod("build").invoke(ruleBuilder)
+
+            val channelMask = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+            val format = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setChannelMask(channelMask)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .build()
+
+            val mixBuilder = mixBuilderClass.getConstructor(mixingRuleClass).newInstance(mixingRule)
+            mixBuilderClass.getMethod("setFormat", AudioFormat::class.java).invoke(mixBuilder, format)
+            mixBuilderClass.getMethod("setRouteFlags", Int::class.javaPrimitiveType).invoke(mixBuilder, routeFlagLoopBack)
+            val audioMix = mixBuilderClass.getMethod("build").invoke(mixBuilder)
+
+            val policyBuilder = policyBuilderClass
+                .getConstructor(android.content.Context::class.java)
+                .newInstance(context)
+            policyBuilderClass.getMethod("addMix", audioMixClass).invoke(policyBuilder, audioMix)
+            val policy = policyBuilderClass.getMethod("build").invoke(policyBuilder)
+
+            val registerResult = audioManager.javaClass
+                .getMethod("registerAudioPolicy", audioPolicyClass)
+                .invoke(audioManager, policy) as Int
+            if (registerResult != 0) {
+                Log.w(TAG, "registerAudioPolicy failed with code $registerResult")
+                return null
+            }
+            registeredAudioPolicy = policy
+
+            val record = audioPolicyClass
+                .getMethod("createAudioRecordSink", audioMixClass)
+                .invoke(policy, audioMix) as? AudioRecord
+            if (record == null) {
+                Log.w(TAG, "createAudioRecordSink returned null")
+                unregisterAudioPolicy()
+                return null
+            }
+            record
+        } catch (e: Exception) {
+            Log.w(TAG, "AudioPolicy capture setup failed, will fall back", e)
+            unregisterAudioPolicy()
+            null
+        }
+    }
+
+    private fun unregisterAudioPolicy() {
+        val policy = registeredAudioPolicy ?: return
+        registeredAudioPolicy = null
+        try {
+            val context = shellContext ?: return
+            val audioManager = context.getSystemService(android.media.AudioManager::class.java) ?: return
+            val audioPolicyClass = Class.forName("android.media.audiopolicy.AudioPolicy")
+            audioManager.javaClass
+                .getMethod("unregisterAudioPolicy", audioPolicyClass)
+                .invoke(audioManager, policy)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to unregister audio policy", e)
+        }
     }
 
     override fun destroy() {

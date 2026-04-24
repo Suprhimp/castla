@@ -94,7 +94,12 @@ Castla baut auf großartigen Open-Source-Projekten auf:
 - [AndroidX / Jetpack Compose](https://developer.android.com/jetpack) — modernes Android-UI-Toolkit
 - [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) — asynchrone Streaming-Pipeline
 
-Einige Techniken des privilegierten Modus wurden von [scrcpy](https://github.com/Genymobile/scrcpy) inspiriert. Es ist kein scrcpy-Quellcode enthalten.
+Einige Techniken des privilegierten Modus wurden von [scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0) inspiriert, insbesondere:
+
+- Physisches Ein-/Ausschalten des Displays über `SurfaceControl` für Bildschirm-aus-Mirroring
+- Das `fillAppInfo` / `FakeContext`-Muster zum Spoofing der `AttributionSource` beim Erfassen von System-Audio aus einem Shell-UID-Dienst
+
+Es ist kein scrcpy-Quellcode enthalten — Castla implementiert diese Ansätze eigenständig.
 
 Siehe [NOTICE](NOTICE) für die vollständige Liste der Drittanbieter-Attributionen.
 
