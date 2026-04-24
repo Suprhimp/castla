@@ -110,7 +110,12 @@ Castla는 훌륭한 오픈소스 프로젝트들의 도움으로 만들어졌습
 - [AndroidX / Jetpack Compose](https://developer.android.com/jetpack) — 현대적 Android UI 툴킷
 - [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) — 비동기 스트리밍 파이프라인
 
-일부 특권 모드 기법은 [scrcpy](https://github.com/Genymobile/scrcpy)의 접근 방식에서 영감을 받았습니다. scrcpy의 소스 코드는 포함되어 있지 않습니다.
+일부 특권 모드 기법은 [scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0)의 접근 방식에서 영감을 받았으며, 구체적으로 다음과 같습니다:
+
+- 화면 꺼짐 미러링을 위한 `SurfaceControl` 기반 디스플레이 패널 전원 제어
+- shell UID 서비스에서 시스템 오디오를 캡처할 때 `AttributionSource`를 스푸핑하기 위한 `fillAppInfo` / `FakeContext` 패턴
+
+scrcpy의 소스 코드는 포함되어 있지 않으며, Castla는 자체 아키텍처에 맞게 위 접근 방식을 재구현했습니다.
 
 전체 서드파티 고지는 [NOTICE](NOTICE) 파일을 참조하세요.
 

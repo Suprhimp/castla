@@ -10,9 +10,8 @@ class AudioPolicyTest {
         requestedCodec: String? = null,
         currentCodec: String? = null,
         browserConnected: Boolean = true,
-        muteLocalAudio: Boolean = false,
         captureActive: Boolean = false
-    ) = AudioPolicyInput(audioEnabled, requestedCodec, currentCodec, browserConnected, muteLocalAudio, captureActive)
+    ) = AudioPolicyInput(audioEnabled, requestedCodec, currentCodec, browserConnected, captureActive)
 
     // ── Audio disabled — never capture ──
 
@@ -20,7 +19,6 @@ class AudioPolicyTest {
     fun `audio disabled - no capture regardless of codec request`() {
         val decision = AudioPolicy.evaluate(input(audioEnabled = false, requestedCodec = "opus"))
         assertFalse(decision.shouldCapture)
-        assertFalse(decision.shouldMuteLocal)
         assertNull(decision.codecMode)
     }
 
@@ -65,33 +63,6 @@ class AudioPolicyTest {
     fun `audio enabled but browser disconnected - no capture`() {
         val decision = AudioPolicy.evaluate(input(audioEnabled = true, browserConnected = false))
         assertFalse(decision.shouldCapture)
-    }
-
-    // ── Local mute policy ──
-
-    @Test
-    fun `mute local off by default - no mute`() {
-        val decision = AudioPolicy.evaluate(input(audioEnabled = true, browserConnected = true, muteLocalAudio = false))
-        assertFalse(decision.shouldMuteLocal)
-    }
-
-    @Test
-    fun `mute local opt-in - mute only when capturing`() {
-        val decision = AudioPolicy.evaluate(input(audioEnabled = true, browserConnected = true, muteLocalAudio = true))
-        assertTrue(decision.shouldCapture)
-        assertTrue(decision.shouldMuteLocal)
-    }
-
-    @Test
-    fun `mute local opt-in but audio disabled - no mute`() {
-        val decision = AudioPolicy.evaluate(input(audioEnabled = false, muteLocalAudio = true))
-        assertFalse(decision.shouldMuteLocal)
-    }
-
-    @Test
-    fun `mute local opt-in but browser disconnected - no mute`() {
-        val decision = AudioPolicy.evaluate(input(audioEnabled = true, browserConnected = false, muteLocalAudio = true))
-        assertFalse(decision.shouldMuteLocal)
     }
 
     // ── Restart detection ──
@@ -165,8 +136,8 @@ class AudioPolicyTest {
 
     @Test
     fun `policy is pure function - same inputs always produce same outputs`() {
-        val inputA = input(audioEnabled = true, browserConnected = true, muteLocalAudio = false)
-        val inputB = input(audioEnabled = true, browserConnected = true, muteLocalAudio = false)
+        val inputA = input(audioEnabled = true, browserConnected = true)
+        val inputB = input(audioEnabled = true, browserConnected = true)
         assertEquals(AudioPolicy.evaluate(inputA), AudioPolicy.evaluate(inputB))
     }
 }

@@ -52,8 +52,6 @@
     <string name="settings_audio_experimental">Audio (Experimental)</string>
     <string name="settings_stream_device_audio">Stream device audio</string>
     <string name="settings_audio_description">Requires Android 10+. Captures system output.</string>
-    <string name="settings_mute_local_audio">Mute local audio</string>
-    <string name="settings_mute_local_audio_description">Silence phone speaker while streaming audio to Tesla.</string>
 <string name="settings_current_config">Current Configuration</string>
     <string name="settings_full_screen">Full Screen</string>
     <string name="settings_audio_on">, audio on</string>

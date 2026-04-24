@@ -1211,7 +1211,6 @@ class MainActivity : AppCompatActivity() {
                 if (streamSettings.isAutoResolution) 0 else streamSettings.maxResolution.maxHeight)
             putExtra(MirrorForegroundService.EXTRA_FPS, streamSettings.fps) // FPS_AUTO is already 0
             putExtra(MirrorForegroundService.EXTRA_AUDIO, streamSettings.audioEnabled)
-            putExtra(MirrorForegroundService.EXTRA_MUTE_LOCAL_AUDIO, streamSettings.muteLocalAudio)
             putExtra(MirrorForegroundService.EXTRA_MIRRORING_MODE, streamSettings.mirroringMode.name)
             putExtra(MirrorForegroundService.EXTRA_TARGET_PACKAGE, streamSettings.targetAppPackage)
         }
