@@ -44,6 +44,7 @@ import com.castla.mirror.utils.LaunchMode
 import com.castla.mirror.policy.AutoScaleDecision
 import com.castla.mirror.policy.AutoScaleInput
 import com.castla.mirror.policy.AutoScalePolicy
+import com.castla.mirror.policy.CodecModeTransition
 import com.castla.mirror.policy.DisconnectPolicy
 import com.castla.mirror.policy.ScreenOffAction
 import com.castla.mirror.policy.ScreenOffPolicy
@@ -3026,9 +3027,8 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onCodecModeRequest(mode: String) {
-        if (mode != "mjpeg") return
-        if (currentCodecMode == "mjpeg" && jpegEncoder != null) return
-        currentCodecMode = "mjpeg"
+        if (!CodecModeTransition.shouldApply(mode, currentCodecMode, jpegEncoder != null)) return
+        currentCodecMode = CodecModeTransition.MODE_MJPEG
         Log.i(TAG, "Codec mode request: mjpeg — delegating to rebuildPipeline")
         serviceScope.launch {
             try {
