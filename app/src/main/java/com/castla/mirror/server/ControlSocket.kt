@@ -118,6 +118,9 @@ class ControlSocket(
                         backlogDrops = json.optInt("backlogDrops", 0)
                     )
                 }
+                "bubbleClosed" -> {
+                    server.onBubbleClosed()
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse control message", e)

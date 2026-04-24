@@ -312,6 +312,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { primaryWidth, secondaryWidth, shellWidth, shellHeight };
     }
 
+    function updateSplitToolbarVisibility() {
+        if (!splitToolbar) return;
+        splitToolbar.style.display = browserSplitState.active ? 'flex' : 'none';
+    }
+
     function setBrowserSplitRatio(nextRatio) {
         const ratio = Math.max(0.25, Math.min(0.75, nextRatio));
         browserSplitState.ratio = ratio;
@@ -437,6 +442,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Single canvas shows both apps — add freeform-split class for close button
             playerShell?.classList.add('freeform-split');
+            updateSplitToolbarVisibility();
             // Send split app launch request to server
             if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
                 const message = {
@@ -469,6 +475,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             b.classList.toggle('active', Math.abs(btnRatio - initialRatio) < 0.05);
         });
         playerShell?.classList.add('browser-split');
+        updateSplitToolbarVisibility();
         applyActiveFitModes();
         await new Promise((resolve) => requestAnimationFrame(() => resolve()));
         lockBrowserSplitViewports(app);
@@ -489,6 +496,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { notifyServer = true } = options;
         const wasActive = browserSplitState.active;
         browserSplitState.active = false;
+        updateSplitToolbarVisibility();
         browserSplitState.resizing = false;
         browserSplitState.app = null;
         browserSplitState.url = null;
@@ -682,6 +690,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         bubbleCancel.addEventListener('click', (e) => {
             e.preventDefault();
             closeInputBubble(true);
+            // Tell the server so it can suppress the hasTarget fallback until the
+            // user re-engages (touch-down on mirror). Otherwise on platforms where
+            // the phone IME never actually shows, the bubble would re-open on the
+            // next poll because imeInputTarget persists.
+            if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                controlSocket.send(JSON.stringify({ type: 'bubbleClosed' }));
+            }
         });
     }
     if (bubbleText) {
@@ -1133,11 +1148,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                         : getEffectivePrimaryFitMode();
                     console.log(`[Main] Server resolution changed pane=${pane} server=${msg.width}x${msg.height} fitMode=${fitMode} locked=${describeViewport(lockedViewport)} split=${browserSplitState.active}`);
                 } else if (msg.type === 'showKeyboard') {
+                    console.log('[IME] showKeyboard received pane=', msg.pane, 'useBubble=', useBubbleInput, 'bubbleEl=', !!inputBubble, 'bubbleVisible=', bubbleVisible);
                     if (useBubbleInput) {
-                        const anchor = secondaryTouchHandler?.lastTap || touchHandler?.lastTap || null;
-                        openInputBubble(anchor);
+                        const pane = msg.pane || 'primary';
+                        const anchor = pane === 'secondary'
+                            ? (secondaryTouchHandler?.lastTap || null)
+                            : (touchHandler?.lastTap || null);
+                        console.log('[IME] anchor=', anchor);
+                        // Reposition if already visible (user switched pane).
+                        if (bubbleVisible) {
+                            positionInputBubble(anchor);
+                        } else {
+                            openInputBubble(anchor);
+                        }
                     } else focusKeyboardProxy();
                 } else if (msg.type === 'hideKeyboard') {
+                    console.log('[IME] hideKeyboard received');
                     if (useBubbleInput) closeInputBubble(true);
                     else blurKeyboardProxy();
                 } else if (msg.type === 'thermalStatus') {
@@ -1433,45 +1459,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, {passive: true});
     }
 
-    // Split toolbar: show on tap, auto-hide after 3s
+    // Split toolbar lives inside #overlay-menu-panel; visibility is driven by
+    // browserSplitState.active so it appears only when a split is actually open.
     const splitToolbar = document.getElementById('split-pane-toolbar');
-    let splitToolbarTimer = null;
-    function showSplitToolbar() {
-        if (!splitToolbar || !browserSplitState.active) return;
-        splitToolbar.classList.add('visible');
-        clearTimeout(splitToolbarTimer);
-        splitToolbarTimer = setTimeout(() => {
-            splitToolbar.classList.remove('visible');
-        }, 3000);
-    }
-    function hideSplitToolbar() {
-        splitToolbar?.classList.remove('visible');
-        clearTimeout(splitToolbarTimer);
-    }
-    // Show toolbar on double-tap in the top zone — touch passes through to app
-    let lastToolbarTapTime = 0;
-    let lastToolbarTapY = 0;
-    const TOOLBAR_TAP_ZONE_HEIGHT = 48;
-    playerShell?.addEventListener('pointerup', (e) => {
-        if (!browserSplitState.active) return;
-        if (e.target.closest('#split-pane-toolbar')) return;
-        // Only respond to taps in the top zone
-        const rect = playerShell.getBoundingClientRect();
-        const relY = e.clientY - rect.top;
-        if (relY > TOOLBAR_TAP_ZONE_HEIGHT) return;
-        const now = Date.now();
-        if (now - lastToolbarTapTime < 400 && Math.abs(relY - lastToolbarTapY) < 30) {
-            if (splitToolbar?.classList.contains('visible')) {
-                hideSplitToolbar();
-            } else {
-                showSplitToolbar();
-            }
-            lastToolbarTapTime = 0;
-        } else {
-            lastToolbarTapTime = now;
-            lastToolbarTapY = relY;
-        }
-    });
 
     // Split ratio buttons
     document.querySelectorAll('.split-ratio-btn').forEach(btn => {
@@ -1483,13 +1473,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             setBrowserSplitRatio(ratio);
             lockBrowserSplitViewports(browserSplitState.app);
             requestAnimationFrame(() => sendViewportSize());
-            showSplitToolbar(); // reset auto-hide timer
         });
     });
 
     if (splitCloseBtn) {
         splitCloseBtn.addEventListener('click', () => {
-            hideSplitToolbar();
             disableBrowserSplit();
         });
     }
@@ -1848,4 +1836,5 @@ document.addEventListener('DOMContentLoaded', async () => {
         profileObserver.observe(homeBtn, { attributes: true, attributeFilter: ['style'] });
     }
     updateOverlayControlsVisibility();
+    updateSplitToolbarVisibility();
 });

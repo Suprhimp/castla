@@ -546,27 +546,7 @@
             background: rgba(255,255,255,0.35);
             box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
         }
-        #split-toolbar-tap-zone {
-            display: none;
-            position: absolute;
-            top: 0;
-            left: 30%;
-            width: 40%;
-            height: 48px;
-            z-index: 230;
-            cursor: pointer;
-            pointer-events: none;
-        }
-        #player-shell.browser-split #split-toolbar-tap-zone,
-        #player-shell.freeform-split #split-toolbar-tap-zone {
-            display: block;
-        }
         #split-pane-toolbar {
-            position: absolute;
-            top: 12px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 231;
             display: none;
             gap: 5px;
             align-items: center;
@@ -574,17 +554,7 @@
             backdrop-filter: blur(10px);
             border-radius: 999px;
             padding: 4px 6px;
-            opacity: 0;
-            transition: opacity 0.25s ease;
-            pointer-events: none;
-        }
-        #split-pane-toolbar.visible {
-            opacity: 1;
-            pointer-events: auto;
-        }
-        #player-shell.browser-split #split-pane-toolbar,
-        #player-shell.freeform-split #split-pane-toolbar {
-            display: flex;
+            flex-shrink: 0;
         }
         .split-pane-btn {
             border: none;
@@ -687,16 +657,6 @@
                     </div>
                 </div>
             </div>
-            <div id="split-toolbar-tap-zone"></div>
-            <div id="split-pane-toolbar">
-                <button class="split-pane-btn split-ratio-btn" data-ratio="0.3">3:7</button>
-                <button class="split-pane-btn split-ratio-btn" data-ratio="0.4">4:6</button>
-                <button class="split-pane-btn split-ratio-btn active" data-ratio="0.5">5:5</button>
-                <button class="split-pane-btn split-ratio-btn" data-ratio="0.6">6:4</button>
-                <button class="split-pane-btn split-ratio-btn" data-ratio="0.7">7:3</button>
-                <div class="split-toolbar-sep"></div>
-                <button id="split-close-btn" class="split-pane-btn stop-btn">종료</button>
-            </div>
         </div>
         <div id="overlay">
             <div id="status">Connecting...</div>
@@ -730,7 +690,7 @@
                 </svg>
             </button>
 
-            <div id="overlay-menu-panel" style="display:none;align-items:center;gap:8px;">
+            <div id="overlay-menu-panel" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;row-gap:8px;max-width:calc(100vw - 72px);">
 
                 <button id="home-btn" title="Home"
                         style="width:48px;height:48px;border-radius:50%;border:none;
@@ -787,6 +747,16 @@
                                 border:1px solid rgba(255,255,255,0.1);
                                 min-width:160px;">
                     </div>
+                </div>
+
+                <div id="split-pane-toolbar">
+                    <button class="split-pane-btn split-ratio-btn" data-ratio="0.3">3:7</button>
+                    <button class="split-pane-btn split-ratio-btn" data-ratio="0.4">4:6</button>
+                    <button class="split-pane-btn split-ratio-btn active" data-ratio="0.5">5:5</button>
+                    <button class="split-pane-btn split-ratio-btn" data-ratio="0.6">6:4</button>
+                    <button class="split-pane-btn split-ratio-btn" data-ratio="0.7">7:3</button>
+                    <div class="split-toolbar-sep"></div>
+                    <button id="split-close-btn" class="split-pane-btn stop-btn">종료</button>
                 </div>
 
             </div> <!-- /#overlay-menu-panel -->
