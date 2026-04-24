@@ -44,6 +44,7 @@ import com.castla.mirror.utils.LaunchMode
 import com.castla.mirror.policy.AutoScaleDecision
 import com.castla.mirror.policy.AutoScaleInput
 import com.castla.mirror.policy.AutoScalePolicy
+import com.castla.mirror.policy.CodecModeTransition
 import com.castla.mirror.policy.DisconnectPolicy
 import com.castla.mirror.policy.ScreenOffAction
 import com.castla.mirror.policy.ScreenOffPolicy
@@ -61,6 +62,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 class MirrorForegroundService : Service() {
@@ -167,7 +170,8 @@ class MirrorForegroundService : Service() {
     private var secondaryHeight: Int = 0
     private var secondaryRequestedWidth: Int = 0
     private var secondaryRequestedHeight: Int = 0
-    private var currentCodecMode: String = "h264"
+    @Volatile private var currentCodecMode: String = "h264"
+    private val pipelineMutex = Mutex()
     private var savedMediaVolume: Int = -1
     private val mainHandler = Handler(Looper.getMainLooper())
     private var splitPresentation: SplitWebPresentation? = null
@@ -2871,7 +2875,7 @@ class MirrorForegroundService : Service() {
         return if (thermalCap != null) minOf(baseMax, thermalCap) else baseMax
     }
 
-    private suspend fun rebuildPipeline(newWidth: Int, newHeight: Int, force: Boolean = false) {
+    private suspend fun rebuildPipeline(newWidth: Int, newHeight: Int, force: Boolean = false) = pipelineMutex.withLock {
         val effectiveMaxHeight = effectiveMaxHeightForRequest(newHeight)
         var cappedWidth = newWidth
         var cappedHeight = newHeight
@@ -2887,12 +2891,12 @@ class MirrorForegroundService : Service() {
 
         if (!force && alignedWidth == currentWidth && alignedHeight == currentHeight) {
             Log.d(TAG, "rebuildPipeline skipped: dimensions unchanged ${alignedWidth}x${alignedHeight}")
-            return
+            return@withLock
         }
 
         if (alignedWidth < 320 || alignedWidth > 3840 || alignedHeight < 320 || alignedHeight > 3840) {
             Log.w(TAG, "rebuildPipeline skipped: dimensions out of range ${alignedWidth}x${alignedHeight}")
-            return
+            return@withLock
         }
 
         val width = alignedWidth
@@ -3023,63 +3027,19 @@ class MirrorForegroundService : Service() {
     }
 
     private fun onCodecModeRequest(mode: String) {
-        if (mode != "mjpeg" || jpegEncoder != null) return
-        currentCodecMode = "mjpeg"
-
-        try {
-            val jpeg = JpegEncoder(currentWidth, currentHeight, fps = 15, quality = 65)
-            val surface = jpeg.createInputSurface()
-            currentEncoderSurface = surface
-
-            videoEncoder?.release()
-            videoEncoder = null
-
-            jpeg.start { frameData, isKeyFrame -> mirrorServer?.broadcastFrame(frameData, isKeyFrame) }
-            jpegEncoder = jpeg
-
-            if (virtualDisplayManager?.hasVirtualDisplay() == true) {
-                dismissSplitPresentation(clearState = false)
-                virtualDisplayManager?.releaseVirtualDisplay()
-                virtualDisplayManager?.createVirtualDisplay(currentWidth, currentHeight, 160, surface)
-                if (virtualDisplayManager?.hasVirtualDisplay() == true) {
-                    touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
-                        virtualDisplayManager?.injectInput(action, x, y, pointerId)
-                    }
-                    restoreCurrentVdContent()
-                } else {
-                    // Do NOT fall back to MediaProjection here — it would mirror the
-                    // raw phone screen (showing the Castla UI) instead of virtual
-                    // display content.  Retry VD creation once before giving up.
-                    Log.w(TAG, "MJPEG VD recreation failed — retrying once")
-                    virtualDisplayManager?.createVirtualDisplay(currentWidth, currentHeight, 160, surface)
-                    if (virtualDisplayManager?.hasVirtualDisplay() == true) {
-                        touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
-                            virtualDisplayManager?.injectInput(action, x, y, pointerId)
-                        }
-                        restoreCurrentVdContent()
-                    } else {
-                        Log.e(TAG, "MJPEG VD recreation failed after retry — NOT falling back to MediaProjection")
-                    }
+        if (!CodecModeTransition.shouldApply(mode, currentCodecMode, jpegEncoder != null)) return
+        currentCodecMode = CodecModeTransition.MODE_MJPEG
+        Log.i(TAG, "Codec mode request: mjpeg — delegating to rebuildPipeline")
+        serviceScope.launch {
+            try {
+                rebuildPipeline(currentWidth, currentHeight, force = true)
+                if (!singleVdSplit && secondaryWidth > 0 && secondaryHeight > 0) {
+                    rebuildSecondaryPipeline(secondaryWidth, secondaryHeight)
                 }
-            } else if (virtualDisplayManager?.isBound() == true) {
-                // Shizuku is bound but no VD yet — create one instead of falling back
-                virtualDisplayManager?.createVirtualDisplay(currentWidth, currentHeight, 160, surface)
-                if (virtualDisplayManager?.hasVirtualDisplay() == true) {
-                    touchInjector?.setVirtualDisplayInjector { action, x, y, pointerId ->
-                        virtualDisplayManager?.injectInput(action, x, y, pointerId)
-                    }
-                    restoreCurrentVdContent()
-                } else {
-                    Log.e(TAG, "MJPEG VD creation failed — NOT falling back to MediaProjection")
-                }
-            } else {
-                // Shizuku not available at all — MediaProjection is the only option
-                screenCapture?.reconfigure(surface, currentWidth, currentHeight)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to switch codec to mjpeg", e)
             }
-            if (!singleVdSplit && secondaryWidth > 0 && secondaryHeight > 0) {
-                rebuildSecondaryPipeline(secondaryWidth, secondaryHeight)
-            }
-        } catch (e: Exception) {}
+        }
     }
 
     override fun onDestroy() {
