@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 
 plugins {
     id("com.android.application")
@@ -10,6 +11,39 @@ val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
+
+// Reads the highest semver tag from `git tag`. Used by debug builds so the
+// installed APK reflects the actual latest release (CI strips/injects versionName
+// for release builds — debug runs locally without that injection, so we derive
+// it from git here). Fails open to the defaultConfig versionName if git is
+// unavailable.
+fun gitLatestSemverTag(): String? = try {
+    val proc = ProcessBuilder("git", "tag", "--list", "v*", "--sort=-version:refname")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    if (proc.waitFor(2, TimeUnit.SECONDS)) {
+        proc.inputStream.bufferedReader().readLines()
+            .map { it.trim().removePrefix("v") }
+            .firstOrNull { it.matches(Regex("\\d+\\.\\d+\\.\\d+")) }
+    } else {
+        proc.destroyForcibly(); null
+    }
+} catch (_: Throwable) { null }
+
+// Total commit count — used as debug versionCode so each rebuild after pulling
+// new commits gets a higher code than any previously installed debug build.
+fun gitCommitCount(): Int = try {
+    val proc = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    if (proc.waitFor(2, TimeUnit.SECONDS)) {
+        proc.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 0
+    } else {
+        proc.destroyForcibly(); 0
+    }
+} catch (_: Throwable) { 0 }
 
 android {
     namespace = "com.castla.mirror"
@@ -36,6 +70,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            // versionNameSuffix intentionally not set here — overridden via
+            // androidComponents.onVariants below so the debug name follows the
+            // current git tag rather than the stub defaultConfig.versionName.
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -66,11 +106,31 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.isReturnDefaultValues = true
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        val tag = gitLatestSemverTag()
+        val commitCount = gitCommitCount()
+        variant.outputs.forEach { output ->
+            val nameProvider = output.versionName
+            val codeProvider = output.versionCode
+            if (tag != null) {
+                nameProvider.set("$tag-debug")
+            } else {
+                nameProvider.set(nameProvider.get() + "-debug")
+            }
+            if (commitCount > 0) {
+                codeProvider.set(commitCount)
+            }
+        }
     }
 }
 

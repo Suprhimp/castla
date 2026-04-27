@@ -41,6 +41,17 @@ enum class DisconnectCause {
 }
 
 /**
+ * Specific terminal failure reasons emitted by the service when a known silent-fail
+ * path is hit. Persisted to disk via [FileLogger] so post-mortem diagnosis is possible.
+ */
+enum class TerminalReason {
+    VD_RECREATE_FAILED,
+    SHIZUKU_REBIND_FAILED,
+    PIPELINE_REBUILD_EXCEPTION,
+    BROWSER_ACTIVATION_FAILED,
+}
+
+/**
  * Pure classifier — given the set of recent diagnostic events that preceded a
  * session end, returns the most likely [DisconnectCause].
  *
@@ -125,6 +136,7 @@ object MirrorDiagnostics {
             sessionActive = true
         }
         Log.i(TAG, "[SESSION_START]")
+        FileLogger.i(TAG, "[SESSION_START]")
     }
 
     /** Record a diagnostic event with optional detail string. */
@@ -142,6 +154,7 @@ object MirrorDiagnostics {
             if (detail != null) append(" $detail")
         }
         Log.i(TAG, msg)
+        FileLogger.i(TAG, msg)
     }
 
     /**
@@ -161,8 +174,10 @@ object MirrorDiagnostics {
         }
         val cause = DisconnectCauseClassifier.classify(events)
         log(DiagnosticEvent.SESSION_END, "reason=$cleanupReason cause=${cause.name}")
-        Log.i(TAG, "[SESSION_SUMMARY] duration=${SystemClock.elapsedRealtime() - sessionStartUptimeMs}ms " +
-                "events=${events.size} cause=${cause.name} recent=${events.takeLast(5).map { it.name }}")
+        val summary = "[SESSION_SUMMARY] duration=${SystemClock.elapsedRealtime() - sessionStartUptimeMs}ms " +
+                "events=${events.size} cause=${cause.name} recent=${events.takeLast(5).map { it.name }}"
+        Log.i(TAG, summary)
+        FileLogger.i(TAG, summary)
         return cause
     }
 }

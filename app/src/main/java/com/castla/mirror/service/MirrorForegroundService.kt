@@ -49,7 +49,10 @@ import com.castla.mirror.policy.ScreenOffAction
 import com.castla.mirror.policy.ScreenOffPolicy
 import com.castla.mirror.policy.ScreenOffState
 import com.castla.mirror.diagnostics.DiagnosticEvent
+import com.castla.mirror.diagnostics.FileLogger
 import com.castla.mirror.diagnostics.MirrorDiagnostics
+import com.castla.mirror.diagnostics.TerminalReason
+import com.castla.mirror.utils.SplitMath
 import com.castla.mirror.utils.StreamMath
 import com.castla.mirror.ui.SplitWebPresentation
 import kotlinx.coroutines.CoroutineScope
@@ -120,6 +123,13 @@ class MirrorForegroundService : Service() {
         // Grace period constants are now in DisconnectPolicy
         /** Interval for poking the VD awake while the physical screen is off. */
         private const val VD_KEEP_ALIVE_INTERVAL_MS = 30_000L
+
+        // Split resize verification tunables
+        private const val MAX_LOCATE_ATTEMPTS = 10
+        private const val MAX_VERIFY_ROUNDS = 4
+        private const val SHELL_TIMEOUT_MS = 800L
+        private const val VERIFY_BACKOFF_MS = 400L
+        private const val BOUNDS_TOLERANCE_PX = 16
     }
 
     /** Binder for local (same-process) binding */
@@ -149,6 +159,12 @@ class MirrorForegroundService : Service() {
     private var browserConnectionListener: ((Boolean) -> Unit)? = null
     @Volatile private var stopRequested = false
     @Volatile private var cleanupCompleted = false
+    /**
+     * First-writer-wins terminal failure reason. Set by [markTerminal] at the
+     * moment a known fatal failure is detected; consumed by [performCleanup]
+     * when emitting the SESSION_END event so the recorded reason is consistent.
+     */
+    private val terminalReason = java.util.concurrent.atomic.AtomicReference<TerminalReason?>(null)
     private var serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var resizeJob: Job? = null
     private var pendingBrowserDisconnectJob: Job? = null
@@ -490,7 +506,7 @@ class MirrorForegroundService : Service() {
                         val displayId = virtualDisplayManager?.getDisplayId() ?: -1
                         val url = request.url ?: return@collect
                         dismissSplitPresentation(clearState = true)
-                        if (request.splitMode && canLaunchPrimarySplitTask()) {
+                        if (request.splitMode && ensureSplitViable("bus-external-browser")) {
                             launchSplitExternalBrowserTarget(displayId, url, request.sourceAppPackage, request.allowEmbeddedFallback)
                         } else {
                             launchExternalBrowserTarget(displayId, url, request.sourceAppPackage, request.allowEmbeddedFallback)
@@ -501,7 +517,7 @@ class MirrorForegroundService : Service() {
                         dismissSplitPresentation(clearState = true)
                         val activityClassName = component.substringAfter('/', "com.castla.mirror.ui.WebBrowserActivity")
                         val url = request.url ?: request.intentExtra ?: return@collect
-                        if (request.splitMode && canLaunchPrimarySplitTask()) {
+                        if (request.splitMode && ensureSplitViable("bus-internal-webview")) {
                             launchSplitWebTarget(activityClassName, displayId, url)
                         } else {
                             launchFullscreenWebTarget(activityClassName, displayId, url)
@@ -513,14 +529,14 @@ class MirrorForegroundService : Service() {
                             val displayId = virtualDisplayManager?.getDisplayId() ?: -1
                             dismissSplitPresentation(clearState = true)
                             val activityClassName = component.substringAfter('/', "com.castla.mirror.ui.WebBrowserActivity")
-                            if (request.splitMode && canLaunchPrimarySplitTask()) {
+                            if (request.splitMode && ensureSplitViable("bus-standard-web")) {
                                 launchSplitWebTarget(activityClassName, displayId, request.intentExtra)
                             } else {
                                 launchFullscreenWebTarget(activityClassName, displayId, request.intentExtra)
                             }
                         } else {
                             dismissSplitPresentation(clearState = true)
-                            if (request.splitMode && canLaunchPrimarySplitTask()) {
+                            if (request.splitMode && ensureSplitViable("bus-standard-app")) {
                                 launchSplitStandardTarget(component)
                             } else {
                                 launchFullscreenStandardTarget(component)
@@ -764,8 +780,10 @@ class MirrorForegroundService : Service() {
             return
         }
         cleanupCompleted = true // set immediately under lock to prevent reentrant race
-        Log.i(TAG, "Performing cleanup: $reason")
-        MirrorDiagnostics.endSession(reason)
+        val effectiveReason = terminalReason.get()?.let { "terminal:${it.name}" } ?: reason
+        Log.i(TAG, "Performing cleanup: $effectiveReason")
+        FileLogger.i(TAG, "Performing cleanup: $effectiveReason")
+        MirrorDiagnostics.endSession(effectiveReason)
         isCleanupInProgress = true
 
         // Always restore physical display panel on cleanup — safety net
@@ -942,6 +960,7 @@ class MirrorForegroundService : Service() {
         audioEnabled: Boolean
     ) {
         try {
+            terminalReason.set(null)
             MirrorDiagnostics.onSessionStart()
 
             // Only initialize projection and server — defer encoder/capture until browser connects
@@ -1535,9 +1554,44 @@ class MirrorForegroundService : Service() {
         return currentVdApp.isNotBlank() && currentVdApp != "HOME" && currentVdApp != "com.android.settings"
     }
 
+    /**
+     * Single, centralized split-mode viability gate. Every split entry path must pass
+     * this before mutating split state or computing pane bounds. Logs once on rejection.
+     */
+    private fun ensureSplitViable(reason: String): Boolean {
+        if (!canLaunchPrimarySplitTask()) {
+            FileLogger.w(TAG, "Split rejected ($reason): no primary app (currentVdApp=$currentVdApp)")
+            return false
+        }
+        if (!SplitMath.isSplitViable(currentWidth, currentHeight)) {
+            FileLogger.w(TAG, "Split rejected ($reason): display too small ${currentWidth}x${currentHeight}")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Records a fatal failure cause (first-writer-wins) and triggers cleanup.
+     * The actual SESSION_END event is emitted by [performCleanup] using the
+     * stored reason so there is exactly one terminal log per session.
+     */
+    private fun markTerminal(reason: TerminalReason) {
+        if (!terminalReason.compareAndSet(null, reason)) return
+        FileLogger.e(TAG, "Terminal failure: ${reason.name}")
+        Log.e(TAG, "Terminal failure: ${reason.name}")
+        try {
+            requestStopAsync("terminal_${reason.name.lowercase()}")
+        } catch (e: Exception) {
+            Log.w(TAG, "requestStopAsync failed after markTerminal", e)
+        }
+    }
+
     private fun primaryTaskBounds(): android.graphics.Rect {
-        val splitBounds = splitTaskBounds()
-        return android.graphics.Rect(0, 0, splitBounds.left, currentHeight)
+        check(SplitMath.isSplitViable(currentWidth, currentHeight)) {
+            "primaryTaskBounds called on non-viable display ${currentWidth}x${currentHeight}; gate with ensureSplitViable() first"
+        }
+        val leftWidth = SplitMath.computeLeftPaneWidth(currentWidth, currentHeight)
+        return android.graphics.Rect(0, 0, leftWidth, currentHeight)
     }
 
     private fun escapeShellArg(value: String): String = "'" + value.replace("'", "'\''") + "'"
@@ -1610,6 +1664,7 @@ class MirrorForegroundService : Service() {
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch $packageOrComponent on display $displayId", e)
+            FileLogger.e(TAG, "launchTargetOnDisplay failed pkg=$packageOrComponent display=$displayId", e)
             false
         }
     }
@@ -1634,8 +1689,8 @@ class MirrorForegroundService : Service() {
     }
 
     private fun launchSplitWebTarget(activityClassName: String, displayId: Int, url: String) {
-        if (!canLaunchPrimarySplitTask()) {
-            Log.w(TAG, "Split web launch requested without a primary app; falling back to fullscreen")
+        if (!ensureSplitViable("split-web")) {
+            Log.w(TAG, "Split web launch rejected; falling back to fullscreen")
             launchFullscreenWebTarget(activityClassName, displayId, url)
             return
         }
@@ -1725,8 +1780,8 @@ class MirrorForegroundService : Service() {
      * Falls back to internal WebBrowserActivity if no browser is found or launch fails.
      */
     private fun launchSplitExternalBrowserTarget(displayId: Int, url: String, sourceAppPackage: String? = null, allowFallback: Boolean = true) {
-        if (!canLaunchPrimarySplitTask()) {
-            Log.w(TAG, "Split external browser launch requested without a primary app; falling back to fullscreen")
+        if (!ensureSplitViable("split-external-browser")) {
+            Log.w(TAG, "Split external browser launch rejected; falling back to fullscreen")
             launchExternalBrowserTarget(displayId, url, sourceAppPackage, allowFallback)
             return
         }
@@ -1851,8 +1906,8 @@ class MirrorForegroundService : Service() {
     private fun launchSplitStandardTarget(launchTarget: String) {
         val displayId = virtualDisplayManager?.getDisplayId() ?: -1
         Log.i(TAG, "launchSplitStandardTarget: target=$launchTarget displayId=$displayId currentVdApp=$currentVdApp canSplit=${canLaunchPrimarySplitTask()} currentSize=${currentWidth}x${currentHeight}")
-        if (displayId < 0 || !canLaunchPrimarySplitTask()) {
-            Log.w(TAG, "Split app launch requested without a primary app; falling back to fullscreen")
+        if (displayId < 0 || !ensureSplitViable("split-standard")) {
+            Log.w(TAG, "Split app launch rejected; falling back to fullscreen")
             launchFullscreenStandardTarget(launchTarget)
             return
         }
@@ -1875,7 +1930,7 @@ class MirrorForegroundService : Service() {
     }
 
     private fun relaunchPrimaryTaskForSplit(displayId: Int) {
-        if (displayId < 0 || !canLaunchPrimarySplitTask()) return
+        if (displayId < 0 || !ensureSplitViable("relaunch-primary")) return
         val primaryTarget = normalizeLaunchTarget(currentVdApp)
         val primaryPkg = primaryTarget.substringBefore('/')
         val bounds = primaryTaskBounds()
@@ -1985,18 +2040,27 @@ class MirrorForegroundService : Service() {
     }
 
     private fun splitTaskBounds(): android.graphics.Rect {
-        val leftWidth = (currentHeight * 9f / 16f).toInt()
-            .coerceAtLeast((currentWidth * 0.25f).toInt())
-            .coerceAtMost((currentWidth - 320).coerceAtLeast(0))
+        check(SplitMath.isSplitViable(currentWidth, currentHeight)) {
+            "splitTaskBounds called on non-viable display ${currentWidth}x${currentHeight}; gate with ensureSplitViable() first"
+        }
+        val leftWidth = SplitMath.computeLeftPaneWidth(currentWidth, currentHeight)
         return android.graphics.Rect(leftWidth, 0, currentWidth, currentHeight)
     }
 
+    // Per-pane resize jobs so a new resize cancels any superseded one in flight.
+    private var primaryResizeJob: Job? = null
+    private var splitResizeJob: Job? = null
+    private val resizeMutex = kotlinx.coroutines.sync.Mutex()
+    @Volatile private var boundsParseUnsupportedLogged = false
+
     private fun schedulePrimaryTaskResize(displayId: Int, launchTarget: String) {
-        scheduleTaskResize(displayId, primaryTaskBounds(), "primary", launchTarget)
+        try { primaryResizeJob?.cancel() } catch (_: Exception) {}
+        primaryResizeJob = scheduleTaskResize(displayId, primaryTaskBounds(), "primary", launchTarget)
     }
 
     private fun scheduleSplitTaskResize(displayId: Int, launchTarget: String) {
-        scheduleTaskResize(displayId, splitTaskBounds(), "split", launchTarget)
+        try { splitResizeJob?.cancel() } catch (_: Exception) {}
+        splitResizeJob = scheduleTaskResize(displayId, splitTaskBounds(), "split", launchTarget)
     }
 
     private fun scheduleTaskResize(
@@ -2004,22 +2068,103 @@ class MirrorForegroundService : Service() {
         bounds: android.graphics.Rect,
         label: String,
         launchTarget: String
-    ) {
-        if (displayId < 0 || currentWidth <= 0 || currentHeight <= 0) return
-        serviceScope.launch(Dispatchers.IO) {
-            repeat(10) { attempt ->
-                kotlinx.coroutines.delay(if (attempt == 0) 250L else 400L)
-                val service = virtualDisplayManager?.getPrivilegedService() ?: return@launch
-                // Use current display ID in case VD was recreated
-                val currentDisplayId = virtualDisplayManager?.getDisplayId() ?: displayId
-                val taskId = findTaskId(service, currentDisplayId, launchTarget) ?: return@repeat
-                service.execCommand("cmd activity task resizeable $taskId 2")
-                service.execCommand("cmd activity task resize $taskId ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
-                Log.i(TAG, "Resized $label task $taskId on display $currentDisplayId to ${bounds.flattenToString()}")
-                return@launch
+    ): Job? {
+        if (displayId < 0 || currentWidth <= 0 || currentHeight <= 0) return null
+        return serviceScope.launch(Dispatchers.IO) {
+            resizeMutex.withLock {
+                runResizeWithVerification(displayId, bounds, label, launchTarget)
             }
-            Log.w(TAG, "Failed to locate $label task on display ${virtualDisplayManager?.getDisplayId() ?: displayId} for resizing")
         }
+    }
+
+    /**
+     * Runs the resize and verifies via dumpsys that WMS actually honored the requested bounds.
+     * If the actual task bounds differ from requested by more than [BOUNDS_TOLERANCE_PX] on
+     * any side, the resize is reissued. This addresses the race where the task is not yet
+     * fully in freeform mode when the first resize fires and Android silently drops it.
+     *
+     * Total wall-time is bounded by [MAX_LOCATE_ATTEMPTS] * locate-delay + [MAX_VERIFY_ROUNDS]
+     * * (cmd timeout + verify wait).
+     */
+    private suspend fun runResizeWithVerification(
+        displayId: Int,
+        bounds: android.graphics.Rect,
+        label: String,
+        launchTarget: String,
+    ) {
+        // Phase 1: locate task (existing retry strategy, lightly bounded by withTimeoutOrNull)
+        var taskId: Int? = null
+        var currentDisplayId = displayId
+        var service: IPrivilegedService? = null
+        repeat(MAX_LOCATE_ATTEMPTS) { attempt ->
+            kotlinx.coroutines.delay(if (attempt == 0) 250L else 400L)
+            service = virtualDisplayManager?.getPrivilegedService() ?: return
+            currentDisplayId = virtualDisplayManager?.getDisplayId() ?: displayId
+            taskId = findTaskId(service!!, currentDisplayId, launchTarget)
+            if (taskId != null) return@repeat
+        }
+        val tid = taskId
+        val svc = service
+        if (tid == null || svc == null) {
+            val msg = "Failed to locate $label task on display $currentDisplayId target=$launchTarget"
+            Log.w(TAG, msg)
+            FileLogger.w(TAG, msg)
+            return
+        }
+
+        // Phase 2: issue resize + verify, retry on mismatch
+        for (round in 0 until MAX_VERIFY_ROUNDS) {
+            val cmdSucceeded = kotlinx.coroutines.withTimeoutOrNull(SHELL_TIMEOUT_MS) {
+                svc.execCommand("cmd activity task resizeable $tid 2")
+                svc.execCommand("cmd activity task resize $tid ${bounds.left} ${bounds.top} ${bounds.right} ${bounds.bottom}")
+                true
+            } ?: false
+            if (!cmdSucceeded) {
+                Log.w(TAG, "Resize cmd timed out for $label task=$tid round=$round")
+                FileLogger.w(TAG, "Resize cmd timed out for $label task=$tid round=$round")
+                kotlinx.coroutines.delay(VERIFY_BACKOFF_MS)
+                continue
+            }
+            // Verify
+            kotlinx.coroutines.delay(VERIFY_BACKOFF_MS)
+            val freshDumpsys = kotlinx.coroutines.withTimeoutOrNull(SHELL_TIMEOUT_MS) {
+                svc.execCommand("dumpsys activity activities")
+            }
+            val taskBlock = freshDumpsys?.let { findTaskBlock(it, currentDisplayId, tid) }
+            if (taskBlock == null) {
+                Log.i(TAG, "Resized $label task $tid (no verification — task block missing)")
+                return
+            }
+            val actual = TaskBoundsParser.parseTaskBoundsFromBlock(taskBlock)
+            if (actual == null) {
+                if (!boundsParseUnsupportedLogged) {
+                    boundsParseUnsupportedLogged = true
+                    FileLogger.w(TAG, "bounds-parse-unsupported on this Android version; skipping verification")
+                }
+                Log.i(TAG, "Resized $label task $tid (verification skipped: parser unsupported)")
+                return
+            }
+            if (boundsMatch(bounds, actual)) {
+                Log.i(TAG, "Resized $label task $tid to ${bounds.flattenToString()} (verified round=$round)")
+                FileLogger.i(TAG, "Resized $label task=$tid round=$round")
+                return
+            }
+            Log.w(TAG, "Resize verification mismatch $label task=$tid round=$round requested=${bounds.flattenToString()} actual=[${actual.left},${actual.top}][${actual.right},${actual.bottom}]")
+        }
+        FileLogger.w(TAG, "Resize verification gave up for $label task=$tid after $MAX_VERIFY_ROUNDS rounds")
+    }
+
+    private fun findTaskBlock(dumpsys: String, displayId: Int, taskId: Int): String? {
+        val tasks = parseDisplayTasks(dumpsys, displayId)
+        val match = tasks.firstOrNull { it.taskId == taskId } ?: return null
+        return match.header + "\n" + match.body
+    }
+
+    private fun boundsMatch(requested: android.graphics.Rect, actual: TaskBoundsParser.Bounds): Boolean {
+        return Math.abs(requested.left - actual.left) <= BOUNDS_TOLERANCE_PX &&
+            Math.abs(requested.top - actual.top) <= BOUNDS_TOLERANCE_PX &&
+            Math.abs(requested.right - actual.right) <= BOUNDS_TOLERANCE_PX &&
+            Math.abs(requested.bottom - actual.bottom) <= BOUNDS_TOLERANCE_PX
     }
 
     private fun findTaskId(service: IPrivilegedService, displayId: Int, launchTarget: String): Int? {
@@ -2226,7 +2371,7 @@ class MirrorForegroundService : Service() {
             Log.i(TAG, "Web Launcher: Launching OTT app via external browser: $pkgName -> $webUrl (splitMode=$splitMode)")
 
             dismissSplitPresentation(clearState = true)
-            if (splitMode && canLaunchPrimarySplitTask()) {
+            if (splitMode && ensureSplitViable("web-launcher-ott")) {
                 launchSplitExternalBrowserTarget(displayId, webUrl, pkgName)
             } else {
                 launchExternalBrowserTarget(displayId, webUrl, pkgName)
@@ -2238,7 +2383,7 @@ class MirrorForegroundService : Service() {
             val launchTarget = componentName ?: pkgName
             Log.i(TAG, "Web Launcher: Launching standard app: $pkgName (target=$launchTarget, splitMode=$splitMode, singleVdSplit=$singleVdSplit)")
 
-            if (splitMode && canLaunchPrimarySplitTask()) {
+            if (splitMode && ensureSplitViable("web-launcher-standard")) {
                 launchSplitStandardTarget(launchTarget)
             } else {
                 launchFullscreenStandardTarget(launchTarget)
@@ -2489,7 +2634,8 @@ class MirrorForegroundService : Service() {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Browser connection activation failed", t)
-            requestStopAsync("browser_connect_failure")
+            FileLogger.e(TAG, "Browser connection activation failed", t)
+            markTerminal(TerminalReason.BROWSER_ACTIVATION_FAILED)
         }
     }
 
@@ -2980,6 +3126,7 @@ class MirrorForegroundService : Service() {
                             restoreCurrentVdContent()
                         } else {
                             Log.e(TAG, "VD creation failed after retry — NOT falling back to MediaProjection to prevent raw phone screen leak")
+                            markTerminal(TerminalReason.VD_RECREATE_FAILED)
                         }
                     }
                 }
@@ -2992,6 +3139,7 @@ class MirrorForegroundService : Service() {
                 trySetupVirtualDisplay(width, height, surface) { success ->
                     if (!success) {
                         Log.e(TAG, "Shizuku rebind failed — NOT falling back to MediaProjection to prevent raw phone screen leak")
+                        markTerminal(TerminalReason.SHIZUKU_REBIND_FAILED)
                     } else {
                         Log.i(TAG, "Shizuku rebound successfully during rebuild")
                     }
@@ -3010,6 +3158,8 @@ class MirrorForegroundService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to rebuild pipeline", e)
+            FileLogger.e(TAG, "rebuildPipeline exception", e)
+            markTerminal(TerminalReason.PIPELINE_REBUILD_EXCEPTION)
         } finally {
             screenCapture?.isRebuilding = false
         }
