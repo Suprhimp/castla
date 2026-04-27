@@ -98,4 +98,14 @@
     <string name="settings_support_description">Castla is free and open-source.\nIf you find it useful, consider buying me a coffee!</string>
     <string name="settings_donate_kofi">Buy me a Coffee on Ko-fi</string>
     <string name="settings_donate_kakaopay">카카오페이로 후원하기</string>
+
+    <!-- Diagnostic logs -->
+    <string name="settings_logs_title">Diagnostic Logs</string>
+    <string name="settings_logs_description">If mirroring fails, share or copy these logs to help diagnose the issue. URLs are redacted.</string>
+    <string name="settings_share_logs">Share Logs</string>
+    <string name="settings_copy_logs">Copy Recent</string>
+    <string name="settings_logs_empty">No logs available yet.</string>
+    <string name="settings_logs_copied">Recent logs copied to clipboard.</string>
+    <string name="settings_logs_share_failed">Could not share logs.</string>
+    <string name="settings_logs_chooser_title">Share diagnostic logs</string>
 </resources>

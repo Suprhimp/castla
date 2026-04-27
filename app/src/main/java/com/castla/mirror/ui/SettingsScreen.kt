@@ -23,11 +23,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.widget.Toast
+import androidx.core.content.FileProvider
+import com.castla.mirror.BuildConfig
 import com.castla.mirror.R
+import com.castla.mirror.diagnostics.FileLogger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -419,6 +429,69 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Diagnostic logs
+            run {
+                val context = LocalContext.current
+                val scope = rememberCoroutineScope()
+                var working by remember { mutableStateOf(false) }
+
+                SettingSection(title = stringResource(R.string.settings_logs_title)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_logs_description),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Button(
+                                onClick = {
+                                    if (working) return@Button
+                                    working = true
+                                    scope.launch {
+                                        try {
+                                            shareLogs(context)
+                                        } finally {
+                                            working = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = !working
+                            ) {
+                                Text(stringResource(R.string.settings_share_logs))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    if (working) return@OutlinedButton
+                                    working = true
+                                    scope.launch {
+                                        try {
+                                            copyRecentLogs(context)
+                                        } finally {
+                                            working = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = !working
+                            ) {
+                                Text(stringResource(R.string.settings_copy_logs))
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(40.dp))
 
             // Current config summary
@@ -461,6 +534,66 @@ fun SettingsScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+private suspend fun shareLogs(context: Context) {
+    val files = withContext(Dispatchers.IO) { FileLogger.getLogFiles() }
+    if (files.isEmpty()) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, R.string.settings_logs_empty, Toast.LENGTH_SHORT).show()
+        }
+        return
+    }
+    try {
+        val authority = "${BuildConfig.APPLICATION_ID}.fileprovider"
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(context, authority, it) })
+        val intent = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uris[0])
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "text/plain"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        val title = context.getString(R.string.settings_logs_chooser_title)
+        val chooser = Intent.createChooser(intent, title).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        withContext(Dispatchers.Main) {
+            context.startActivity(chooser)
+        }
+    } catch (t: Throwable) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, R.string.settings_logs_share_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private suspend fun copyRecentLogs(context: Context) {
+    val tail = withContext(Dispatchers.IO) {
+        val files = FileLogger.getLogFiles()
+        if (files.isEmpty()) return@withContext null
+        val current = files.first()
+        val maxBytes = 8 * 1024
+        val all = current.readBytes()
+        val start = (all.size - maxBytes).coerceAtLeast(0)
+        // Decode with replacement so partial UTF-8 codepoints don't crash
+        String(all, start, all.size - start, Charsets.UTF_8)
+    }
+    withContext(Dispatchers.Main) {
+        if (tail.isNullOrEmpty()) {
+            Toast.makeText(context, R.string.settings_logs_empty, Toast.LENGTH_SHORT).show()
+        } else {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("castla-logs", tail))
+            Toast.makeText(context, R.string.settings_logs_copied, Toast.LENGTH_SHORT).show()
         }
     }
 }
